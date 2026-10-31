@@ -22,6 +22,8 @@ export class GitError extends Error {
 }
 
 const GIT_ERRORS: [RegExp, (m: RegExpMatchArray) => string][] = [
+  // Les conflits passent en premier : leur sortie contient aussi l'état du dépôt (« no changes added… »).
+  [/CONFLICT|Automatic merge failed|could not apply|after resolving the conflicts|Index was not unstashed/, () => 'Des conflits sont apparus : résolvez-les depuis la liste « Conflits ».'],
   [/branch '(.+?)' is not fully merged/, (m) => `La branche « ${m[1]} » n'est pas entièrement fusionnée. Cochez « Forcer » pour la supprimer quand même.`],
   [/local changes to the following files would be overwritten/, () => 'Vos modifications locales seraient écrasées. Commitez-les ou mettez-les de côté (stash) avant.'],
   [/untracked working tree files would be (?:overwritten|removed)/, () => 'Des fichiers non suivis seraient écrasés. Déplacez-les, ajoutez-les ou mettez-les de côté (stash) avant.'],
@@ -32,7 +34,6 @@ const GIT_ERRORS: [RegExp, (m: RegExpMatchArray) => string][] = [
   [/Could not resolve host|Connection timed out|unable to access/, () => 'Serveur distant injoignable. Vérifiez la connexion et l\'URL du remote.'],
   [/Please tell me who you are|empty ident name/, () => 'Identité Git non configurée : définissez user.name et user.email (git config --global).'],
   [/nothing to commit|no changes added to commit/, () => 'Rien à commiter.'],
-  [/CONFLICT|Automatic merge failed|could not apply|after resolving the conflicts/, () => 'Des conflits sont apparus : résolvez-les, puis cliquez sur Continuer (ou Abandonner).'],
   [/Not possible to fast-forward|Need to specify how to reconcile divergent branches/, () => 'Les branches ont divergé : le pull ne peut pas avancer simplement. Fusionnez ou rebasez la branche distante.'],
   [/There is no tracking information|has no upstream branch/, () => 'Cette branche ne suit aucune branche distante.'],
   [/You have unstaged changes|cannot (?:rebase|pull with rebase): You have unstaged changes/, () => 'Des modifications non commitées empêchent l\'opération. Commitez-les ou mettez-les de côté (stash).'],
@@ -61,7 +62,8 @@ export function git(repo: string, args: string[], opts: RunOptions = {}): Promis
       (err, stdout, stderr) => {
         const code = err ? (typeof err.code === 'number' ? err.code : 1) : 0;
         if (err && !(opts.okCodes ?? []).includes(code)) {
-          const msg = (stderr || stdout || err.message).trim();
+          // Certains messages (CONFLICT…) sont écrits sur stdout : on garde les deux flux.
+          const msg = [stderr, stdout.slice(-4000)].filter((t) => t.trim()).join('\n').trim() || err.message;
           reject(new GitError(translateGitError(msg), msg));
         } else {
           resolve(stdout);
@@ -384,9 +386,14 @@ export async function checkout(repo: string, ref: string) {
 
 export async function createBranch(repo: string, name: string, from: string, doCheckout: boolean) {
   await checkRefName(repo, 'branch', name);
-  // `checkout -b` ne gère pas `--end-of-options` : on crée la branche, puis on bascule dessus par son nom validé.
-  await git(repo, ['branch', '--end-of-options', name, from]);
-  if (doCheckout) await git(repo, ['checkout', name]);
+  if (doCheckout) {
+    // `checkout -b` ne gère pas `--end-of-options` : le point de départ est d'abord résolu en SHA.
+    const sha = (await git(repo, ['rev-parse', '--verify', '--end-of-options', `${from}^{commit}`])).trim();
+    assertSha(sha);
+    await git(repo, ['checkout', '-b', name, sha]);
+  } else {
+    await git(repo, ['branch', '--end-of-options', name, from]);
+  }
 }
 
 export async function deleteBranch(repo: string, name: string, force: boolean) {
@@ -474,7 +481,9 @@ export async function stashApply(repo: string, index: number, sha: string, pop: 
   // Restaure aussi l'indexation ; si elle ne peut pas être reconstruite, on se rabat sur les seules modifications.
   try {
     await git(repo, [...args, '--index', ref]);
-  } catch {
+  } catch (e) {
+    // Repli uniquement quand git refuse de reconstruire l'index ; un conflit, lui, doit remonter tel quel.
+    if (!(e instanceof GitError && /Conflicts in index|without --index/.test(e.stderr))) throw e;
     await git(repo, [...args, ref]);
   }
 }
