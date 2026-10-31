@@ -50,3 +50,5 @@ Pour voir l'app tourner sans écran : skill `run-arbor`. Pour un dépôt de test
 2. Implémenter en suivant le skill `add-git-feature` (git.ts → types.ts → main.ts → UI → test → vérification).
 3. Vérifier l'interface avec le skill `run-arbor` (ou le sous-agent `ui-tester` pour un parcours complet).
 4. Avant la PR, faire relire le diff par le sous-agent `reviewer`.
+
+Plusieurs fonctionnalités indépendantes : skill `parallel-features` (plan de l'architect, un agent `developer` par fonctionnalité dans son worktree, relecture, PR, fusions une par une).
