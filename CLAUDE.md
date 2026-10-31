@@ -44,6 +44,9 @@ Pour voir l'app tourner sans écran : skill `run-arbor`. Pour un dépôt de test
 3. Un changement visible a été vérifié dans Electron avec le skill `run-arbor` (captures d'écran regardées).
 4. Le `README.md` (liste des fonctionnalités, feuille de route) est à jour.
 
-## Ajouter une fonctionnalité Git
+## Flux de travail
 
-Suivre le skill `add-git-feature` (git.ts → types.ts → main.ts → UI → test → vérification).
+1. Fonctionnalité qui touche plusieurs couches ou la structure : demander d'abord un plan au sous-agent `architect`.
+2. Implémenter en suivant le skill `add-git-feature` (git.ts → types.ts → main.ts → UI → test → vérification).
+3. Vérifier l'interface avec le skill `run-arbor` (ou le sous-agent `ui-tester` pour un parcours complet).
+4. Avant la PR, faire relire le diff par le sous-agent `reviewer`.
