@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Tant que l'application n'existe pas encore sur la branche, il n'y a rien à vérifier.
+      - id: app
+        run: echo "present=$([ -f package-lock.json ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+      - if: steps.app.outputs.present == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - if: steps.app.outputs.present == 'true'
+        run: npm ci
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+      - if: steps.app.outputs.present == 'true'
+        run: npm run typecheck
+      - if: steps.app.outputs.present == 'true'
+        run: npm test
+      - if: steps.app.outputs.present == 'true'
+        run: npm run build
