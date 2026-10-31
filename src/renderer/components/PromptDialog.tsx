@@ -4,6 +4,7 @@ export interface PromptState {
   title: string;
   message?: string;
   label?: string; // absent = simple confirmation
+  optional?: boolean; // le champ peut rester vide
   initial?: string;
   confirm: string;
   danger?: boolean;
@@ -14,7 +15,7 @@ export interface PromptState {
 export function PromptDialog({ prompt, onClose }: { prompt: PromptState; onClose: () => void }) {
   const [value, setValue] = useState(prompt.initial ?? '');
   const [checked, setChecked] = useState(prompt.checkbox?.initial ?? false);
-  const invalid = prompt.label !== undefined && !value.trim();
+  const invalid = prompt.label !== undefined && !prompt.optional && !value.trim();
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();

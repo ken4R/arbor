@@ -46,6 +46,7 @@ export interface Branch {
 export interface Stash {
   index: number;
   ref: string;
+  sha: string;
   message: string;
 }
 
@@ -62,8 +63,8 @@ export interface RepoSnapshot {
 }
 
 export type DiffTarget =
-  | { kind: 'working'; path: string; staged: boolean; untracked?: boolean; conflict?: boolean }
-  | { kind: 'commit'; sha: string; path: string };
+  | { kind: 'working'; path: string; oldPath?: string; staged: boolean; untracked?: boolean; conflict?: boolean }
+  | { kind: 'commit'; sha: string; path: string; oldPath?: string };
 
 export interface ArborApi {
   openRepoDialog(): Promise<string | null>;
@@ -85,13 +86,13 @@ export interface ArborApi {
   rebase(repo: string, onto: string): Promise<void>;
   abort(repo: string): Promise<void>;
   continueOp(repo: string): Promise<void>;
-  resolve(repo: string, path: string, side: 'ours' | 'theirs'): Promise<void>;
+  resolve(repo: string, path: string, side: 'mine' | 'theirs'): Promise<void>;
   fetch(repo: string): Promise<void>;
   pull(repo: string): Promise<void>;
   push(repo: string, setUpstream: boolean): Promise<void>;
   stashSave(repo: string, message: string): Promise<void>;
-  stashApply(repo: string, index: number, pop: boolean): Promise<void>;
-  stashDrop(repo: string, index: number): Promise<void>;
+  stashApply(repo: string, index: number, sha: string, pop: boolean): Promise<void>;
+  stashDrop(repo: string, index: number, sha: string): Promise<void>;
   initialRepo(): Promise<string | null>;
   createTag(repo: string, name: string, sha: string): Promise<void>;
   cherryPick(repo: string, sha: string): Promise<void>;

@@ -1,4 +1,3 @@
-import { useState } from 'react';
 import type { DiffTarget, RepoSnapshot } from '../../shared/types';
 import { api } from '../api';
 import { useUi } from '../ui';
@@ -11,34 +10,48 @@ const STATE_LABEL = {
   reverting: 'Revert en cours',
 } as const;
 
-export function WorkingPanel({ repo, snap, activeDiff }: { repo: string; snap: RepoSnapshot; activeDiff: DiffTarget | null }) {
+/** Message de commit en cours, conservé par App quand on consulte un autre commit. */
+export interface CommitDraft {
+  summary: string;
+  description: string;
+  amend: boolean;
+}
+
+export const EMPTY_DRAFT: CommitDraft = { summary: '', description: '', amend: false };
+
+interface Props {
+  repo: string;
+  snap: RepoSnapshot;
+  activeDiff: DiffTarget | null;
+  draft: CommitDraft;
+  onDraft: (d: CommitDraft) => void;
+}
+
+export function WorkingPanel({ repo, snap, activeDiff, draft, onDraft }: Props) {
   const ui = useUi();
   const st = snap.status;
-  const [summary, setSummary] = useState('');
-  const [description, setDescription] = useState('');
-  const [amend, setAmend] = useState(false);
+  const { summary, description, amend } = draft;
+  const setSummary = (v: string) => onDraft({ ...draft, summary: v });
+  const setDescription = (v: string) => onDraft({ ...draft, description: v });
 
   const all = (files: { path: string }[]) => files.map((f) => f.path);
+  // Désindexer un renommage doit aussi désindexer la suppression de l'ancien chemin.
+  const withOld = (files: { path: string; oldPath?: string }[]) => files.flatMap((f) => (f.oldPath ? [f.oldPath, f.path] : [f.path]));
   const canCommit = (st.staged.length > 0 || amend) && summary.trim().length > 0 && st.conflicted.length === 0;
 
   const doCommit = async () => {
     const message = description.trim() ? `${summary.trim()}\n\n${description.trim()}` : summary.trim();
     const ok = await ui.run('Commit…', () => api.commit(repo, message, amend));
     if (ok) {
-      setSummary('');
-      setDescription('');
-      setAmend(false);
+      onDraft(EMPTY_DRAFT);
       ui.showDiff(null);
     }
   };
 
   const toggleAmend = (on: boolean) => {
-    setAmend(on);
     const head = snap.commits.find((c) => c.sha === snap.head);
-    if (on && head && !summary) {
-      setSummary(head.subject);
-      setDescription(head.body);
-    }
+    if (on && head && !summary) onDraft({ summary: head.subject, description: head.body, amend: true });
+    else onDraft({ ...draft, amend: on });
   };
 
   return (
@@ -48,7 +61,18 @@ export function WorkingPanel({ repo, snap, activeDiff }: { repo: string; snap: R
           <strong>{STATE_LABEL[st.state]}</strong>
           <span>{st.conflicted.length ? `${st.conflicted.length} conflit(s) à résoudre` : 'Plus de conflits : vous pouvez continuer.'}</span>
           <div className="op-actions">
-            <button className="btn btn-sm" onClick={() => ui.run('Abandon…', () => api.abort(repo))}>
+            <button
+              className="btn btn-sm"
+              onClick={() =>
+                ui.ask({
+                  title: 'Abandonner l\'opération en cours',
+                  message: 'Le dépôt revient à son état d\'avant l\'opération. Les conflits déjà résolus seront perdus.',
+                  confirm: 'Abandonner',
+                  danger: true,
+                  onSubmit: () => ui.run('Abandon…', () => api.abort(repo)),
+                })
+              }
+            >
               Abandonner
             </button>
             <button className="btn btn-sm btn-primary" disabled={st.conflicted.length > 0} onClick={() => ui.run('Continuer…', () => api.continueOp(repo))}>
@@ -65,8 +89,8 @@ export function WorkingPanel({ repo, snap, activeDiff }: { repo: string; snap: R
             activeDiff={activeDiff}
             diffFor={(f) => ({ kind: 'working', path: f.path, staged: false, conflict: true })}
             menu={(f) => [
-              { label: 'Garder ma version (ours)', onClick: () => ui.run('Résolution…', () => api.resolve(repo, f.path, 'ours')) },
-              { label: 'Garder leur version (theirs)', onClick: () => ui.run('Résolution…', () => api.resolve(repo, f.path, 'theirs')) },
+              { label: 'Garder ma version', onClick: () => ui.run('Résolution…', () => api.resolve(repo, f.path, 'mine')) },
+              { label: 'Garder leur version', onClick: () => ui.run('Résolution…', () => api.resolve(repo, f.path, 'theirs')) },
               { label: 'Marquer comme résolu', onClick: () => ui.run('Indexation…', () => api.stage(repo, [f.path])) },
             ]}
             action={{ label: 'Résolu', onClick: (f) => ui.run('Indexation…', () => api.stage(repo, [f.path])) }}
@@ -107,13 +131,13 @@ export function WorkingPanel({ repo, snap, activeDiff }: { repo: string; snap: R
       <PanelSection
         title="Indexés"
         count={st.staged.length}
-        action={st.staged.length ? { label: 'Tout désindexer', onClick: () => ui.run('Désindexation…', () => api.unstage(repo, all(st.staged))) } : undefined}
+        action={st.staged.length ? { label: 'Tout désindexer', onClick: () => ui.run('Désindexation…', () => api.unstage(repo, withOld(st.staged))) } : undefined}
       >
         <FileList
           files={st.staged}
           activeDiff={activeDiff}
-          diffFor={(f) => ({ kind: 'working', path: f.path, staged: true })}
-          action={{ label: 'Retirer', onClick: (f) => ui.run('Désindexation…', () => api.unstage(repo, [f.path])) }}
+          diffFor={(f) => ({ kind: 'working', path: f.path, oldPath: f.oldPath, staged: true })}
+          action={{ label: 'Retirer', onClick: (f) => ui.run('Désindexation…', () => api.unstage(repo, withOld([f]))) }}
         />
         {st.staged.length === 0 && <div className="empty">Indexez des fichiers pour les commiter</div>}
       </PanelSection>

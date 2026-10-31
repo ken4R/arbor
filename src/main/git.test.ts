@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseNameStatus, parseRefs, parseStatus } from './git';
+import { gitSide, parseLog, parseNameStatus, parseRefs, parseStatus, pushRemote, translateGitError } from './git';
 
 describe('parseStatus', () => {
   it('sépare indexé, non indexé, non suivi et conflits', () => {
@@ -37,5 +37,53 @@ describe('parseNameStatus', () => {
       { status: 'M', path: 'a' },
       { status: 'R', oldPath: 'old', path: 'new' },
     ]);
+  });
+});
+
+describe('translateGitError', () => {
+  it('traduit les erreurs courantes', () => {
+    expect(translateGitError("error: the branch 'fix/typo' is not fully merged.\nIf you are sure you want to delete it, run 'git branch -D fix/typo'.")).toBe(
+      "La branche « fix/typo » n'est pas entièrement fusionnée. Cochez « Forcer » pour la supprimer quand même.",
+    );
+    expect(translateGitError(" ! [rejected]        main -> main (fetch first)\nerror: failed to push some refs")).toMatch(/^Push refusé/);
+    expect(translateGitError("fatal: a branch named 'x' already exists")).toBe('« x » existe déjà.');
+    expect(translateGitError("fatal: tag 'v1' already exists")).toBe('« v1 » existe déjà.');
+    expect(translateGitError("fatal: 'a b' is not a valid branch name")).toMatch(/^Nom invalide/);
+  });
+
+  it('garde la fin du message brut sinon', () => {
+    expect(translateGitError('a\nb\nc\nd\ne\nfatal: inconnu')).toBe('Git a renvoyé une erreur :\nc\nd\ne\nfatal: inconnu');
+  });
+});
+
+describe('parseLog', () => {
+  const FS = '\x1f';
+  const rec = (sha: string, parents: string, refs: string, message: string) => [sha, parents, 'Léa', 'lea@example.com', '1700000000', refs, message].join(FS);
+
+  it('sépare résumé et corps, même si le corps contient des séparateurs', () => {
+    const out = [rec('a1', 'b2 c3', 'HEAD -> refs/heads/main', `Résumé\n\nCorps avec ${FS} séparateur\x1e et lignes\n`), rec('b2', '', '', 'Racine')].join('\0') + '\0';
+    const commits = parseLog(out);
+    expect(commits).toHaveLength(2);
+    expect(commits[0]).toMatchObject({ sha: 'a1', parents: ['b2', 'c3'], subject: 'Résumé', body: `Corps avec ${FS} séparateur\x1e et lignes` });
+    expect(commits[0].refs.map((r) => r.name)).toEqual(['HEAD', 'main']);
+    expect(commits[1]).toMatchObject({ sha: 'b2', parents: [], subject: 'Racine', body: '' });
+  });
+});
+
+describe('gitSide', () => {
+  it('inverse ours et theirs pendant un rebase', () => {
+    expect(gitSide('merging', 'mine')).toBe('ours');
+    expect(gitSide('merging', 'theirs')).toBe('theirs');
+    expect(gitSide('rebasing', 'mine')).toBe('theirs');
+    expect(gitSide('rebasing', 'theirs')).toBe('ours');
+  });
+});
+
+describe('pushRemote', () => {
+  it('préfère origin, sinon l’unique remote', () => {
+    expect(pushRemote(['upstream', 'origin'])).toBe('origin');
+    expect(pushRemote(['upstream'])).toBe('upstream');
+    expect(() => pushRemote(['a', 'b'])).toThrow(/Plusieurs remotes/);
+    expect(() => pushRemote([])).toThrow(/Aucun remote/);
   });
 });

@@ -9,11 +9,16 @@ import { PanelSection } from './WorkingPanel';
 export function CommitPanel({ repo, snap, commit, activeDiff }: { repo: string; snap: RepoSnapshot; commit: Commit; activeDiff: DiffTarget | null }) {
   const ui = useUi();
   const [files, setFiles] = useState<FileChange[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let alive = true;
     setFiles(null);
-    api.commitFiles(repo, commit.sha).then((f) => alive && setFiles(f)).catch(() => alive && setFiles([]));
+    setError(null);
+    api
+      .commitFiles(repo, commit.sha)
+      .then((f) => alive && setFiles(f))
+      .catch((e) => alive && setError((e as Error).message));
     return () => {
       alive = false;
     };
@@ -52,13 +57,15 @@ export function CommitPanel({ repo, snap, commit, activeDiff }: { repo: string; 
         )}
       </div>
       <PanelSection title="Fichiers modifiés" count={files?.length ?? 0}>
-        {files === null ? (
+        {error ? (
+          <div className="empty">{error}</div>
+        ) : files === null ? (
           <div className="empty">Chargement…</div>
         ) : (
           <FileList
             files={files}
             activeDiff={activeDiff}
-            diffFor={(f) => ({ kind: 'commit', sha: commit.sha, path: f.path })}
+            diffFor={(f) => ({ kind: 'commit', sha: commit.sha, path: f.path, oldPath: f.oldPath })}
           />
         )}
       </PanelSection>

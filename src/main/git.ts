@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { readFile as fsReadFile } from 'node:fs/promises';
+import { readFile as fsReadFile, realpath } from 'node:fs/promises';
 import { basename, join, resolve as resolvePath, sep } from 'node:path';
 import type {
   Branch,
@@ -21,6 +21,33 @@ export class GitError extends Error {
   }
 }
 
+const GIT_ERRORS: [RegExp, (m: RegExpMatchArray) => string][] = [
+  [/branch '(.+?)' is not fully merged/, (m) => `La branche « ${m[1]} » n'est pas entièrement fusionnée. Cochez « Forcer » pour la supprimer quand même.`],
+  [/local changes to the following files would be overwritten/, () => 'Vos modifications locales seraient écrasées. Commitez-les ou mettez-les de côté (stash) avant.'],
+  [/untracked working tree files would be (?:overwritten|removed)/, () => 'Des fichiers non suivis seraient écrasés. Déplacez-les, ajoutez-les ou mettez-les de côté (stash) avant.'],
+  [/(?:branch named|tag) '(.+?)' already exists/i, (m) => `« ${m[1]} » existe déjà.`],
+  [/is not a valid (?:branch|tag) name|not a valid ref name/, () => 'Nom invalide pour Git (espaces, « .. », « ~ », « ^ », « : » et « \\ » sont interdits).'],
+  [/\[rejected\].*\((?:fetch first|non-fast-forward)\)/, () => 'Push refusé : la branche distante contient des commits que vous n\'avez pas. Faites un pull d\'abord.'],
+  [/Authentication failed|could not read Username|Permission denied \(publickey/, () => 'Authentification refusée par le serveur distant. Vérifiez vos identifiants ou votre clé SSH.'],
+  [/Could not resolve host|Connection timed out|unable to access/, () => 'Serveur distant injoignable. Vérifiez la connexion et l\'URL du remote.'],
+  [/Please tell me who you are|empty ident name/, () => 'Identité Git non configurée : définissez user.name et user.email (git config --global).'],
+  [/nothing to commit|no changes added to commit/, () => 'Rien à commiter.'],
+  [/CONFLICT|Automatic merge failed|could not apply|after resolving the conflicts/, () => 'Des conflits sont apparus : résolvez-les, puis cliquez sur Continuer (ou Abandonner).'],
+  [/Not possible to fast-forward|Need to specify how to reconcile divergent branches/, () => 'Les branches ont divergé : le pull ne peut pas avancer simplement. Fusionnez ou rebasez la branche distante.'],
+  [/There is no tracking information|has no upstream branch/, () => 'Cette branche ne suit aucune branche distante.'],
+  [/You have unstaged changes|cannot (?:rebase|pull with rebase): You have unstaged changes/, () => 'Des modifications non commitées empêchent l\'opération. Commitez-les ou mettez-les de côté (stash).'],
+];
+
+/** Traduit les erreurs Git courantes en français ; sinon renvoie la fin du message d'origine. */
+export function translateGitError(raw: string): string {
+  for (const [re, fmt] of GIT_ERRORS) {
+    const m = raw.match(re);
+    if (m) return fmt(m);
+  }
+  const tail = raw.split('\n').filter(Boolean).slice(-4).join('\n');
+  return `Git a renvoyé une erreur :\n${tail}`;
+}
+
 interface RunOptions {
   okCodes?: number[];
 }
@@ -34,8 +61,8 @@ export function git(repo: string, args: string[], opts: RunOptions = {}): Promis
       (err, stdout, stderr) => {
         const code = err ? (typeof err.code === 'number' ? err.code : 1) : 0;
         if (err && !(opts.okCodes ?? []).includes(code)) {
-          const msg = (stderr || err.message).trim();
-          reject(new GitError(msg.split('\n').slice(-6).join('\n'), stderr));
+          const msg = (stderr || stdout || err.message).trim();
+          reject(new GitError(translateGitError(msg), msg));
         } else {
           resolve(stdout);
         }
@@ -45,23 +72,28 @@ export function git(repo: string, args: string[], opts: RunOptions = {}): Promis
 }
 
 const FS = '\x1f';
-const RS = '\x1e';
+
+/** Format de `git log -z` : enregistrements séparés par NUL, message brut (%B) en dernier. */
+export const LOG_FORMAT = ['%H', '%P', '%an', '%ae', '%at', '%D', '%B'].join(FS);
 
 export function parseLog(out: string): Commit[] {
   return out
-    .split(RS)
-    .map((r) => r.replace(/^\n/, ''))
+    .split('\0')
     .filter(Boolean)
     .map((rec) => {
-      const [sha, parents, author, email, date, subject, refs, body] = rec.split(FS);
+      // Le message peut contenir n'importe quel caractère sauf NUL : seuls les 6 premiers séparateurs comptent.
+      const fields = rec.split(FS);
+      const [sha, parents, author, email, date, refs] = fields;
+      const message = fields.slice(6).join(FS);
+      const nl = message.indexOf('\n');
       return {
         sha,
         parents: parents ? parents.split(' ') : [],
         author,
         email,
         date: Number(date),
-        subject,
-        body: (body ?? '').trim(),
+        subject: (nl === -1 ? message : message.slice(0, nl)).trim(),
+        body: nl === -1 ? '' : message.slice(nl + 1).trim(),
         refs: parseRefs(refs ?? ''),
       };
     });
@@ -167,13 +199,21 @@ export async function status(repo: string): Promise<WorkingStatus> {
   return { ...parseStatus(out), state };
 }
 
-export async function log(repo: string, limit = 3000): Promise<Commit[]> {
-  const fmt = ['%H', '%P', '%an', '%ae', '%at', '%s', '%D', '%b'].join(FS) + RS;
-  const out = await git(
-    repo,
-    ['log', '--date-order', '--decorate=full', `--max-count=${limit}`, `--format=${fmt}`, '--exclude=refs/stash', '--all'],
-    { okCodes: [128] }, // dépôt sans commit
-  );
+export async function log(repo: string, hasHead: boolean, limit = 3000): Promise<Commit[]> {
+  // Branches, remotes et tags (pas les notes ni les stashs) ; HEAD seulement s'il existe (HEAD détachée).
+  const out = await git(repo, [
+    'log',
+    '-z',
+    '--date-order',
+    '--decorate=full',
+    `--max-count=${limit}`,
+    `--format=${LOG_FORMAT}`,
+    '--branches',
+    '--remotes',
+    '--tags',
+    ...(hasHead ? ['HEAD'] : []),
+    '--',
+  ]);
   return parseLog(out);
 }
 
@@ -198,25 +238,29 @@ export async function branches(repo: string): Promise<Branch[]> {
 }
 
 export async function stashes(repo: string): Promise<Stash[]> {
-  const out = await git(repo, ['stash', 'list', `--format=%gd${FS}%gs`]);
+  const out = await git(repo, ['stash', 'list', `--format=%gd${FS}%H${FS}%gs`]);
   return out
     .split('\n')
     .filter(Boolean)
     .map((line, index) => {
-      const [ref, message] = line.split(FS);
-      return { index, ref, message };
+      const [ref, sha, message] = line.split(FS);
+      return { index, ref, sha, message };
     });
 }
 
+export async function headSha(repo: string): Promise<string | null> {
+  return (await git(repo, ['rev-parse', '--verify', '-q', 'HEAD'], { okCodes: [1] })).trim() || null;
+}
+
 export async function snapshot(repo: string): Promise<RepoSnapshot> {
-  const [commits, br, tagsOut, remotesOut, st, stashList, headOut] = await Promise.all([
-    log(repo),
+  const head = await headSha(repo);
+  const [commits, br, tagsOut, remotesOut, st, stashList] = await Promise.all([
+    log(repo, head !== null),
     branches(repo),
     git(repo, ['tag', '--list']),
     git(repo, ['remote']),
     status(repo),
     stashes(repo),
-    git(repo, ['rev-parse', 'HEAD'], { okCodes: [128] }),
   ]);
   return {
     path: repo,
@@ -227,7 +271,7 @@ export async function snapshot(repo: string): Promise<RepoSnapshot> {
     remotes: remotesOut.split('\n').filter(Boolean),
     stashes: stashList,
     status: st,
-    head: headOut.trim() || null,
+    head,
   };
 }
 
@@ -253,21 +297,26 @@ export async function commitFiles(repo: string, sha: string): Promise<FileChange
   return parseNameStatus(out);
 }
 
+/** Chemins d'un fichier pour un diff : l'ancien chemin d'un renommage est inclus pour que git le détecte. */
+const diffPaths = (t: { path: string; oldPath?: string }) => (t.oldPath ? [t.oldPath, t.path] : [t.path]);
+
 export async function diff(repo: string, t: DiffTarget): Promise<string> {
   if (t.kind === 'commit') {
-    const parents = (await git(repo, ['rev-list', '--parents', '-n', '1', t.sha])).trim().split(' ').slice(1);
-    if (parents.length === 0) return git(repo, ['show', '--format=', '-M', t.sha, '--', t.path]);
-    return git(repo, ['diff', '-M', parents[0], t.sha, '--', t.path]);
+    const parents = (await git(repo, ['rev-list', '--parents', '-n', '1', '--end-of-options', t.sha, '--'])).trim().split(' ').slice(1);
+    if (parents.length === 0) return git(repo, ['show', '--format=', '-M', '--end-of-options', t.sha, '--', ...diffPaths(t)]);
+    return git(repo, ['diff', '-M', '--end-of-options', parents[0], t.sha, '--', ...diffPaths(t)]);
   }
   if (t.untracked) {
     return git(repo, ['diff', '--no-index', '--', '/dev/null', t.path], { okCodes: [1] });
   }
-  return git(repo, ['diff', ...(t.staged ? ['--cached'] : []), '--', t.path]);
+  return git(repo, ['diff', '-M', ...(t.staged ? ['--cached'] : []), '--', ...diffPaths(t)]);
 }
 
 export async function readFile(repo: string, path: string): Promise<string> {
-  const full = resolvePath(repo, path);
-  if (!full.startsWith(resolvePath(repo) + sep)) throw new GitError('Chemin en dehors du dépôt.', '');
+  // Comparaison sur les chemins réels : un lien symbolique ne doit pas permettre de sortir du dépôt.
+  const root = await realpath(repo);
+  const full = await realpath(resolvePath(root, path));
+  if (!full.startsWith(root + sep)) throw new GitError('Chemin en dehors du dépôt.', '');
   return fsReadFile(full, 'utf8');
 }
 
@@ -276,8 +325,7 @@ export async function stage(repo: string, paths: string[]) {
 }
 
 export async function unstage(repo: string, paths: string[]) {
-  const hasHead = (await git(repo, ['rev-parse', '--verify', 'HEAD'], { okCodes: [128] })).trim();
-  if (hasHead) await git(repo, ['reset', '-q', 'HEAD', '--', ...paths]);
+  if (await headSha(repo)) await git(repo, ['reset', '-q', 'HEAD', '--', ...paths]);
   else await git(repo, ['rm', '--cached', '-r', '-q', '--', ...paths]);
 }
 
@@ -294,34 +342,63 @@ export async function commit(repo: string, message: string, amend: boolean) {
   await git(repo, ['commit', '-m', message, ...(amend ? ['--amend'] : [])]);
 }
 
+/** Refuse un nom de branche ou de tag invalide (y compris ceux qui commencent par « - »). */
+async function checkRefName(repo: string, kind: 'branch' | 'tag', name: string) {
+  const args = kind === 'branch' ? ['--branch', name] : [`refs/tags/${name}`];
+  const valid = !name.startsWith('-') && (await git(repo, ['check-ref-format', ...args]).then(() => true, () => false));
+  if (!valid) throw new GitError(`« ${name} » n'est pas un nom de ${kind === 'branch' ? 'branche' : 'tag'} valide.`, '');
+}
+
+const SHA_RE = /^[0-9a-f]{4,64}$/i;
+
+/** Garantit qu'une révision est un SHA : `checkout` et `reset` n'acceptent pas `--end-of-options`. */
+function assertSha(rev: string) {
+  if (!SHA_RE.test(rev)) throw new GitError(`« ${rev} » n'est pas un identifiant de commit.`, '');
+}
+
 export async function checkout(repo: string, ref: string) {
-  // Une branche distante crée une branche locale qui la suit.
+  // `git checkout` ne gère pas `--end-of-options` : chaque cas passe par un nom complet ou un SHA vérifié.
   const br = await branches(repo);
   const target = br.find((b) => b.name === ref);
   if (target?.remote) {
+    // Une branche distante crée une branche locale qui la suit.
     const local = ref.split('/').slice(1).join('/');
+    await checkRefName(repo, 'branch', local);
     if (br.some((b) => !b.remote && b.name === local)) await git(repo, ['checkout', local]);
-    else await git(repo, ['checkout', '-b', local, '--track', ref]);
+    else await git(repo, ['checkout', '--track', '-b', local, `refs/remotes/${ref}`]);
     return;
   }
-  await git(repo, ['checkout', ref]);
+  if (target) {
+    await checkRefName(repo, 'branch', ref);
+    await git(repo, ['checkout', ref]);
+    return;
+  }
+  const tags = (await git(repo, ['tag', '--list'])).split('\n');
+  if (tags.includes(ref)) {
+    await git(repo, ['checkout', '--detach', `refs/tags/${ref}`]);
+    return;
+  }
+  assertSha(ref);
+  await git(repo, ['checkout', '--detach', ref]);
 }
 
 export async function createBranch(repo: string, name: string, from: string, doCheckout: boolean) {
-  if (doCheckout) await git(repo, ['checkout', '-b', name, from]);
-  else await git(repo, ['branch', name, from]);
+  await checkRefName(repo, 'branch', name);
+  // `checkout -b` ne gère pas `--end-of-options` : on crée la branche, puis on bascule dessus par son nom validé.
+  await git(repo, ['branch', '--end-of-options', name, from]);
+  if (doCheckout) await git(repo, ['checkout', name]);
 }
 
 export async function deleteBranch(repo: string, name: string, force: boolean) {
-  await git(repo, ['branch', force ? '-D' : '-d', name]);
+  await git(repo, ['branch', force ? '-D' : '-d', '--end-of-options', name]);
 }
 
 export async function merge(repo: string, ref: string) {
-  await git(repo, ['merge', '--no-edit', ref]);
+  await git(repo, ['merge', '--no-edit', '--end-of-options', ref]);
 }
 
 export async function rebase(repo: string, onto: string) {
-  await git(repo, ['rebase', onto]);
+  await git(repo, ['rebase', '--end-of-options', onto]);
 }
 
 export async function abort(repo: string) {
@@ -338,8 +415,18 @@ export async function continueOp(repo: string) {
   else if (state === 'reverting') await git(repo, ['revert', '--continue']);
 }
 
-export async function resolve(repo: string, path: string, side: 'ours' | 'theirs') {
-  await git(repo, ['checkout', `--${side}`, '--', path]);
+/**
+ * Côté git correspondant à « ma version » / « leur version ».
+ * Pendant un rebase, git inverse les rôles : « ours » est la base sur laquelle on rejoue, « theirs » le commit de l'utilisateur.
+ */
+export function gitSide(state: RepoState, side: 'mine' | 'theirs'): 'ours' | 'theirs' {
+  const mine = state === 'rebasing' ? 'theirs' : 'ours';
+  return side === 'mine' ? mine : mine === 'ours' ? 'theirs' : 'ours';
+}
+
+export async function resolve(repo: string, path: string, side: 'mine' | 'theirs') {
+  const state = await repoState(repo);
+  await git(repo, ['checkout', `--${gitSide(state, side)}`, '--', path]);
   await git(repo, ['add', '--', path]);
 }
 
@@ -351,11 +438,19 @@ export async function pull(repo: string) {
   await git(repo, ['pull', '--ff']);
 }
 
+/** Remote sur lequel publier une nouvelle branche : origin s'il existe, sinon l'unique remote. */
+export function pushRemote(remotes: string[]): string {
+  if (remotes.includes('origin')) return 'origin';
+  if (remotes.length === 1) return remotes[0];
+  throw new GitError(remotes.length ? 'Plusieurs remotes sans « origin » : impossible de choisir où publier.' : 'Aucun remote configuré.', '');
+}
+
 export async function push(repo: string, setUpstream: boolean) {
   if (setUpstream) {
     const st = await status(repo);
     if (!st.branch) throw new GitError('HEAD détachée : impossible de pousser.', '');
-    await git(repo, ['push', '-u', 'origin', st.branch]);
+    const remotes = (await git(repo, ['remote'])).split('\n').filter(Boolean);
+    await git(repo, ['push', '-u', '--end-of-options', pushRemote(remotes), st.branch]);
   } else {
     await git(repo, ['push']);
   }
@@ -365,28 +460,45 @@ export async function stashSave(repo: string, message: string) {
   await git(repo, ['stash', 'push', '--include-untracked', ...(message ? ['-m', message] : [])]);
 }
 
-export async function stashApply(repo: string, index: number, pop: boolean) {
-  await git(repo, ['stash', pop ? 'pop' : 'apply', `stash@{${index}}`]);
+/** Vérifie que stash@{index} est toujours le stash affiché (un autre outil a pu en ajouter un entre-temps). */
+async function stashRef(repo: string, index: number, sha: string): Promise<string> {
+  const ref = `stash@{${index}}`;
+  const actual = (await git(repo, ['rev-parse', '--verify', '-q', ref], { okCodes: [1] })).trim();
+  if (actual !== sha) throw new GitError('La liste des stashs a changé : rafraîchissez et réessayez.', '');
+  return ref;
 }
 
-export async function stashDrop(repo: string, index: number) {
-  await git(repo, ['stash', 'drop', `stash@{${index}}`]);
+export async function stashApply(repo: string, index: number, sha: string, pop: boolean) {
+  const ref = await stashRef(repo, index, sha);
+  const args = ['stash', pop ? 'pop' : 'apply'];
+  // Restaure aussi l'indexation ; si elle ne peut pas être reconstruite, on se rabat sur les seules modifications.
+  try {
+    await git(repo, [...args, '--index', ref]);
+  } catch {
+    await git(repo, [...args, ref]);
+  }
+}
+
+export async function stashDrop(repo: string, index: number, sha: string) {
+  await git(repo, ['stash', 'drop', await stashRef(repo, index, sha)]);
 }
 
 export async function createTag(repo: string, name: string, sha: string) {
-  await git(repo, ['tag', name, sha]);
+  await checkRefName(repo, 'tag', name);
+  await git(repo, ['tag', '--end-of-options', name, sha]);
 }
 
 export async function cherryPick(repo: string, sha: string) {
-  await git(repo, ['cherry-pick', sha]);
+  await git(repo, ['cherry-pick', '--end-of-options', sha]);
 }
 
 export async function revert(repo: string, sha: string) {
-  await git(repo, ['revert', '--no-edit', sha]);
+  await git(repo, ['revert', '--no-edit', '--end-of-options', sha]);
 }
 
 export async function reset(repo: string, sha: string, mode: 'soft' | 'mixed' | 'hard') {
-  await git(repo, ['reset', `--${mode}`, sha]);
+  assertSha(sha);
+  await git(repo, ['reset', `--${mode}`, sha, '--']);
 }
 
 export async function isRepo(path: string): Promise<boolean> {

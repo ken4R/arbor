@@ -23,8 +23,9 @@ export function fullDate(epochSeconds: number): string {
   return new Date(epochSeconds * 1000).toLocaleString('fr-FR', { dateStyle: 'medium', timeStyle: 'short' });
 }
 
-export const LANE_COLORS = ['#3fb6a8', '#e0a63a', '#8f7ff0', '#e0607e', '#5aa6e8', '#9bc25b', '#d9793f', '#c46fd0'];
-export const laneColor = (i: number) => LANE_COLORS[i % LANE_COLORS.length];
+// Couleurs des lignes du graphe : variables --lane-0 à --lane-7 de styles.css.
+const LANE_COUNT = 8;
+export const laneColor = (i: number) => `var(--lane-${i % LANE_COUNT})`;
 
 export function initials(name: string): string {
   return name

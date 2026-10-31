@@ -154,7 +154,7 @@ function ConflictView({ repo, path, onClose }: { repo: string; path: string; onC
     };
   }, [repo, path]);
 
-  const keep = async (side: 'ours' | 'theirs') => {
+  const keep = async (side: 'mine' | 'theirs') => {
     if (await ui.run('Résolution…', () => api.resolve(repo, path, side))) onClose();
   };
   const count = lines?.filter((l) => l.text.startsWith('<<<<<<<')).length ?? 0;
@@ -166,7 +166,7 @@ function ConflictView({ repo, path, onClose }: { repo: string; path: string; onC
           <span className="diff-path">{path}</span>
           <span className="diff-context conflict-tag">{count} conflit{count > 1 ? 's' : ''}</span>
         </div>
-        <button className="btn btn-sm conflict-ours" onClick={() => keep('ours')}>
+        <button className="btn btn-sm conflict-ours" onClick={() => keep('mine')}>
           Garder ma version
         </button>
         <button className="btn btn-sm conflict-theirs" onClick={() => keep('theirs')}>

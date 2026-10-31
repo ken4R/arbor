@@ -2,10 +2,11 @@ import { useEffect, useState } from 'react';
 import { api } from '../api';
 import { Logo } from './Icons';
 
-export function Welcome({ onOpen }: { onOpen: (path: string) => void }) {
+export function Welcome({ onOpen, initialError }: { onOpen: (path: string) => void; initialError?: string | null }) {
   const [recent, setRecent] = useState<string[]>([]);
   const [cloneUrl, setCloneUrl] = useState('');
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(initialError ?? null);
+  useEffect(() => setError(initialError ?? null), [initialError]);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {

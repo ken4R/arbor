@@ -20,12 +20,25 @@ function remember(path: string) {
   writeFileSync(recentFile(), JSON.stringify(list));
 }
 
+// Dépôts que l'utilisateur a ouverts (dialogue, argument ou liste des récents) : le rendu ne peut agir que sur eux.
+const openedRepos = new Set<string>();
+
 async function openRepo(path: string): Promise<string> {
   if (!(await g.isRepo(path))) throw new Error(`« ${basename(path)} » n'est pas un dépôt Git.`);
   const top = await g.toplevel(path);
+  openedRepos.add(top);
   remember(top);
   return top;
 }
+
+function assertOpened(repo: unknown) {
+  if (typeof repo !== 'string' || !(openedRepos.has(repo) || loadRecent().includes(repo))) {
+    throw new Error("Ce dépôt n'a pas été ouvert dans Arbor.");
+  }
+}
+
+// Handlers qui ne reçoivent pas de dépôt en premier argument.
+const NO_REPO = new Set(['openRepoDialog', 'initRepoDialog', 'cloneRepo', 'recentRepos', 'initialRepo']);
 
 const handlers: Record<string, (...args: any[]) => Promise<unknown>> = {
   async openRepoDialog() {
@@ -42,7 +55,7 @@ const handlers: Record<string, (...args: any[]) => Promise<unknown>> = {
     const r = await dialog.showOpenDialog(win!, { properties: ['openDirectory', 'createDirectory'], title: 'Dossier de destination' });
     if (r.canceled) return null;
     const name = basename(url).replace(/\.git$/, '') || 'repo';
-    await g.git(r.filePaths[0], ['clone', url, name]);
+    await g.git(r.filePaths[0], ['clone', '--', url, name]);
     return openRepo(join(r.filePaths[0], name));
   },
   recentRepos: async () => loadRecent(),
@@ -86,6 +99,7 @@ const handlers: Record<string, (...args: any[]) => Promise<unknown>> = {
 for (const [name, fn] of Object.entries(handlers)) {
   ipcMain.handle(`arbor:${name}`, async (_e, ...args) => {
     try {
+      if (!NO_REPO.has(name)) assertOpened(args[0]);
       return { value: await fn(...args) };
     } catch (err) {
       return { error: err instanceof Error ? err.message : String(err) };

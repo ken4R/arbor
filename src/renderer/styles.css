@@ -18,6 +18,14 @@
   --del-bg: rgba(224, 96, 126, 0.12);
   --mono: 'JetBrains Mono', 'SF Mono', Menlo, Consolas, monospace;
   --radius: 6px;
+  --lane-0: #3fb6a8;
+  --lane-1: #e0a63a;
+  --lane-2: #8f7ff0;
+  --lane-3: #e0607e;
+  --lane-4: #5aa6e8;
+  --lane-5: #9bc25b;
+  --lane-6: #d9793f;
+  --lane-7: #c46fd0;
   color-scheme: dark;
 }
 

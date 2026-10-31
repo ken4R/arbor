@@ -74,13 +74,24 @@ export function Sidebar({ snap, onSelectCommit }: { snap: RepoSnapshot; onSelect
             title={s.ref}
             onContextMenu={(e) =>
               ui.openMenu(e, [
-                { label: 'Appliquer', onClick: () => ui.run('Application du stash…', () => api.stashApply(repo, s.index, false)) },
-                { label: 'Appliquer et supprimer (pop)', onClick: () => ui.run('Pop…', () => api.stashApply(repo, s.index, true)) },
+                { label: 'Appliquer', onClick: () => ui.run('Application du stash…', () => api.stashApply(repo, s.index, s.sha, false)) },
+                { label: 'Appliquer et supprimer (pop)', onClick: () => ui.run('Pop…', () => api.stashApply(repo, s.index, s.sha, true)) },
                 'separator',
-                { label: 'Supprimer', danger: true, onClick: () => ui.run('Suppression du stash…', () => api.stashDrop(repo, s.index)) },
+                {
+                  label: 'Supprimer…',
+                  danger: true,
+                  onClick: () =>
+                    ui.ask({
+                      title: 'Supprimer le stash',
+                      message: `« ${s.message} » sera définitivement supprimé.`,
+                      confirm: 'Supprimer',
+                      danger: true,
+                      onSubmit: () => ui.run('Suppression du stash…', () => api.stashDrop(repo, s.index, s.sha)),
+                    }),
+                },
               ])
             }
-            onDoubleClick={() => ui.run('Application du stash…', () => api.stashApply(repo, s.index, false))}
+            onDoubleClick={() => ui.run('Application du stash…', () => api.stashApply(repo, s.index, s.sha, false))}
           >
             <span className="side-label">{s.message}</span>
           </div>

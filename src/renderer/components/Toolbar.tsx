@@ -47,7 +47,7 @@ export function Toolbar({ repo, snap, busy, onClose, onSwitch, onRefresh }: Prop
     ui.openMenu(e, [
       ...recent.filter((p) => p !== repo).map((p) => ({ label: p.split(/[\\/]/).pop()!, onClick: () => onSwitch(p) })),
       ...(recent.length > 1 ? (['separator'] as const) : []),
-      { label: 'Ouvrir un autre dépôt…', onClick: async () => { const p = await api.openRepoDialog(); if (p) onSwitch(p); } },
+      { label: 'Ouvrir un autre dépôt…', onClick: () => ui.run('Ouverture…', async () => { const p = await api.openRepoDialog(); if (p) onSwitch(p); }) },
       { label: 'Fermer le dépôt', onClick: onClose },
     ]);
 
@@ -74,12 +74,13 @@ export function Toolbar({ repo, snap, busy, onClose, onSwitch, onRefresh }: Prop
             ui.ask({
               title: 'Mettre de côté les modifications',
               label: 'Message (facultatif)',
+              optional: true,
               confirm: 'Stash',
               onSubmit: (msg) => ui.run('Stash…', () => api.stashSave(repo, msg)),
             })
           }
         />
-        <ToolButton label="Pop" icon={<Icon.pop />} disabled={!snap?.stashes.length || !!busy} onClick={() => ui.run('Pop…', () => api.stashApply(repo, 0, true))} />
+        <ToolButton label="Pop" icon={<Icon.pop />} disabled={!snap?.stashes.length || !!busy} onClick={() => snap && ui.run('Pop…', () => api.stashApply(repo, 0, snap.stashes[0].sha, true))} />
       </div>
       <div className="toolbar-right">
         {busy && <span className="busy"><span className="spinner" />{busy}</span>}

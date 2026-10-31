@@ -27,8 +27,9 @@ export function GraphView({ snap, rows, selection, onSelect }: Props) {
 
   const st = snap.status;
   const changeCount = st.staged.length + st.unstaged.length + st.conflicted.length;
-  const showWip = changeCount > 0 || snap.commits.length === 0;
-  const offset = showWip ? 1 : 0;
+  // La ligne du répertoire de travail (index 0) reste toujours visible : c'est l'accès au panneau de commit.
+  const clean = changeCount === 0 && st.state === 'clean';
+  const offset = 1;
   const total = snap.commits.length + offset;
 
   const headIndex = useMemo(() => snap.commits.findIndex((c) => c.sha === snap.head), [snap]);
@@ -43,7 +44,7 @@ export function GraphView({ snap, rows, selection, onSelect }: Props) {
     return () => ro.disconnect();
   }, []);
 
-  const selectedIndex = selection.kind === 'wip' ? (showWip ? 0 : -1) : snap.commits.findIndex((c) => c.sha === selection.sha) + offset;
+  const selectedIndex = selection.kind === 'wip' ? 0 : snap.commits.findIndex((c) => c.sha === selection.sha) + offset;
 
   // Fait défiler jusqu'à la ligne sélectionnée si elle est hors de vue.
   useEffect(() => {
@@ -56,7 +57,7 @@ export function GraphView({ snap, rows, selection, onSelect }: Props) {
 
   const selectIndex = (i: number) => {
     if (i < 0 || i >= total) return;
-    if (showWip && i === 0) onSelect({ kind: 'wip' });
+    if (i === 0) onSelect({ kind: 'wip' });
     else onSelect({ kind: 'commit', sha: snap.commits[i - offset].sha });
   };
 
@@ -87,7 +88,7 @@ export function GraphView({ snap, rows, selection, onSelect }: Props) {
           {visible.map((i) => {
             const style = { top: i * ROW_H, gridTemplateColumns: `${graphCol}px 1fr 160px 120px` };
             const selected = i === selectedIndex;
-            if (showWip && i === 0) {
+            if (i === 0) {
               return (
                 <div key="wip" className={`row wip-row${selected ? ' selected' : ''}`} style={style} onClick={() => onSelect({ kind: 'wip' })}>
                   <svg className="row-graph" width={graphCol} height={ROW_H}>
@@ -95,8 +96,8 @@ export function GraphView({ snap, rows, selection, onSelect }: Props) {
                     <circle cx={x(wipCol)} cy={ROW_H / 2} r={6} fill="var(--bg)" stroke="var(--text-dim)" strokeWidth={2} strokeDasharray="3 2" />
                   </svg>
                   <span className="row-msg">
-                    <span className="wip-label">{snap.commits.length === 0 ? 'Premier commit' : 'Modifications en cours'}</span>
-                    <span className="wip-count">{changeCount} fichier{changeCount > 1 ? 's' : ''}</span>
+                    <span className="wip-label">{snap.commits.length === 0 ? 'Premier commit' : clean ? 'Répertoire de travail propre' : 'Modifications en cours'}</span>
+                    {changeCount > 0 && <span className="wip-count">{changeCount} fichier{changeCount > 1 ? 's' : ''}</span>}
                   </span>
                   <span />
                   <span />
@@ -114,7 +115,7 @@ export function GraphView({ snap, rows, selection, onSelect }: Props) {
                 onClick={() => onSelect({ kind: 'commit', sha: c.sha })}
                 onContextMenu={(e) => ui.openMenu(e, commitMenu(ui, snap, c))}
               >
-                <RowGraph row={row} width={graphCol} commit={c} dashedTop={showWip && idx === 0 && headIndex === 0} />
+                <RowGraph row={row} width={graphCol} commit={c} dashedTop={idx === 0 && headIndex === 0} />
                 <span className="row-msg">
                   <RefBadges commit={c} snap={snap} color={laneColor(row.color)} />
                   <span className="row-subject">{c.subject}</span>
