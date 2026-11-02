@@ -20,6 +20,8 @@ export interface FileSearchState {
   status: 'pending' | 'done' | 'error';
   shas: string[];
   truncated: boolean;
+  /** `shas` contient un résultat reçu (éventuellement d'une requête précédente sur le même texte). */
+  hasResult: boolean;
   error?: string;
 }
 
@@ -61,22 +63,26 @@ export function useSearch(repo: string): [SearchState, (patch: Partial<SearchSta
 
 /** Empreinte des refs : la recherche par fichier est relancée seulement quand elle change. */
 export function refsKey(snap: RepoSnapshot): string {
-  return [snap.head ?? '', ...snap.branches.map((b) => `${b.name}=${b.sha}`)].join('\n');
+  // `snap.tags` ne contient que les noms : les SHA des tags viennent des décorations des commits chargés.
+  const tags = snap.commits.flatMap((c) => c.refs.filter((r) => r.type === 'tag').map((r) => `tag:${r.name}=${c.sha}`));
+  return [snap.head ?? '', ...snap.branches.map((b) => `${b.name}=${b.sha}`), ...tags].join('\n');
 }
 
 /** Lance la recherche par fichier ; une réponse arrivée après une requête plus récente est ignorée. */
 export async function runFileSearch(repo: string, text: string, key: string): Promise<void> {
   const req = ++reqCounter;
-  setSearch(repo, (s) => ({
-    file: { text, refsKey: key, req, status: 'pending', shas: s.file?.text === text ? s.file.shas : [], truncated: false },
-  }));
+  setSearch(repo, (s) => {
+    // Pendant une relance du même texte, les résultats précédents restent affichés.
+    const prev = s.file?.text === text && s.file.hasResult ? s.file : null;
+    return { file: { text, refsKey: key, req, status: 'pending', shas: prev?.shas ?? [], truncated: prev?.truncated ?? false, hasResult: !!prev } };
+  });
   const apply = (f: Partial<FileSearchState>) =>
     setSearch(repo, (s) => (s.file?.req === req ? { file: { ...s.file, ...f } } : {}));
   try {
     const r = await api.searchCommitsByPath(repo, text);
-    apply({ status: 'done', shas: r.shas, truncated: r.truncated });
+    apply({ status: 'done', shas: r.shas, truncated: r.truncated, hasResult: true });
   } catch (e) {
-    apply({ status: 'error', shas: [], error: (e as Error).message });
+    apply({ status: 'error', shas: [], hasResult: false, error: (e as Error).message });
   }
 }
 

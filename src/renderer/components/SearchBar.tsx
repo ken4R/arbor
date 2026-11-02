@@ -38,10 +38,12 @@ export function SearchBar({ snap, matches, outside, selectedSha, onSelect }: Pro
     return () => window.removeEventListener('keydown', onKey);
   }, [update]);
 
-  // Les refs ont changé (commit, fetch…) : la recherche par fichier est relancée sur le même texte.
+  // Les refs ont changé (commit, fetch…) : la recherche par fichier est relancée sur le même texte, seulement
+  // si elle est affichée ; à la réouverture ou au retour en mode Fichier, l'empreinte mémorisée déclenche la relance.
   useEffect(() => {
+    if (!s.open || s.field !== 'file') return;
     if (s.file && s.file.status !== 'pending' && s.file.refsKey !== key) void runFileSearch(repo, s.file.text, key);
-  }, [repo, key, s.file]);
+  }, [repo, key, s.open, s.field, s.file]);
 
   if (!s.open) return null;
 

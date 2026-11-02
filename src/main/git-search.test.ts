@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseShaList, pathContainsSpec } from './git';
+import { fileSearchArgs, parseShaList, pathContainsSpec } from './git';
 
 describe('pathContainsSpec', () => {
   it('entoure le texte de jokers, insensible à la casse', () => {
@@ -12,6 +12,15 @@ describe('pathContainsSpec', () => {
 
   it('garde espaces et accents tels quels', () => {
     expect(pathContainsSpec('mon écran.js')).toBe(':(icase)*mon écran.js*');
+  });
+});
+
+describe('fileSearchArgs', () => {
+  it("suit tout l'historique et place le pathspec après --", () => {
+    const args = fileSearchArgs('login');
+    expect(args).toContain('--full-history');
+    expect(args.slice(-2)).toEqual(['--', ':(icase)*login*']);
+    expect(args.indexOf('--full-history')).toBeLessThan(args.indexOf('--'));
   });
 });
 

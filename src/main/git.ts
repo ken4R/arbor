@@ -237,25 +237,32 @@ export function parseShaList(out: string): string[] {
     .filter(Boolean);
 }
 
-export async function searchCommitsByPath(repo: string, text: string): Promise<FileSearchResult> {
-  const needle = text.trim();
-  if (!needle) return { shas: [], truncated: false };
-  const head = await headSha(repo);
-  // Dépôt vide : aucun commit, et `git log` échouerait.
-  if (head === null) return { shas: [], truncated: false };
+/** Arguments de `git log` pour la recherche par fichier (dépôt non vide). */
+export function fileSearchArgs(text: string): string[] {
   // Mêmes révisions que `log()` pour que les résultats correspondent aux commits du graphe.
-  const out = await git(repo, [
+  // `--full-history` : sans lui, une branche fusionnée sans effet sur le fichier (`-s ours`…) est élaguée.
+  return [
     'log',
     '-z',
     '--format=%H',
+    '--full-history',
     `--max-count=${FILE_SEARCH_LIMIT}`,
     '--branches',
     '--remotes',
     '--tags',
     'HEAD',
     '--',
-    pathContainsSpec(needle),
-  ]);
+    pathContainsSpec(text),
+  ];
+}
+
+export async function searchCommitsByPath(repo: string, text: string): Promise<FileSearchResult> {
+  const needle = text.trim();
+  if (!needle) return { shas: [], truncated: false };
+  const head = await headSha(repo);
+  // Dépôt vide : aucun commit, et `git log` échouerait.
+  if (head === null) return { shas: [], truncated: false };
+  const out = await git(repo, fileSearchArgs(needle));
   const shas = parseShaList(out);
   return { shas, truncated: shas.length >= FILE_SEARCH_LIMIT };
 }

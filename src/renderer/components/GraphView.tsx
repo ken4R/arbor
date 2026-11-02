@@ -51,7 +51,8 @@ export function GraphView({ snap, rows, selection, onSelect }: Props) {
   const [search, updateSearch] = useSearch(snap.path);
   const normalized = useMemo(() => snap.commits.map(normalizeCommit), [snap]);
   const searchText = search.text.trim();
-  const fileResult = search.field === 'file' && search.file?.text === searchText && search.file.status !== 'error' ? search.file : null;
+  // Rien n'est estompé tant qu'une recherche par fichier n'a renvoyé aucun résultat (attente ou erreur).
+  const fileResult = search.field === 'file' && search.file?.text === searchText && search.file.hasResult ? search.file : null;
   const { matches, matchSet, outside } = useMemo(() => {
     if (!search.open || !searchText) return { matches: null, matchSet: null, outside: 0 };
     let list: string[];
