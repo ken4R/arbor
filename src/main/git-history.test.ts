@@ -1,5 +1,55 @@
-import { describe, expect, it } from 'vitest';
-import { parseBlame, parseFileLog } from './git';
+import { execFileSync } from 'node:child_process';
+import { appendFileSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { appendRevisions, nextPageArgs } from '../renderer/blame';
+import type { FileRevision } from '../shared/types';
+import { fileLog, parseBlame, parseFileLog } from './git';
+
+describe('fileLog : pagination sur un vrai dépôt', () => {
+  let dir = '';
+  const g = (...args: string[]) => execFileSync('git', args, { cwd: dir, env: { ...process.env, GIT_AUTHOR_NAME: 'T', GIT_AUTHOR_EMAIL: 't@x', GIT_COMMITTER_NAME: 'T', GIT_COMMITTER_EMAIL: 't@x' } });
+  const commit = (file: string, msg: string) => {
+    appendFileSync(join(dir, file), `${msg}\n`);
+    g('add', '-A');
+    g('commit', '-qm', msg);
+  };
+
+  beforeAll(() => {
+    dir = mkdtempSync(join(tmpdir(), 'arbor-filelog-'));
+    g('init', '-q', '-b', 'main');
+    // Versions de a.txt entrecoupées de commits sans rapport, renommage en b.txt, puis d'autres versions.
+    for (const i of [1, 2, 3]) {
+      commit('a.txt', `a${i}`);
+      commit('autre.txt', `o${i}`);
+    }
+    g('mv', 'a.txt', 'b.txt');
+    g('commit', '-qm', 'renomme');
+    for (const i of [4, 5, 6]) {
+      commit('autre.txt', `o${i}`);
+      commit('b.txt', `b${i}`);
+    }
+  });
+  afterAll(() => rmSync(dir, { recursive: true, force: true }));
+
+  it('enchaîne les pages sans doublon ni trou, à travers le renommage', async () => {
+    const all = await fileLog(dir, 'b.txt', null, 0);
+    expect(all.map((r) => r.subject)).toEqual(['b6', 'b5', 'b4', 'renomme', 'a3', 'a2', 'a1']);
+    // Pages de 2 : la 2e se termine sur le renommage, la 3e repart sous l'ancien nom.
+    let revs: FileRevision[] = [];
+    let page: FileRevision[];
+    do {
+      const last = revs[revs.length - 1];
+      const args = last ? nextPageArgs(last) : { path: 'b.txt', rev: null, skip: 0 };
+      page = await fileLog(dir, args.path, args.rev, args.skip, 2);
+      revs = appendRevisions(revs, page);
+    } while (page.length === 2);
+    expect(revs.map((r) => r.subject)).toEqual(all.map((r) => r.subject));
+    expect(revs[3]).toMatchObject({ status: 'R', path: 'b.txt', oldPath: 'a.txt' });
+    expect(revs[6].path).toBe('a.txt');
+  });
+});
 
 const A = 'a'.repeat(40);
 const B = 'b'.repeat(40);

@@ -1,4 +1,26 @@
-import type { BlameLine } from '../shared/types';
+import type { BlameLine, FileRevision } from '../shared/types';
+
+// --- Pagination de l'historique d'un fichier ---
+
+/**
+ * Arguments de `fileLog` pour la page suivante : on repart de la dernière version chargée,
+ * sous son ancien nom s'il a été renommé, en sautant ce commit (`--skip` compte les commits parcourus).
+ */
+export function nextPageArgs(last: FileRevision): { path: string; rev: string; skip: number } {
+  return { path: last.oldPath ?? last.path, rev: last.sha, skip: 1 };
+}
+
+/** Ajoute une page à la liste en écartant les SHA déjà présents. */
+export function appendRevisions(prev: FileRevision[], page: FileRevision[]): FileRevision[] {
+  const seen = new Set(prev.map((r) => r.sha));
+  const out = [...prev];
+  for (const r of page) {
+    if (seen.has(r.sha)) continue;
+    seen.add(r.sha);
+    out.push(r);
+  }
+  return out;
+}
 
 /** Suite de lignes consécutives attribuées au même commit. */
 export interface BlameGroup {

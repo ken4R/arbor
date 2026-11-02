@@ -108,7 +108,11 @@ export interface ArborApi {
   commitFiles(repo: string, sha: string): Promise<FileChange[]>;
   diff(repo: string, target: DiffTarget): Promise<string>;
   readFile(repo: string, path: string): Promise<string>;
-  /** Commits qui ont modifié un fichier (renommages suivis), par pages de 200 ; `rev` null = HEAD. */
+  /**
+   * Commits qui ont modifié un fichier (renommages suivis), par pages de 200 ; `rev` null = HEAD.
+   * `skip` compte les commits parcourus depuis `rev` (pas les versions) : pour la page suivante,
+   * passer la dernière version chargée (`oldPath ?? path`, `sha`) avec `skip` = 1.
+   */
   fileLog(repo: string, path: string, rev: string | null, skip: number): Promise<FileRevision[]>;
   /** Auteur de chaque ligne ; `rev` null = arbre de travail (lignes non commitées comprises). */
   blame(repo: string, path: string, rev: string | null): Promise<Blame>;

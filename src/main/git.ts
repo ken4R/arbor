@@ -354,10 +354,17 @@ async function historyRev(repo: string, rev: string | null): Promise<string> {
   return head;
 }
 
-export async function fileLog(repo: string, path: string, rev: string | null, skip: number): Promise<FileRevision[]> {
+/**
+ * Versions d'un fichier depuis `rev`.
+ * Attention : avec --follow, `skip` compte les commits parcourus depuis `rev`, pas les versions du fichier.
+ * Page suivante : `rev` = SHA de la dernière version chargée, `path` = son `oldPath ?? path`, `skip` = 1 (saute ce commit).
+ * `limit` ne sert qu'aux tests (le rendu ne le passe pas).
+ */
+export async function fileLog(repo: string, path: string, rev: string | null, skip: number, limit = FILE_LOG_PAGE): Promise<FileRevision[]> {
   if (!path) throw new GitError('Aucun fichier indiqué.', '');
   const start = await historyRev(repo, rev);
   const n = Math.max(0, Math.floor(Number(skip) || 0));
+  const max = Math.min(FILE_LOG_PAGE, Math.max(1, Math.floor(Number(limit) || FILE_LOG_PAGE)));
   const out = await git(repo, [
     'log',
     '--follow',
@@ -366,7 +373,7 @@ export async function fileLog(repo: string, path: string, rev: string | null, sk
     '--name-status',
     `--format=${FILE_LOG_FORMAT}`,
     `--skip=${n}`,
-    `--max-count=${FILE_LOG_PAGE}`,
+    `--max-count=${max}`,
     '--end-of-options',
     start,
     '--',

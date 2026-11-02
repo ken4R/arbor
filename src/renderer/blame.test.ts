@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { groupBlame, isUncommitted } from './blame';
+import { appendRevisions, groupBlame, isUncommitted, nextPageArgs } from './blame';
 
 const l = (sha: string, line: number) => ({ sha, origLine: line, line, text: `ligne ${line}` });
 
@@ -22,5 +22,19 @@ describe('isUncommitted', () => {
   it('reconnaît le SHA nul des lignes non commitées', () => {
     expect(isUncommitted('0'.repeat(40))).toBe(true);
     expect(isUncommitted('0a'.repeat(20))).toBe(false);
+  });
+});
+
+const rev = (sha: string, path: string, oldPath?: string) => ({ sha, parents: [], author: 'A', email: 'a@x', date: 0, subject: sha, path, oldPath, status: (oldPath ? 'R' : 'M') as 'R' | 'M' });
+
+describe("pagination de l'historique", () => {
+  it('repart de la dernière version, sous son ancien nom, en sautant ce commit', () => {
+    expect(nextPageArgs(rev('c', 'b.txt'))).toEqual({ path: 'b.txt', rev: 'c', skip: 1 });
+    expect(nextPageArgs(rev('r', 'b.txt', 'a.txt'))).toEqual({ path: 'a.txt', rev: 'r', skip: 1 });
+  });
+
+  it('écarte les SHA déjà chargés', () => {
+    const out = appendRevisions([rev('a', 'x'), rev('b', 'x')], [rev('b', 'x'), rev('c', 'x'), rev('c', 'x')]);
+    expect(out.map((r) => r.sha)).toEqual(['a', 'b', 'c']);
   });
 });

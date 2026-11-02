@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Blame, FileRevision, RepoSnapshot } from '../../shared/types';
 import { api } from '../api';
-import { groupBlame, isUncommitted } from '../blame';
+import { appendRevisions, groupBlame, isUncommitted, nextPageArgs } from '../blame';
 import type { FileViewTarget, Ui } from '../ui';
 import { fullDate, relativeDate } from '../util';
 import type { MenuItem } from './ContextMenu';
@@ -35,15 +35,25 @@ export function FileView({ repo, snap, target, onClose, onSelectCommit }: Props)
   const targetKey = JSON.stringify(target);
   useEffect(() => setTab(target.tab), [targetKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Échap ferme toute la vue : capturé avant le gestionnaire du diff intégré, sauf si un dialogue ou un menu est ouvert.
+  // Échap ferme toute la vue, sauf si un dialogue ou un menu est ouvert.
+  // Écouté sur `document` en remontée : après les gestionnaires React (dialogue) et avant celui du diff intégré
+  // (sur `window`), qui ne doit jamais masquer le diff. L'état du dialogue est relevé avant que React ne le ferme.
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape' || document.querySelector('.dialog, .menu')) return;
-      e.stopPropagation();
-      onClose();
+    let overlayOpen = false;
+    const onCapture = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') overlayOpen = !!document.querySelector('.dialog, .menu');
     };
-    window.addEventListener('keydown', onKey, true);
-    return () => window.removeEventListener('keydown', onKey, true);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      e.stopPropagation();
+      if (!overlayOpen) onClose();
+    };
+    window.addEventListener('keydown', onCapture, true);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('keydown', onCapture, true);
+      document.removeEventListener('keydown', onKey);
+    };
   }, [onClose]);
 
   const blameRev = target.blameRev !== undefined ? target.blameRev : target.rev;
@@ -97,36 +107,46 @@ function HistoryTab({ repo, snap, path, rev, onSelectCommit }: { repo: string; s
     setSelected(null);
   }, [repo, path, rev]);
 
-  useEffect(() => {
-    const id = ++request.current;
-    setLoading(true);
-    setError(null);
-    api
-      .fileLog(repo, path, rev, 0)
-      .then((page) => {
-        if (id !== request.current) return;
-        setRevs(page);
-        setMore(page.length === PAGE);
+  // Nombre de versions déjà chargées : un rechargement (HEAD ou branche déplacée) en recharge autant.
+  const loaded = useRef(0);
+  loaded.current = revs?.length ?? 0;
+
+  /** Charge des pages à la suite de `from` jusqu'à atteindre `target` versions (ou la fin de l'historique). */
+  const load = useCallback(
+    async (from: FileRevision[], target: number) => {
+      const id = ++request.current;
+      setLoading(true);
+      setError(null);
+      try {
+        let all = from;
+        let hasMore = true;
+        do {
+          const last = all[all.length - 1];
+          const args = last ? nextPageArgs(last) : { path, rev, skip: 0 };
+          const page = await api.fileLog(repo, args.path, args.rev, args.skip);
+          if (id !== request.current) return;
+          all = appendRevisions(all, page);
+          hasMore = page.length === PAGE;
+        } while (hasMore && all.length < target);
+        setRevs(all);
+        setMore(hasMore);
         // Garde la version affichée si elle existe encore, sinon montre la plus récente.
-        setSelected((s) => (s && page.some((r) => r.sha === s) ? s : page[0]?.sha ?? null));
-      })
-      .catch((e) => id === request.current && setError((e as Error).message))
-      .finally(() => id === request.current && setLoading(false));
-  }, [repo, path, rev, reloadKey]);
+        setSelected((s) => (s && all.some((r) => r.sha === s) ? s : all[0]?.sha ?? null));
+      } catch (e) {
+        if (id === request.current) setError((e as Error).message);
+      } finally {
+        if (id === request.current) setLoading(false);
+      }
+    },
+    [repo, path, rev],
+  );
+
+  useEffect(() => {
+    void load([], Math.max(loaded.current, 1));
+  }, [load, reloadKey]);
 
   const loadMore = () => {
-    if (!revs) return;
-    const id = ++request.current;
-    setLoading(true);
-    api
-      .fileLog(repo, path, rev, revs.length)
-      .then((page) => {
-        if (id !== request.current) return;
-        setRevs([...revs, ...page]);
-        setMore(page.length === PAGE);
-      })
-      .catch((e) => id === request.current && setError((e as Error).message))
-      .finally(() => id === request.current && setLoading(false));
+    if (revs) void load(revs, revs.length + PAGE);
   };
 
   const current = revs?.find((r) => r.sha === selected);
