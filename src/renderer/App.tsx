@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { DiffTarget, RepoSnapshot } from '../shared/types';
-import { api, onRepoChanged } from './api';
+import { api, onRepoChanged, onWatchLimited } from './api';
 import { layoutGraph } from './graph';
 import { Welcome } from './components/Welcome';
 import { Toolbar } from './components/Toolbar';
@@ -107,12 +107,16 @@ export function App() {
       if (disposed || ev.repo !== repo || busyRef.current) return;
       void scheduleRefresh();
     });
+    const offLimited = onWatchLimited((ev) => {
+      if (!disposed && ev.repo === repo) setToast({ kind: 'error', text: ev.message });
+    });
     api.watchRepo(repo).catch(() => {
       /* sans surveillance, le rafraîchissement au focus reste actif */
     });
     return () => {
       disposed = true;
       off();
+      offLimited();
       api.unwatchRepo().catch(() => {});
     };
   }, [repo, autoRefresh]); // eslint-disable-line react-hooks/exhaustive-deps

@@ -235,13 +235,36 @@ export function unquoteGitPath(s: string): string {
 /**
  * Chemins (relatifs à la racine) que Git ignore, vérifiés par lots de 50 passés en arguments.
  * `-z` n'est accepté qu'avec `--stdin` : la sortie est donc une ligne par chemin, entre guillemets si besoin.
+ * Un lot refusé par Git (chemin dans un sous-module…) est revérifié chemin par chemin ; un chemin que Git refuse
+ * de vérifier est compté comme ignoré (l'intérieur des sous-modules n'est pas suivi). Ne lève jamais.
  */
 export async function ignoredPaths(repo: string, paths: string[]): Promise<Set<string>> {
   const ignored = new Set<string>();
-  for (let i = 0; i < paths.length; i += 50) {
+  // `:x` serait lu comme une « pathspec magic » : on le passe en `./:x`, que Git renvoie tel quel.
+  const toArg = (p: string) => (p.startsWith(':') ? `./${p}` : p);
+  const fromArg = new Map(paths.map((p) => [toArg(p), p]));
+  const check = async (batch: string[]) => {
     // Code 1 : aucun chemin du lot n'est ignoré.
-    const out = await git(repo, ['-c', 'core.quotePath=false', 'check-ignore', '--', ...paths.slice(i, i + 50)], { okCodes: [1] });
-    for (const line of out.split('\n')) if (line) ignored.add(unquoteGitPath(line));
+    const out = await git(repo, ['-c', 'core.quotePath=false', 'check-ignore', '--', ...batch.map(toArg)], { okCodes: [1] });
+    for (const line of out.split('\n')) {
+      if (!line) continue;
+      const p = unquoteGitPath(line);
+      ignored.add(fromArg.get(p) ?? p);
+    }
+  };
+  for (let i = 0; i < paths.length; i += 50) {
+    const batch = paths.slice(i, i + 50);
+    try {
+      await check(batch);
+    } catch {
+      for (const p of batch) {
+        try {
+          await check([p]);
+        } catch {
+          ignored.add(p);
+        }
+      }
+    }
   }
   return ignored;
 }

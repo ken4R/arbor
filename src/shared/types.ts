@@ -68,6 +68,12 @@ export interface RepoChangeEvent {
   scope: 'git' | 'worktree';
 }
 
+/** La surveillance de l'arbre de travail a dû être réduite (trop de fichiers) : message à afficher une fois. */
+export interface WatchLimitedEvent {
+  repo: string;
+  message: string;
+}
+
 export type DiffTarget =
   | { kind: 'working'; path: string; oldPath?: string; staged: boolean; untracked?: boolean; conflict?: boolean }
   | { kind: 'commit'; sha: string; path: string; oldPath?: string };

@@ -1,6 +1,10 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ChangeDebouncer, Muter, classifyWatchPath } from './watcher';
-import { unquoteGitPath } from './git';
+import { execFileSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { ChangeDebouncer, DirTreeWatcher, Muter, WatchCapError, classifyWatchPath } from './watcher';
+import { ignoredPaths, unquoteGitPath } from './git';
 
 describe('unquoteGitPath (sortie de git check-ignore)', () => {
   it('laisse les chemins ordinaires tels quels, accents compris (core.quotePath=false)', () => {
@@ -197,5 +201,109 @@ describe('Muter', () => {
     expect(m.muted).toBe(true);
     vi.advanceTimersByTime(400);
     expect(m.muted).toBe(false);
+  });
+});
+
+// Intégration : vrai dépôt temporaire, vrai `git`, vrai `fs.watch`.
+describe('intégration avec un dépôt temporaire', () => {
+  let root = '';
+  let repo = '';
+  const sh = (cwd: string, ...args: string[]) => execFileSync('git', args, { cwd, stdio: 'pipe', encoding: 'utf8' });
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+  beforeAll(() => {
+    root = mkdtempSync(join(tmpdir(), 'arbor-watch-'));
+    const sub = join(root, 'sub-src');
+    repo = join(root, 'repo');
+    for (const dir of [sub, repo]) {
+      mkdirSync(dir);
+      sh(dir, 'init', '-q', '-b', 'main');
+      sh(dir, 'config', 'user.name', 'Test');
+      sh(dir, 'config', 'user.email', 'test@example.com');
+    }
+    writeFileSync(join(sub, 'inner.txt'), 'x');
+    sh(sub, 'add', '-A');
+    sh(sub, 'commit', '-qm', 'init');
+    writeFileSync(join(repo, '.gitignore'), 'node_modules/\n:x\n');
+    writeFileSync(join(repo, 'a.txt'), 'a');
+    mkdirSync(join(repo, 'node_modules/pkg/deep'), { recursive: true });
+    writeFileSync(join(repo, 'node_modules/pkg/a.js'), 'x');
+    mkdirSync(join(repo, 'src/lib'), { recursive: true });
+    writeFileSync(join(repo, 'src/lib/b.ts'), 'b');
+    writeFileSync(join(repo, ':x'), 'x');
+    sh(repo, 'add', '-A');
+    sh(repo, '-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', sub, 'sub');
+    sh(repo, 'commit', '-qm', 'init');
+  });
+
+  afterAll(() => rmSync(root, { recursive: true, force: true }));
+
+  it('ignoredPaths : sous-module, nom en `:x` et dossier ignoré', async () => {
+    const paths = ['a.txt', 'node_modules', 'node_modules/pkg/a.js', ':x', 'sub/inner.txt', 'src/lib/b.ts'];
+    const ignored = await ignoredPaths(repo, paths);
+    expect(ignored.has('node_modules')).toBe(true);
+    expect(ignored.has('node_modules/pkg/a.js')).toBe(true);
+    expect(ignored.has(':x')).toBe(true);
+    // Git refuse de vérifier l'intérieur d'un sous-module : compté comme ignoré, sans rendre le reste du lot « non ignoré ».
+    expect(ignored.has('sub/inner.txt')).toBe(true);
+    expect(ignored.has('a.txt')).toBe(false);
+    expect(ignored.has('src/lib/b.ts')).toBe(false);
+  });
+
+  const keepDirsSpy = () => {
+    const calls: string[][] = [];
+    let live = 0;
+    let maxLive = 0;
+    const keepDirs = async (rels: string[]) => {
+      calls.push(rels);
+      maxLive = Math.max(maxLive, ++live);
+      try {
+        const ignored = await ignoredPaths(repo, rels);
+        return rels.filter((r) => r !== '.git' && !ignored.has(r));
+      } finally {
+        live--;
+      }
+    };
+    return { calls, keepDirs, maxLive: () => maxLive };
+  };
+
+  it('ne parcourt ni les dossiers ignorés ni les sous-modules, et regroupe les nouveaux dossiers', async () => {
+    const spy = keepDirsSpy();
+    const onLimit = vi.fn();
+    const w = new DirTreeWatcher(repo, { keepDirs: spy.keepDirs, onRel: () => {}, onLimit });
+    try {
+      await w.idle();
+      expect(w.watched().sort()).toEqual(['', 'src', 'src/lib']);
+
+      spy.calls.length = 0;
+      for (let i = 0; i < 300; i++) mkdirSync(join(repo, `m${i}/x`), { recursive: true });
+      await sleep(300);
+      await w.idle();
+      expect(w.size).toBe(3 + 600);
+      expect(spy.maxLive()).toBe(1);
+      expect(spy.calls.every((c) => c.length <= 50)).toBe(true);
+      expect(spy.calls.length).toBeLessThan(40);
+      expect(onLimit).not.toHaveBeenCalled();
+
+      // Dossier supprimé : oublié, lui et ses sous-dossiers.
+      rmSync(join(repo, 'm0'), { recursive: true });
+      await sleep(300);
+      expect(w.watched().some((d) => d === 'm0' || d.startsWith('m0/'))).toBe(false);
+    } finally {
+      w.close();
+      for (let i = 0; i < 300; i++) rmSync(join(repo, `m${i}`), { recursive: true, force: true });
+    }
+  });
+
+  it('se replie au-delà du plafond de dossiers', async () => {
+    const onLimit = vi.fn();
+    const w = new DirTreeWatcher(repo, { keepDirs: keepDirsSpy().keepDirs, onRel: () => {}, onLimit, maxDirs: 2 });
+    try {
+      await w.idle();
+      expect(onLimit).toHaveBeenCalledTimes(1);
+      expect(onLimit.mock.calls[0][0]).toBeInstanceOf(WatchCapError);
+    } finally {
+      w.close();
+    }
   });
 });

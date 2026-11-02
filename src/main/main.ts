@@ -41,6 +41,23 @@ function assertOpened(repo: unknown) {
 // Handlers qui ne reçoivent pas de dépôt en premier argument.
 const NO_REPO = new Set(['openRepoDialog', 'initRepoDialog', 'cloneRepo', 'recentRepos', 'initialRepo', 'unwatchRepo']);
 
+// Handlers en lecture seule, hors sourdine du rafraîchissement automatique. Liste blanche : toute nouvelle
+// commande est mise en sourdine par défaut. Les noms absents de `handlers` (autres branches) sont sans effet.
+const READ_ONLY = new Set([
+  'snapshot',
+  'diff',
+  'readFile',
+  'commitFiles',
+  'recentRepos',
+  'initialRepo',
+  'openRepoDialog',
+  'watchRepo',
+  'unwatchRepo',
+  'searchCommitsByPath',
+  'fileLog',
+  'blame',
+]);
+
 const handlers: Record<string, (...args: any[]) => Promise<unknown>> = {
   async openRepoDialog() {
     const r = await dialog.showOpenDialog(win!, { properties: ['openDirectory'], title: 'Ouvrir un dépôt' });
@@ -104,6 +121,8 @@ for (const [name, fn] of Object.entries(handlers)) {
     try {
       if (!NO_REPO.has(name)) assertOpened(args[0]);
       // En sourdine : ce que la commande écrit dans le dépôt ne déclenche pas de rafraîchissement automatique.
+      // Les lectures n'écrivent rien : elles ne coupent pas le son, pour ne pas masquer un changement externe.
+      if (READ_ONLY.has(name)) return { value: await fn(...args) };
       return { value: await watcher.mute(() => fn(...args)) };
     } catch (err) {
       return { error: err instanceof Error ? err.message : String(err) };
@@ -128,9 +147,13 @@ function createWindow() {
 }
 
 // Surveillance du dépôt ouvert : les changements faits hors d'Arbor sont signalés au rendu.
-const watcher = new RepoWatcher((ev) => {
-  if (win && !win.isDestroyed()) win.webContents.send('arbor:event:repoChanged', ev);
-});
+const sendEvent = (name: string, payload: unknown) => {
+  if (win && !win.isDestroyed()) win.webContents.send(`arbor:event:${name}`, payload);
+};
+const watcher = new RepoWatcher(
+  (ev) => sendEvent('repoChanged', ev),
+  (ev) => sendEvent('watchLimited', ev),
+);
 
 app.whenReady().then(createWindow);
 app.on('window-all-closed', () => app.quit());

@@ -14,7 +14,7 @@ const api = new Proxy(
 );
 
 // Événements que le processus principal peut pousser au rendu (canal `arbor:event:<nom>`).
-const EVENTS = ['repoChanged'];
+const EVENTS = ['repoChanged', 'watchLimited'];
 
 contextBridge.exposeInMainWorld('arbor', {
   call: (method: string, ...args: unknown[]) => (api as any)[method](...args),
