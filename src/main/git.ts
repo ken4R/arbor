@@ -73,7 +73,10 @@ export function git(repo: string, args: string[], opts: RunOptions = {}): Promis
         }
       },
     );
+    // git peut se terminer sans lire l'entrée (EPIPE) : l'erreur est déjà remontée par le code de sortie.
+    child.stdin?.on('error', () => {});
     if (opts.input !== undefined) child.stdin?.end(opts.input);
+    else child.stdin?.end();
   });
 }
 
@@ -306,16 +309,23 @@ export async function commitFiles(repo: string, sha: string): Promise<FileChange
 /** Chemins d'un fichier pour un diff : l'ancien chemin d'un renommage est inclus pour que git le détecte. */
 const diffPaths = (t: { path: string; oldPath?: string }) => (t.oldPath ? [t.oldPath, t.path] : [t.path]);
 
+/**
+ * Options de sortie imposées à tout diff, quelle que soit la configuration de l'utilisateur :
+ * le texte doit rester analysable et réapplicable par `git apply` (préfixes a/ b/ pour -p1, pas de couleur,
+ * pas d'outil externe ni de textconv qui produiraient un contenu différent du fichier réel).
+ */
+const DIFF_OUTPUT = ['--no-color', '--no-ext-diff', '--no-textconv', '--src-prefix=a/', '--dst-prefix=b/'];
+
 export async function diff(repo: string, t: DiffTarget): Promise<string> {
   if (t.kind === 'commit') {
     const parents = (await git(repo, ['rev-list', '--parents', '-n', '1', '--end-of-options', t.sha, '--'])).trim().split(' ').slice(1);
-    if (parents.length === 0) return git(repo, ['show', '--format=', '-M', '--end-of-options', t.sha, '--', ...diffPaths(t)]);
-    return git(repo, ['diff', '-M', '--end-of-options', parents[0], t.sha, '--', ...diffPaths(t)]);
+    if (parents.length === 0) return git(repo, ['show', '--format=', '-M', ...DIFF_OUTPUT, '--end-of-options', t.sha, '--', ...diffPaths(t)]);
+    return git(repo, ['diff', '-M', ...DIFF_OUTPUT, '--end-of-options', parents[0], t.sha, '--', ...diffPaths(t)]);
   }
   if (t.untracked) {
-    return git(repo, ['diff', '--no-index', '--', '/dev/null', t.path], { okCodes: [1] });
+    return git(repo, ['diff', '--no-index', ...DIFF_OUTPUT, '--', '/dev/null', t.path], { okCodes: [1] });
   }
-  return git(repo, ['diff', '-M', ...(t.staged ? ['--cached'] : []), '--', ...diffPaths(t)]);
+  return git(repo, ['diff', '-M', ...DIFF_OUTPUT, ...(t.staged ? ['--cached'] : []), '--', ...diffPaths(t)]);
 }
 
 export async function readFile(repo: string, path: string): Promise<string> {
@@ -349,6 +359,8 @@ import { buildPartialPatch, PatchError } from '../shared/patch';
 
 /** Indexe, désindexe ou annule une partie du diff affiché d'un fichier du répertoire de travail. */
 export async function applyPatchSelection(repo: string, t: DiffTarget, shown: string, sel: PatchSelection, action: PatchAction) {
+  if (!['stage', 'unstage', 'discard'].includes(action)) throw new GitError(`Action inconnue : « ${String(action)} ».`, '');
+  if (!Array.isArray(sel)) throw new GitError('Sélection invalide.', '');
   if (t.kind !== 'working' || t.untracked || t.conflict) throw new GitError('Ce fichier ne peut être traité qu\'en entier.', '');
   if (t.oldPath) throw new GitError('Fichier renommé : indexez ou désindexez le fichier entier.', '');
   if (t.staged !== (action === 'unstage')) throw new GitError(action === 'unstage' ? 'Ce diff n\'est pas indexé.' : 'Ce diff est déjà indexé.', '');
@@ -361,7 +373,7 @@ export async function applyPatchSelection(repo: string, t: DiffTarget, shown: st
   } catch (e) {
     throw e instanceof PatchError ? new GitError(e.message, '') : e;
   }
-  const args = ['apply', ...(action === 'discard' ? [] : ['--cached']), ...(action === 'stage' ? [] : ['--reverse']), '--recount', '--whitespace=nowarn', '-'];
+  const args = ['apply', '-p1', ...(action === 'discard' ? [] : ['--cached']), ...(action === 'stage' ? [] : ['--reverse']), '--recount', '--whitespace=nowarn', '-'];
   await git(repo, args, { input: patch });
 }
 
