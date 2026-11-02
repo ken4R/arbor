@@ -43,9 +43,9 @@ const NO_REPO = new Set(['openRepoDialog', 'initRepoDialog', 'cloneRepo', 'recen
 
 // Handlers en lecture seule, hors sourdine du rafraîchissement automatique. Liste blanche : toute nouvelle
 // commande est mise en sourdine par défaut. Les noms absents de `handlers` (autres branches) sont sans effet.
+// `diff` n'y figure pas : `git diff` peut réécrire `.git/index` (entrées à date modifiée mais contenu inchangé).
 const READ_ONLY = new Set([
   'snapshot',
-  'diff',
   'readFile',
   'commitFiles',
   'recentRepos',
