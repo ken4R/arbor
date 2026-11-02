@@ -75,6 +75,7 @@ const handlers: Record<string, (...args: any[]) => Promise<unknown>> = {
   stage: g.stage,
   unstage: g.unstage,
   discard: g.discard,
+  applyPatchSelection: g.applyPatchSelection,
   commit: g.commit,
   checkout: g.checkout,
   createBranch: g.createBranch,

@@ -22,6 +22,7 @@ npm test               # tests unitaires
 - **Graphe** : toutes les branches, couleurs par ligne, badges de branches/tags/remotes, défilement virtualisé, navigation au clavier.
 - **Modifications en cours** : indexer/désindexer fichier par fichier ou tout, annuler des modifications, commit avec résumé + description, modification du dernier commit (amend).
 - **Diff** : vue unifiée ou côte à côte, pour le répertoire de travail comme pour n'importe quel commit.
+- **Indexation partielle** : depuis le diff, indexer, désindexer ou annuler un bloc entier, ou seulement les lignes sélectionnées (clic sur le numéro, Maj+clic pour une plage).
 - **Branches** : checkout (double-clic), création, suppression, suivi automatique des branches distantes.
 - **Remotes** : fetch, pull, push (avec publication d'une nouvelle branche), compteurs en avance/en retard.
 - **Fusion et rebase** depuis le menu contextuel d'une branche, avec bandeau Continuer/Abandonner.
