@@ -20,6 +20,7 @@ npm test               # tests unitaires
 
 - **Dépôts** : ouvrir, initialiser, cloner, liste des dépôts récents.
 - **Graphe** : toutes les branches, couleurs par ligne, badges de branches/tags/remotes, défilement virtualisé, navigation au clavier.
+- **Recherche dans l'historique** (Ctrl+F) : par message, auteur, préfixe de SHA ou fichier modifié, insensible à la casse et aux accents ; correspondances mises en évidence, navigation Entrée / Maj+Entrée.
 - **Modifications en cours** : indexer/désindexer fichier par fichier ou tout, annuler des modifications, commit avec résumé + description, modification du dernier commit (amend).
 - **Diff** : vue unifiée ou côte à côte, pour le répertoire de travail comme pour n'importe quel commit.
 - **Branches** : checkout (double-clic), création, suppression, suivi automatique des branches distantes.

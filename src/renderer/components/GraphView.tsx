@@ -5,6 +5,9 @@ import type { Selection } from '../App';
 import { branchMenu, checkoutBranch, commitMenu } from '../actions';
 import { useUi } from '../ui';
 import { fullDate, hashColor, initials, laneColor, relativeDate } from '../util';
+import { isShaQuery, matchNormalized, normalize, normalizeCommit, useSearch } from '../search';
+import { SearchBar } from './SearchBar';
+import { Icon } from './Icons';
 
 const ROW_H = 30;
 const LANE_W = 16;
@@ -44,6 +47,28 @@ export function GraphView({ snap, rows, selection, onSelect }: Props) {
     return () => ro.disconnect();
   }, []);
 
+  // Recherche : texte normalisé mémorisé par instantané, correspondances recalculées à chaque frappe.
+  const [search, updateSearch] = useSearch(snap.path);
+  const normalized = useMemo(() => snap.commits.map(normalizeCommit), [snap]);
+  const searchText = search.text.trim();
+  const fileResult = search.field === 'file' && search.file?.text === searchText && search.file.status !== 'error' ? search.file : null;
+  const { matches, matchSet, outside } = useMemo(() => {
+    if (!search.open || !searchText) return { matches: null, matchSet: null, outside: 0 };
+    let list: string[];
+    let outside = 0;
+    if (search.field === 'file') {
+      if (!fileResult) return { matches: null, matchSet: null, outside: 0 };
+      const found = new Set(fileResult.shas);
+      list = snap.commits.filter((c) => found.has(c.sha)).map((c) => c.sha);
+      outside = found.size - list.length;
+    } else {
+      if (search.field === 'sha' && !isShaQuery(searchText)) return { matches: null, matchSet: null, outside: 0 };
+      const q = normalize(searchText);
+      list = normalized.filter((n) => matchNormalized(n, search.field, q)).map((n) => n.sha);
+    }
+    return { matches: list, matchSet: new Set(list), outside };
+  }, [search.open, search.field, searchText, fileResult, snap, normalized]);
+
   const selectedIndex = selection.kind === 'wip' ? 0 : snap.commits.findIndex((c) => c.sha === selection.sha) + offset;
 
   // Fait défiler jusqu'à la ligne sélectionnée si elle est hors de vue.
@@ -77,11 +102,25 @@ export function GraphView({ snap, rows, selection, onSelect }: Props) {
 
   return (
     <div className="graph">
+      <SearchBar
+        snap={snap}
+        matches={matches ?? []}
+        outside={outside}
+        selectedSha={selection.kind === 'commit' ? selection.sha : null}
+        onSelect={(sha) => onSelect({ kind: 'commit', sha })}
+      />
       <div className="graph-header" style={{ gridTemplateColumns: `${graphCol}px 1fr 160px 120px` }}>
         <span>Graphe</span>
         <span>Message</span>
         <span>Auteur</span>
-        <span>Date</span>
+        <span className="graph-header-last">
+          Date
+          {!search.open && (
+            <button className="icon-btn graph-search-btn" title="Rechercher dans l'historique (Ctrl+F)" onClick={() => updateSearch({ open: true })}>
+              <Icon.search />
+            </button>
+          )}
+        </span>
       </div>
       <div className="graph-scroll" ref={scroller} tabIndex={0} onKeyDown={onKey} onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}>
         <div style={{ height: total * ROW_H, position: 'relative' }}>
@@ -110,7 +149,7 @@ export function GraphView({ snap, rows, selection, onSelect }: Props) {
             return (
               <div
                 key={c.sha}
-                className={`row${selected ? ' selected' : ''}${c.sha === snap.head ? ' head' : ''}`}
+                className={`row${selected ? ' selected' : ''}${c.sha === snap.head ? ' head' : ''}${matchSet ? (matchSet.has(c.sha) ? ' match' : ' dim') : ''}`}
                 style={style}
                 onClick={() => onSelect({ kind: 'commit', sha: c.sha })}
                 onContextMenu={(e) => ui.openMenu(e, commitMenu(ui, snap, c))}
