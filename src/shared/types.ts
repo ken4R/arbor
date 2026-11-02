@@ -50,6 +50,39 @@ export interface Stash {
   message: string;
 }
 
+/** Une version d'un fichier dans son historique (`git log --follow`). */
+export interface FileRevision {
+  sha: string;
+  parents: string[];
+  author: string;
+  email: string;
+  date: number; // secondes epoch
+  subject: string;
+  path: string; // chemin du fichier dans ce commit
+  oldPath?: string; // chemin avant un renommage ou une copie
+  status: FileStatusCode;
+}
+
+export interface BlameCommit {
+  sha: string;
+  author: string;
+  email: string;
+  date: number; // secondes epoch
+  summary: string;
+}
+
+export interface BlameLine {
+  sha: string; // 0000000… pour une ligne non commitée
+  origLine: number; // numéro de la ligne dans le commit d'origine
+  line: number; // numéro de la ligne dans la version affichée
+  text: string;
+}
+
+export interface Blame {
+  commits: Record<string, BlameCommit>;
+  lines: BlameLine[];
+}
+
 export interface RepoSnapshot {
   path: string;
   name: string;
@@ -75,6 +108,10 @@ export interface ArborApi {
   commitFiles(repo: string, sha: string): Promise<FileChange[]>;
   diff(repo: string, target: DiffTarget): Promise<string>;
   readFile(repo: string, path: string): Promise<string>;
+  /** Commits qui ont modifié un fichier (renommages suivis), par pages de 200 ; `rev` null = HEAD. */
+  fileLog(repo: string, path: string, rev: string | null, skip: number): Promise<FileRevision[]>;
+  /** Auteur de chaque ligne ; `rev` null = arbre de travail (lignes non commitées comprises). */
+  blame(repo: string, path: string, rev: string | null): Promise<Blame>;
   stage(repo: string, paths: string[]): Promise<void>;
   unstage(repo: string, paths: string[]): Promise<void>;
   discard(repo: string, paths: string[]): Promise<void>;

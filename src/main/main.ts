@@ -72,6 +72,8 @@ const handlers: Record<string, (...args: any[]) => Promise<unknown>> = {
   commitFiles: g.commitFiles,
   diff: g.diff,
   readFile: g.readFile,
+  fileLog: g.fileLog,
+  blame: g.blame,
   stage: g.stage,
   unstage: g.unstage,
   discard: g.discard,

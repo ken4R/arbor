@@ -2,6 +2,7 @@ import type { DiffTarget, RepoSnapshot } from '../../shared/types';
 import { api } from '../api';
 import { useUi } from '../ui';
 import { FileList } from './FileList';
+import { fileViewItems } from './FileView';
 
 const STATE_LABEL = {
   merging: 'Fusion en cours',
@@ -123,6 +124,9 @@ export function WorkingPanel({ repo, snap, activeDiff, draft, onDraft }: Props) 
                   onSubmit: () => ui.run('Annulation…', () => api.discard(repo, [f.path])),
                 }),
             },
+            'separator',
+            // Fichier non suivi : aucun historique. Fichier supprimé : blame de la version de HEAD.
+            ...fileViewItems(ui, f.path, f.status === '?' || !snap.head ? false : null, f.status === '?' || !snap.head ? false : f.status === 'D' ? snap.head : null),
           ]}
         />
         {st.unstaged.length === 0 && <div className="empty">Rien à indexer</div>}
@@ -138,6 +142,14 @@ export function WorkingPanel({ repo, snap, activeDiff, draft, onDraft }: Props) 
           activeDiff={activeDiff}
           diffFor={(f) => ({ kind: 'working', path: f.path, oldPath: f.oldPath, staged: true })}
           action={{ label: 'Retirer', onClick: (f) => ui.run('Désindexation…', () => api.unstage(repo, withOld([f]))) }}
+          menu={(f) =>
+            // Fichier ajouté : pas encore d'historique. Renommage : historique et blame de l'ancien chemin (version de HEAD).
+            f.status === 'A' || !snap.head
+              ? fileViewItems(ui, f.path, false, false)
+              : f.oldPath
+                ? fileViewItems(ui, f.oldPath, null, snap.head)
+                : fileViewItems(ui, f.path, null, f.status === 'D' ? snap.head : null)
+          }
         />
         {st.staged.length === 0 && <div className="empty">Indexez des fichiers pour les commiter</div>}
       </PanelSection>

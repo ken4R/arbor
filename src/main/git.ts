@@ -299,6 +299,132 @@ export async function commitFiles(repo: string, sha: string): Promise<FileChange
   return parseNameStatus(out);
 }
 
+// --- Historique d'un fichier et blame ---
+
+import type { Blame, BlameCommit, BlameLine, FileRevision } from '../shared/types';
+
+const RS = '\x1e';
+export const FILE_LOG_PAGE = 200;
+/** Format de l'historique d'un fichier : chaque commit commence par \x1e, le sujet (qui peut contenir \x1f) est en dernier. */
+const FILE_LOG_FORMAT = '%x1e' + ['%H', '%P', '%an', '%ae', '%at', '%s'].join('%x1f');
+
+/**
+ * Analyse `git log --follow -z --name-status` au format FILE_LOG_FORMAT.
+ * `path` sert pour les commits sans ligne de statut (fusions) : on reprend alors le chemin connu le plus récent.
+ */
+export function parseFileLog(out: string, path: string): FileRevision[] {
+  const revisions: FileRevision[] = [];
+  let current = path;
+  for (const rec of out.split(RS)) {
+    if (!rec.trim()) continue;
+    const end = rec.indexOf('\0');
+    const header = end === -1 ? rec : rec.slice(0, end);
+    const fields = header.split(FS);
+    const [sha, parents, author, email, date] = fields;
+    const subject = fields.slice(5).join(FS);
+    const files = parseNameStatus(end === -1 ? '' : rec.slice(end + 1).replace(/^\n/, ''));
+    // Avec --follow, git ne garde que le fichier suivi ; par prudence on prend l'entrée qui correspond au chemin courant.
+    const file = files.find((f) => f.path === current) ?? files[0];
+    const rev: FileRevision = {
+      sha,
+      parents: parents ? parents.split(' ') : [],
+      author,
+      email,
+      date: Number(date),
+      subject,
+      path: file?.path ?? current,
+      status: file?.status ?? 'M',
+    };
+    if (file?.oldPath) rev.oldPath = file.oldPath;
+    revisions.push(rev);
+    // Les commits plus anciens connaissent le fichier sous son ancien nom.
+    current = file?.oldPath ?? rev.path;
+  }
+  return revisions;
+}
+
+/** Vérifie que le fichier a un historique : sans révision, il faut une HEAD. */
+async function historyRev(repo: string, rev: string | null): Promise<string> {
+  if (rev !== null) {
+    assertSha(rev);
+    return rev;
+  }
+  const head = await headSha(repo);
+  if (!head) throw new GitError('Aucun historique : dépôt vide.', '');
+  return head;
+}
+
+export async function fileLog(repo: string, path: string, rev: string | null, skip: number): Promise<FileRevision[]> {
+  if (!path) throw new GitError('Aucun fichier indiqué.', '');
+  const start = await historyRev(repo, rev);
+  const n = Math.max(0, Math.floor(Number(skip) || 0));
+  const out = await git(repo, [
+    'log',
+    '--follow',
+    '-M',
+    '-z',
+    '--name-status',
+    `--format=${FILE_LOG_FORMAT}`,
+    `--skip=${n}`,
+    `--max-count=${FILE_LOG_PAGE}`,
+    '--end-of-options',
+    start,
+    '--',
+    path,
+  ]);
+  return parseFileLog(out, path);
+}
+
+const BLAME_HEADER = /^([0-9a-f]{40,64}) (\d+) (\d+)(?: \d+)?$/;
+
+/** Analyse `git blame --porcelain` : les métadonnées d'un commit ne sont données qu'à sa première apparition. */
+export function parseBlame(out: string): Blame {
+  const commits: Record<string, BlameCommit> = {};
+  const lines: BlameLine[] = [];
+  let entry: { sha: string; origLine: number; line: number } | null = null;
+  for (const raw of out.split('\n')) {
+    if (entry) {
+      // Le contenu de la ligne est toujours précédé d'une tabulation ; tout le reste est une métadonnée.
+      if (raw.startsWith('\t')) {
+        lines.push({ ...entry, text: raw.slice(1) });
+        entry = null;
+        continue;
+      }
+      const sp = raw.indexOf(' ');
+      const key = sp === -1 ? raw : raw.slice(0, sp);
+      const value = sp === -1 ? '' : raw.slice(sp + 1);
+      const c = commits[entry.sha];
+      if (key === 'author') c.author = value;
+      else if (key === 'author-mail') c.email = value.replace(/^<(.*)>$/, '$1');
+      else if (key === 'author-time') c.date = Number(value);
+      else if (key === 'summary') c.summary = value;
+      continue;
+    }
+    const m = raw.match(BLAME_HEADER);
+    if (!m) continue;
+    entry = { sha: m[1], origLine: Number(m[2]), line: Number(m[3]) };
+    commits[m[1]] ??= { sha: m[1], author: '', email: '', date: 0, summary: '' };
+  }
+  return { commits, lines };
+}
+
+export async function blame(repo: string, path: string, rev: string | null): Promise<Blame> {
+  if (!path) throw new GitError('Aucun fichier indiqué.', '');
+  if (rev === null && !(await headSha(repo))) throw new GitError('Aucun historique : dépôt vide.', '');
+  if (rev !== null) assertSha(rev);
+  try {
+    return parseBlame(await git(repo, ['blame', '--porcelain', ...(rev ? [rev] : []), '--', path]));
+  } catch (e) {
+    if (e instanceof GitError && /no such path|cannot stat|Cannot lstat|does not exist/i.test(e.stderr)) {
+      throw new GitError(
+        rev ? `« ${path} » n'existe pas dans le commit ${rev.slice(0, 7)}.` : `« ${path} » n'est pas suivi par Git ou n'existe plus : blame impossible.`,
+        e.stderr,
+      );
+    }
+    throw e;
+  }
+}
+
 /** Chemins d'un fichier pour un diff : l'ancien chemin d'un renommage est inclus pour que git le détecte. */
 const diffPaths = (t: { path: string; oldPath?: string }) => (t.oldPath ? [t.oldPath, t.path] : [t.path]);
 

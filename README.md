@@ -28,6 +28,7 @@ npm test               # tests unitaires
 - **Conflits** : vue dédiée qui met en évidence les deux versions, « garder ma version » / « garder leur version ».
 - **Stash** : mettre de côté, appliquer, pop, supprimer.
 - **Commits** : cherry-pick, revert, reset soft/mixed/hard, tag, branche depuis un commit, copie du SHA.
+- **Historique d'un fichier et blame** : clic droit sur un fichier, liste des commits qui l'ont modifié (renommages suivis) avec le diff de chaque version, blame ligne par ligne (lignes non commitées comprises) qui renvoie vers les commits.
 
 ![Résolution de conflits](docs/conflits.png)
 
