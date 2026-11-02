@@ -62,6 +62,12 @@ export interface RepoSnapshot {
   head: string | null;
 }
 
+/** Le dépôt a changé hors d'Arbor : `git` = références, index ou opération en cours ; `worktree` = fichiers. */
+export interface RepoChangeEvent {
+  repo: string;
+  scope: 'git' | 'worktree';
+}
+
 export type DiffTarget =
   | { kind: 'working'; path: string; oldPath?: string; staged: boolean; untracked?: boolean; conflict?: boolean }
   | { kind: 'commit'; sha: string; path: string; oldPath?: string };
@@ -98,4 +104,7 @@ export interface ArborApi {
   cherryPick(repo: string, sha: string): Promise<void>;
   revert(repo: string, sha: string): Promise<void>;
   reset(repo: string, sha: string, mode: 'soft' | 'mixed' | 'hard'): Promise<void>;
+  /** Surveille ce dépôt (un seul à la fois) et émet l'événement `repoChanged`. */
+  watchRepo(repo: string): Promise<void>;
+  unwatchRepo(): Promise<void>;
 }

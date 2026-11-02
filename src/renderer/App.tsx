@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { DiffTarget, RepoSnapshot } from '../shared/types';
-import { api } from './api';
+import { api, onRepoChanged } from './api';
 import { layoutGraph } from './graph';
 import { Welcome } from './components/Welcome';
 import { Toolbar } from './components/Toolbar';
@@ -28,6 +28,26 @@ export function App() {
   const [openError, setOpenError] = useState<string | null>(null);
   const repoRef = useRef(repo);
   repoRef.current = repo;
+  // Rafraîchissement automatique (préférence locale, activé par défaut).
+  const AUTO_REFRESH_KEY = 'arbor.autoRefresh';
+  const busyRef = useRef(busy);
+  busyRef.current = busy;
+  const [autoRefresh, setAutoRefresh] = useState(() => {
+    try {
+      return localStorage.getItem(AUTO_REFRESH_KEY) !== 'off';
+    } catch {
+      return true;
+    }
+  });
+  const toggleAutoRefresh = () =>
+    setAutoRefresh((on) => {
+      try {
+        localStorage.setItem(AUTO_REFRESH_KEY, on ? 'off' : 'on');
+      } catch {
+        /* préférence non mémorisée */
+      }
+      return !on;
+    });
 
   const refresh = useCallback(async () => {
     if (!repo) return;
@@ -60,6 +80,42 @@ export function App() {
     window.addEventListener('focus', onFocus);
     return () => window.removeEventListener('focus', onFocus);
   }, [refresh]);
+
+  // Le processus principal signale les changements faits hors d'Arbor. Pendant une opération lancée depuis
+  // l'UI, on ignore (ui.run rafraîchit à la fin) ; sinon un seul rafraîchissement à la fois, plus un au plus en attente.
+  useEffect(() => {
+    if (!repo || !autoRefresh) return;
+    let running = false;
+    let queued = false;
+    let disposed = false;
+    const scheduleRefresh = async () => {
+      if (running) {
+        queued = true;
+        return;
+      }
+      running = true;
+      try {
+        do {
+          queued = false;
+          await refresh();
+        } while (queued && !disposed);
+      } finally {
+        running = false;
+      }
+    };
+    const off = onRepoChanged((ev) => {
+      if (disposed || ev.repo !== repo || busyRef.current) return;
+      void scheduleRefresh();
+    });
+    api.watchRepo(repo).catch(() => {
+      /* sans surveillance, le rafraîchissement au focus reste actif */
+    });
+    return () => {
+      disposed = true;
+      off();
+      api.unwatchRepo().catch(() => {});
+    };
+  }, [repo, autoRefresh]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!toast) return;
@@ -123,7 +179,7 @@ export function App() {
   return (
     <UiContext.Provider value={ui}>
       <div className="app" onClick={() => setMenu(null)}>
-        <Toolbar repo={repo} snap={snap} busy={busy} onClose={() => setRepo(null)} onSwitch={setRepo} onRefresh={refresh} />
+        <Toolbar repo={repo} snap={snap} busy={busy} onClose={() => setRepo(null)} onSwitch={setRepo} onRefresh={refresh} autoRefresh={autoRefresh} onToggleAuto={toggleAutoRefresh} />
         <div className="main">
           {snap ? (
             <>

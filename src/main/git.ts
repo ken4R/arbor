@@ -195,10 +195,55 @@ async function repoState(repo: string): Promise<RepoState> {
 
 export async function status(repo: string): Promise<WorkingStatus> {
   const [out, state] = await Promise.all([
-    git(repo, ['status', '--porcelain=v1', '-z', '-b', '--untracked-files=all']),
+    git(repo, ['--no-optional-locks', 'status', '--porcelain=v1', '-z', '-b', '--untracked-files=all']),
     repoState(repo),
   ]);
   return { ...parseStatus(out), state };
+}
+
+// Surveillance du dépôt (rafraîchissement automatique). `status` ci-dessus passe `--no-optional-locks` :
+// sans cette option, il réécrirait l'index et la surveillance se redéclencherait en boucle.
+
+/** Dossier Git de l'arbre de travail et dossier commun (différents pour un worktree lié), en chemins absolus. */
+export async function gitDirs(repo: string): Promise<{ gitDir: string; commonDir: string }> {
+  const [gitDirOut = '', commonOut = ''] = (await git(repo, ['rev-parse', '--git-dir', '--git-common-dir'])).split('\n');
+  return { gitDir: resolvePath(repo, gitDirOut.trim()), commonDir: resolvePath(repo, commonOut.trim() || gitDirOut.trim()) };
+}
+
+const C_ESCAPES: Record<string, number> = { a: 7, b: 8, t: 9, n: 10, v: 11, f: 12, r: 13, '"': 34, '\\': 92 };
+
+/** Décode un chemin que Git a mis entre guillemets à la manière du C (`"dir/a\"b"`, `"\303\251"`) ; sinon le renvoie tel quel. */
+export function unquoteGitPath(s: string): string {
+  if (s.length < 2 || !s.startsWith('"') || !s.endsWith('"')) return s;
+  const bytes: number[] = [];
+  const body = s.slice(1, -1);
+  for (let i = 0; i < body.length; i++) {
+    const ch = body[i];
+    if (ch !== '\\') {
+      bytes.push(...Buffer.from(ch, 'utf8'));
+    } else if (/^[0-7]{3}$/.test(body.slice(i + 1, i + 4))) {
+      bytes.push(parseInt(body.slice(i + 1, i + 4), 8));
+      i += 3;
+    } else {
+      const next = body[++i];
+      bytes.push(C_ESCAPES[next] ?? next.charCodeAt(0));
+    }
+  }
+  return Buffer.from(bytes).toString('utf8');
+}
+
+/**
+ * Chemins (relatifs à la racine) que Git ignore, vérifiés par lots de 50 passés en arguments.
+ * `-z` n'est accepté qu'avec `--stdin` : la sortie est donc une ligne par chemin, entre guillemets si besoin.
+ */
+export async function ignoredPaths(repo: string, paths: string[]): Promise<Set<string>> {
+  const ignored = new Set<string>();
+  for (let i = 0; i < paths.length; i += 50) {
+    // Code 1 : aucun chemin du lot n'est ignoré.
+    const out = await git(repo, ['-c', 'core.quotePath=false', 'check-ignore', '--', ...paths.slice(i, i + 50)], { okCodes: [1] });
+    for (const line of out.split('\n')) if (line) ignored.add(unquoteGitPath(line));
+  }
+  return ignored;
 }
 
 export async function log(repo: string, hasHead: boolean, limit = 3000): Promise<Commit[]> {
