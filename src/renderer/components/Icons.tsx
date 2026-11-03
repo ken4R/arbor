@@ -40,6 +40,9 @@ export const Icon = {
   computer: () => (
     <svg {...s} width={12} height={12}><path d="M2 3h12v8H2zM6 14h4M8 11v3" /></svg>
   ),
+  search: () => (
+    <svg {...s} width={14} height={14}><circle cx="7" cy="7" r="4.5" /><path d="M10.5 10.5 14 14" /></svg>
+  ),
 };
 
 /** Logo d'Arbor : un tronc qui se divise en trois branches. */

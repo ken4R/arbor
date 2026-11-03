@@ -14,6 +14,12 @@ export interface Ref {
   type: 'head' | 'local' | 'remote' | 'tag';
 }
 
+/** Résultat d'une recherche de commits par chemin de fichier modifié. */
+export interface FileSearchResult {
+  shas: string[];
+  truncated: boolean; // limite de résultats atteinte
+}
+
 export type FileStatusCode = 'M' | 'A' | 'D' | 'R' | 'C' | 'U' | '?' | 'T';
 
 export interface FileChange {
@@ -72,6 +78,7 @@ export interface ArborApi {
   cloneRepo(url: string): Promise<string | null>;
   recentRepos(): Promise<string[]>;
   snapshot(repo: string): Promise<RepoSnapshot>;
+  searchCommitsByPath(repo: string, text: string): Promise<FileSearchResult>;
   commitFiles(repo: string, sha: string): Promise<FileChange[]>;
   diff(repo: string, target: DiffTarget): Promise<string>;
   readFile(repo: string, path: string): Promise<string>;

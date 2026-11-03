@@ -219,6 +219,54 @@ export async function log(repo: string, hasHead: boolean, limit = 3000): Promise
   return parseLog(out);
 }
 
+// Recherche dans l'historique : commits qui ont modifié un fichier dont le chemin contient un texte.
+import type { FileSearchResult } from '../shared/types';
+
+const FILE_SEARCH_LIMIT = 5000;
+
+/** Pathspec Git « le chemin contient <text> », insensible à la casse ; les caractères de motif sont échappés. */
+export function pathContainsSpec(text: string): string {
+  return `:(icase)*${text.replace(/[*?[\]\\]/g, '\\$&')}*`;
+}
+
+/** Analyse une liste de SHA séparés par NUL (`git log -z --format=%H`). */
+export function parseShaList(out: string): string[] {
+  return out
+    .split('\0')
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+/** Arguments de `git log` pour la recherche par fichier (dépôt non vide). */
+export function fileSearchArgs(text: string): string[] {
+  // Mêmes révisions que `log()` pour que les résultats correspondent aux commits du graphe.
+  // `--full-history` : sans lui, une branche fusionnée sans effet sur le fichier (`-s ours`…) est élaguée.
+  return [
+    'log',
+    '-z',
+    '--format=%H',
+    '--full-history',
+    `--max-count=${FILE_SEARCH_LIMIT}`,
+    '--branches',
+    '--remotes',
+    '--tags',
+    'HEAD',
+    '--',
+    pathContainsSpec(text),
+  ];
+}
+
+export async function searchCommitsByPath(repo: string, text: string): Promise<FileSearchResult> {
+  const needle = text.trim();
+  if (!needle) return { shas: [], truncated: false };
+  const head = await headSha(repo);
+  // Dépôt vide : aucun commit, et `git log` échouerait.
+  if (head === null) return { shas: [], truncated: false };
+  const out = await git(repo, fileSearchArgs(needle));
+  const shas = parseShaList(out);
+  return { shas, truncated: shas.length >= FILE_SEARCH_LIMIT };
+}
+
 export async function branches(repo: string): Promise<Branch[]> {
   const fmt = ['%(refname)', '%(objectname)', '%(HEAD)', '%(upstream:short)'].join(FS);
   const out = await git(repo, ['for-each-ref', `--format=${fmt}`, 'refs/heads', 'refs/remotes']);

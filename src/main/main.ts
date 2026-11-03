@@ -69,6 +69,7 @@ const handlers: Record<string, (...args: any[]) => Promise<unknown>> = {
     return arg ? openRepo(arg) : null;
   },
   snapshot: g.snapshot,
+  searchCommitsByPath: g.searchCommitsByPath,
   commitFiles: g.commitFiles,
   diff: g.diff,
   readFile: g.readFile,
