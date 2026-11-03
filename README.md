@@ -26,6 +26,7 @@ npm test               # tests unitaires
 - **Indexation partielle** : depuis le diff, indexer, désindexer ou annuler un bloc entier, ou seulement les lignes sélectionnées (clic sur le numéro, Maj+clic pour une plage).
 - **Branches** : checkout (double-clic), création, suppression, suivi automatique des branches distantes.
 - **Remotes** : fetch, pull, push (avec publication d'une nouvelle branche), compteurs en avance/en retard.
+- **Rafraîchissement automatique** : l'interface suit les changements faits hors d'Arbor (terminal, éditeur), fichiers ignorés exclus, sans boucle ; interrupteur « Auto » dans la barre d'outils.
 - **Fusion et rebase** depuis le menu contextuel d'une branche, avec bandeau Continuer/Abandonner.
 - **Conflits** : vue dédiée qui met en évidence les deux versions, « garder ma version » / « garder leur version ».
 - **Stash** : mettre de côté, appliquer, pop, supprimer.
