@@ -142,7 +142,7 @@ export function App() {
               <Sidebar snap={snap} onSelectCommit={(sha) => { setSelection({ kind: 'commit', sha }); setDiffTarget(null); setFileView(null); }} />
               <div className="center">
                 {diffTarget ? (
-                  <DiffView repo={repo} target={diffTarget} onClose={() => setDiffTarget(null)} />
+                  <DiffView repo={repo} target={diffTarget} onClose={() => setDiffTarget(null)} reloadKey={snap} />
                 ) : (
                   <GraphView
                     snap={snap}

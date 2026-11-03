@@ -105,6 +105,10 @@ export type DiffTarget =
   | { kind: 'working'; path: string; oldPath?: string; staged: boolean; untracked?: boolean; conflict?: boolean }
   | { kind: 'commit'; sha: string; path: string; oldPath?: string };
 
+/** Blocs (et éventuellement lignes) choisis dans un diff : `lines` absent = bloc entier ; indices dans `Hunk.lines`. */
+export type PatchSelection = { hunk: number; lines?: number[] }[];
+export type PatchAction = 'stage' | 'unstage' | 'discard';
+
 export interface ArborApi {
   openRepoDialog(): Promise<string | null>;
   initRepoDialog(): Promise<string | null>;
@@ -126,6 +130,7 @@ export interface ArborApi {
   stage(repo: string, paths: string[]): Promise<void>;
   unstage(repo: string, paths: string[]): Promise<void>;
   discard(repo: string, paths: string[]): Promise<void>;
+  applyPatchSelection(repo: string, target: DiffTarget, shown: string, sel: PatchSelection, action: PatchAction): Promise<void>;
   commit(repo: string, message: string, amend: boolean): Promise<void>;
   checkout(repo: string, ref: string): Promise<void>;
   createBranch(repo: string, name: string, from: string, checkout: boolean): Promise<void>;

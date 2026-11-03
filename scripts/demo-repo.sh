@@ -46,11 +46,15 @@ git remote add origin "../$(basename "$DIR")-remote.git"
 git fetch -q origin
 git branch -q -u origin/main
 c app.js "console.log(5)" "Camille Martin" camille@example.com "Commit local non poussé"
+c config.js "$(for i in $(seq 1 40); do echo "export const option$i = $i;"; done)" "Camille Martin" camille@example.com "Ajoute la configuration"
 
 # Modifications en cours : un fichier modifié, un nouveau, un indexé
 echo "modif" >> README.md
 echo "nouveau" > notes.txt
 echo "x" >> app.js
+# Deux modifications éloignées de config.js (deux blocs non indexés) pour l'indexation partielle
+sed -e 's/^export const option3 = 3;$/export const option3 = 30;/' -e 's/^export const option4 = 4;$/export const option4 = 40;/' \
+  -e 's/^export const option35 = 35;$/export const option35 = 350;/' config.js > config.js.tmp && mv config.js.tmp config.js
 git add app.js
 
 if [[ "${2:-}" == "--conflict" ]]; then
