@@ -1004,6 +1004,66 @@ td.ln-empty {
   background: repeating-linear-gradient(135deg, transparent 0 6px, rgba(255, 255, 255, 0.02) 6px 12px);
 }
 
+/* Indexation partielle : actions par bloc et sélection de lignes */
+.hunk-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+}
+.hunk-range {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.hunk-actions {
+  display: flex;
+  gap: 6px;
+  opacity: 0.75;
+}
+.hunk:hover .hunk-actions {
+  opacity: 1;
+}
+.hunk-actions .btn-sm {
+  padding: 2px 8px;
+  font-size: 11px;
+  color: var(--text);
+}
+.patch-discard {
+  color: var(--danger);
+}
+.hunk-actions .patch-discard {
+  color: var(--danger);
+}
+.patch-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.patch-hint {
+  padding: 6px 12px;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+.code tr.pickable .no,
+.code tr.pickable .sign {
+  cursor: pointer;
+}
+.code tr.pickable:hover .no,
+.code tr.pickable:hover .sign {
+  color: var(--text);
+}
+.code tr.picked td {
+  box-shadow: inset 0 1px 0 var(--accent), inset 0 -1px 0 var(--accent);
+}
+.code tr.picked .no,
+.code tr.picked .sign {
+  background: var(--accent);
+  color: var(--bg);
+}
+
 tr.cf-ours {
   background: rgba(90, 166, 232, 0.14);
 }

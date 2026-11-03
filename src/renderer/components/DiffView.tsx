@@ -1,34 +1,130 @@
-import { useEffect, useState } from 'react';
-import type { DiffTarget } from '../../shared/types';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import type { DiffTarget, PatchAction, PatchSelection } from '../../shared/types';
 import { api } from '../api';
-import { parseDiff, toSplit, type DiffLine, type ParsedDiff } from '../diff';
+import { parseDiff, toSplit, type DiffLine } from '../diff';
 import { useUi } from '../ui';
 import { Icon } from './Icons';
 
 type Mode = 'unified' | 'split';
 
-export function DiffView({ repo, target, onClose }: { repo: string; target: DiffTarget; onClose: () => void }) {
+/**
+ * `reloadKey` (facultatif) : pour un diff du répertoire de travail, toute nouvelle valeur recharge le diff
+ * (après une indexation, un rafraîchissement…). La sélection de lignes est gardée si le diff n'a pas changé.
+ */
+export function DiffView({ repo, target, onClose, reloadKey }: { repo: string; target: DiffTarget; onClose: () => void; reloadKey?: unknown }) {
   if (target.kind === 'working' && target.conflict) return <ConflictView repo={repo} path={target.path} onClose={onClose} />;
-  return <PatchView repo={repo} target={target} onClose={onClose} />;
+  return <PatchView repo={repo} target={target} onClose={onClose} reloadKey={reloadKey} />;
 }
 
-function PatchView({ repo, target, onClose }: { repo: string; target: DiffTarget; onClose: () => void }) {
-  const [diff, setDiff] = useState<ParsedDiff | null>(null);
+/** Clé d'une ligne sélectionnée : « bloc:ligne », indices dans `Hunk.lines`. */
+const lineKey = (h: number, k: number) => `${h}:${k}`;
+
+const ACTION_TEXT: Record<PatchAction, { verb: string; busy: string }> = {
+  stage: { verb: 'Indexer', busy: 'Indexation…' },
+  unstage: { verb: 'Désindexer', busy: 'Désindexation…' },
+  discard: { verb: 'Annuler', busy: 'Annulation…' },
+};
+
+function PatchView({ repo, target, onClose, reloadKey }: { repo: string; target: DiffTarget; onClose: () => void; reloadKey?: unknown }) {
+  const ui = useUi();
+  const [raw, setRaw] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [mode, setMode] = useState<Mode>(() => (localStorage.getItem('arbor.diffMode') as Mode) || 'unified');
+  const [mode, setMode] = useState<Mode>(() => {
+    try {
+      return (localStorage.getItem('arbor.diffMode') as Mode) || 'unified';
+    } catch {
+      return 'unified';
+    }
+  });
+  const [selected, setSelected] = useState<Set<string>>(() => new Set());
+  const anchor = useRef<{ h: number; k: number } | null>(null);
+  const shown = useRef<{ key: string; raw: string | null }>({ key: '', raw: null });
+  const diff = useMemo(() => (raw === null ? null : parseDiff(raw)), [raw]);
+
+  const targetKey = `${repo}\0${JSON.stringify(target)}`;
+  const reload = target.kind === 'working' ? reloadKey : null;
 
   useEffect(() => {
     let alive = true;
-    setDiff(null);
-    setError(null);
+    if (shown.current.key !== targetKey) {
+      // Autre fichier : on repart de zéro. Simple rechargement : l'ancien diff reste affiché en attendant.
+      shown.current = { key: targetKey, raw: null };
+      setRaw(null);
+      setError(null);
+      setSelected(new Set());
+      anchor.current = null;
+    }
     api
       .diff(repo, target)
-      .then((raw) => alive && setDiff(parseDiff(raw)))
+      .then((r) => {
+        if (!alive) return;
+        if (shown.current.raw !== r) {
+          setSelected(new Set());
+          anchor.current = null;
+        }
+        shown.current.raw = r;
+        setError(null);
+        setRaw(r);
+      })
       .catch((e) => alive && setError(e.message));
     return () => {
       alive = false;
     };
-  }, [repo, JSON.stringify(target)]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [targetKey, reload]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Indexation partielle : diff du répertoire de travail d'un fichier suivi, ni renommé ni binaire.
+  const editable = target.kind === 'working' && !target.untracked && !target.conflict && !target.oldPath && !!diff && !diff.binary;
+  const staged = target.kind === 'working' && target.staged;
+  const linesSelectable = editable && mode === 'unified' && !diff?.newFile && !diff?.deletedFile;
+
+  const apply = (sel: PatchSelection, action: PatchAction) => {
+    if (raw === null) return;
+    const shownRaw = raw;
+    const go = () => ui.run(ACTION_TEXT[action].busy, () => api.applyPatchSelection(repo, target, shownRaw, sel, action));
+    if (action !== 'discard') return void go();
+    const count = sel.reduce((n, s) => n + (s.lines?.length ?? 0), 0);
+    ui.ask({
+      title: 'Annuler les modifications',
+      message: sel.every((s) => !s.lines)
+        ? `Les modifications de ce bloc de « ${target.path} » seront définitivement perdues.`
+        : `Les modifications de ${count} ligne${count > 1 ? 's' : ''} de « ${target.path} » seront définitivement perdues.`,
+      confirm: 'Annuler les modifications',
+      danger: true,
+      onSubmit: () => void go(),
+    });
+  };
+
+  const toggleLine = (e: React.MouseEvent, h: number, k: number) => {
+    if (!linesSelectable || !diff) return;
+    e.preventDefault();
+    const next = new Set(selected);
+    const a = anchor.current;
+    if (e.shiftKey && a && a.h === h) {
+      // Maj+clic : sélectionne toutes les lignes modifiées entre l'ancre et la ligne cliquée.
+      const [from, to] = a.k < k ? [a.k, k] : [k, a.k];
+      for (let i = from; i <= to; i++) {
+        const t = diff.hunks[h].lines[i].type;
+        if (t === 'add' || t === 'del') next.add(lineKey(h, i));
+      }
+    } else {
+      const key = lineKey(h, k);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      anchor.current = { h, k };
+    }
+    setSelected(next);
+  };
+
+  const lineSelection = (): PatchSelection => {
+    const byHunk = new Map<number, number[]>();
+    for (const key of selected) {
+      const [h, k] = key.split(':').map(Number);
+      byHunk.set(h, [...(byHunk.get(h) ?? []), k]);
+    }
+    return [...byHunk].map(([hunk, lines]) => ({ hunk, lines: lines.sort((x, y) => x - y) }));
+  };
+  const nSel = linesSelectable ? selected.size : 0;
+  const plural = nSel > 1 ? 's' : '';
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
@@ -38,7 +134,11 @@ function PatchView({ repo, target, onClose }: { repo: string; target: DiffTarget
 
   const changeMode = (m: Mode) => {
     setMode(m);
-    localStorage.setItem('arbor.diffMode', m);
+    try {
+      localStorage.setItem('arbor.diffMode', m);
+    } catch {
+      // préférence non mémorisée : sans conséquence
+    }
   };
 
   const context = target.kind === 'commit' ? `commit ${target.sha.slice(0, 7)}` : target.staged ? 'indexé' : 'non indexé';
@@ -55,6 +155,27 @@ function PatchView({ repo, target, onClose }: { repo: string; target: DiffTarget
             </span>
           )}
         </div>
+        {nSel > 0 && (
+          <div className="patch-actions">
+            {staged ? (
+              <button className="btn btn-sm btn-primary" onClick={() => apply(lineSelection(), 'unstage')}>
+                Désindexer {nSel} ligne{plural}
+              </button>
+            ) : (
+              <>
+                <button className="btn btn-sm btn-primary" onClick={() => apply(lineSelection(), 'stage')}>
+                  Indexer {nSel} ligne{plural}
+                </button>
+                <button className="btn btn-sm patch-discard" onClick={() => apply(lineSelection(), 'discard')}>
+                  Annuler {nSel} ligne{plural}…
+                </button>
+              </>
+            )}
+            <button className="link-btn" onClick={() => setSelected(new Set())}>
+              Désélectionner
+            </button>
+          </div>
+        )}
         <div className="seg">
           <button className={mode === 'unified' ? 'on' : ''} onClick={() => changeMode('unified')}>
             Unifié
@@ -71,21 +192,57 @@ function PatchView({ repo, target, onClose }: { repo: string; target: DiffTarget
         {error && <div className="empty">{error}</div>}
         {!diff && !error && <div className="empty">Chargement…</div>}
         {diff?.binary && <div className="empty">Fichier binaire : aperçu indisponible.</div>}
-        {diff && !diff.binary && diff.hunks.length === 0 && <div className="empty">Aucune différence de contenu (mode ou renommage).</div>}
+        {diff && !diff.binary && diff.hunks.length === 0 && (
+          <div className="empty">{raw === '' && target.kind === 'working' ? 'Plus aucune modification ici.' : 'Aucune différence de contenu (mode ou renommage).'}</div>
+        )}
+        {linesSelectable && diff && diff.hunks.length > 0 && nSel === 0 && (
+          <div className="patch-hint">Cliquez sur le numéro d'une ligne modifiée pour la sélectionner (Maj+clic : plage).</div>
+        )}
         {diff?.hunks.map((h, i) => (
           <div className="hunk" key={i}>
-            <div className="hunk-head">{h.header}</div>
+            <div className="hunk-head">
+              <span className="hunk-range">{h.header}</span>
+              {editable && (
+                <span className="hunk-actions">
+                  {staged ? (
+                    <button className="btn btn-sm" onClick={() => apply([{ hunk: i }], 'unstage')}>
+                      Désindexer le bloc
+                    </button>
+                  ) : (
+                    <>
+                      <button className="btn btn-sm" onClick={() => apply([{ hunk: i }], 'stage')}>
+                        Indexer le bloc
+                      </button>
+                      <button className="btn btn-sm patch-discard" onClick={() => apply([{ hunk: i }], 'discard')}>
+                        Annuler le bloc…
+                      </button>
+                    </>
+                  )}
+                </span>
+              )}
+            </div>
             {mode === 'unified' ? (
               <table className="code">
                 <tbody>
-                  {h.lines.map((l, k) => (
-                    <tr key={k} className={`ln-${l.type}`}>
-                      <td className="no">{l.oldNo ?? ''}</td>
-                      <td className="no">{l.newNo ?? ''}</td>
-                      <td className="sign">{l.type === 'add' ? '+' : l.type === 'del' ? '−' : ''}</td>
-                      <td className="txt">{l.text}</td>
-                    </tr>
-                  ))}
+                  {h.lines.map((l, k) => {
+                    const pickable = linesSelectable && (l.type === 'add' || l.type === 'del');
+                    const on = pickable && selected.has(lineKey(i, k));
+                    const pick = pickable ? (e: React.MouseEvent) => toggleLine(e, i, k) : undefined;
+                    return (
+                      <tr key={k} className={`ln-${l.type}${pickable ? ' pickable' : ''}${on ? ' picked' : ''}`}>
+                        <td className="no" onMouseDown={pick}>
+                          {l.oldNo ?? ''}
+                        </td>
+                        <td className="no" onMouseDown={pick}>
+                          {l.newNo ?? ''}
+                        </td>
+                        <td className="sign" onMouseDown={pick}>
+                          {on ? '✓' : l.type === 'add' ? '+' : l.type === 'del' ? '−' : ''}
+                        </td>
+                        <td className="txt">{l.text}</td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             ) : (
