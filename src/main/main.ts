@@ -2,6 +2,7 @@ import { app, BrowserWindow, dialog, ipcMain } from 'electron';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
 import * as g from './git';
+import { RepoWatcher } from './watcher';
 
 let win: BrowserWindow | null = null;
 
@@ -38,7 +39,24 @@ function assertOpened(repo: unknown) {
 }
 
 // Handlers qui ne reçoivent pas de dépôt en premier argument.
-const NO_REPO = new Set(['openRepoDialog', 'initRepoDialog', 'cloneRepo', 'recentRepos', 'initialRepo']);
+const NO_REPO = new Set(['openRepoDialog', 'initRepoDialog', 'cloneRepo', 'recentRepos', 'initialRepo', 'unwatchRepo']);
+
+// Handlers en lecture seule, hors sourdine du rafraîchissement automatique. Liste blanche : toute nouvelle
+// commande est mise en sourdine par défaut. Les noms absents de `handlers` (autres branches) sont sans effet.
+// `diff` n'y figure pas : `git diff` peut réécrire `.git/index` (entrées à date modifiée mais contenu inchangé).
+const READ_ONLY = new Set([
+  'snapshot',
+  'readFile',
+  'commitFiles',
+  'recentRepos',
+  'initialRepo',
+  'openRepoDialog',
+  'watchRepo',
+  'unwatchRepo',
+  'searchCommitsByPath',
+  'fileLog',
+  'blame',
+]);
 
 const handlers: Record<string, (...args: any[]) => Promise<unknown>> = {
   async openRepoDialog() {
@@ -98,13 +116,18 @@ const handlers: Record<string, (...args: any[]) => Promise<unknown>> = {
   cherryPick: g.cherryPick,
   revert: g.revert,
   reset: g.reset,
+  watchRepo: (repo: string) => watcher.watch(repo),
+  unwatchRepo: async () => watcher.stop(),
 };
 
 for (const [name, fn] of Object.entries(handlers)) {
   ipcMain.handle(`arbor:${name}`, async (_e, ...args) => {
     try {
       if (!NO_REPO.has(name)) assertOpened(args[0]);
-      return { value: await fn(...args) };
+      // En sourdine : ce que la commande écrit dans le dépôt ne déclenche pas de rafraîchissement automatique.
+      // Les lectures n'écrivent rien : elles ne coupent pas le son, pour ne pas masquer un changement externe.
+      if (READ_ONLY.has(name)) return { value: await fn(...args) };
+      return { value: await watcher.mute(() => fn(...args)) };
     } catch (err) {
       return { error: err instanceof Error ? err.message : String(err) };
     }
@@ -127,5 +150,15 @@ function createWindow() {
   else win.loadFile(join(__dirname, '../renderer/index.html'));
 }
 
+// Surveillance du dépôt ouvert : les changements faits hors d'Arbor sont signalés au rendu.
+const sendEvent = (name: string, payload: unknown) => {
+  if (win && !win.isDestroyed()) win.webContents.send(`arbor:event:${name}`, payload);
+};
+const watcher = new RepoWatcher(
+  (ev) => sendEvent('repoChanged', ev),
+  (ev) => sendEvent('watchLimited', ev),
+);
+
 app.whenReady().then(createWindow);
 app.on('window-all-closed', () => app.quit());
+app.on('will-quit', () => watcher.stop());

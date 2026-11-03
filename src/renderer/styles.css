@@ -347,6 +347,58 @@ code {
   }
 }
 
+/* Rafraîchissement automatique : interrupteur de la barre d'outils */
+.auto-refresh {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-dim);
+  font-size: 12px;
+  cursor: pointer;
+  user-select: none;
+}
+.auto-refresh input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+.auto-refresh-track {
+  position: relative;
+  width: 26px;
+  height: 14px;
+  border-radius: 7px;
+  background: var(--bg-3);
+  border: 1px solid var(--border);
+  transition: background 0.15s;
+}
+.auto-refresh-track::after {
+  content: '';
+  position: absolute;
+  top: 1px;
+  left: 1px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--text-faint);
+  transition: transform 0.15s, background 0.15s;
+}
+.auto-refresh input:checked + .auto-refresh-track {
+  background: var(--bg-select);
+  border-color: var(--accent);
+}
+.auto-refresh input:checked + .auto-refresh-track::after {
+  transform: translateX(12px);
+  background: var(--accent);
+}
+.auto-refresh input:focus-visible + .auto-refresh-track {
+  outline: 1px solid var(--accent-strong);
+  outline-offset: 1px;
+}
+.auto-refresh:hover {
+  color: var(--text);
+}
+
 /* Barre latérale */
 .sidebar {
   overflow-y: auto;

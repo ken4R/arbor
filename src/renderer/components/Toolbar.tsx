@@ -11,9 +11,12 @@ interface Props {
   onClose: () => void;
   onSwitch: (path: string) => void;
   onRefresh: () => void;
+  /** Rafraîchissement automatique quand le dépôt change hors d'Arbor. */
+  autoRefresh?: boolean;
+  onToggleAuto?: () => void;
 }
 
-export function Toolbar({ repo, snap, busy, onClose, onSwitch, onRefresh }: Props) {
+export function Toolbar({ repo, snap, busy, onClose, onSwitch, onRefresh, autoRefresh, onToggleAuto }: Props) {
   const ui = useUi();
   const [recent, setRecent] = useState<string[]>([]);
   useEffect(() => {
@@ -84,6 +87,16 @@ export function Toolbar({ repo, snap, busy, onClose, onSwitch, onRefresh }: Prop
       </div>
       <div className="toolbar-right">
         {busy && <span className="busy"><span className="spinner" />{busy}</span>}
+        {onToggleAuto && (
+          <label
+            className="auto-refresh"
+            title={autoRefresh ? 'Rafraîchissement automatique activé : Arbor suit les changements faits hors de l\'application' : 'Rafraîchissement automatique désactivé'}
+          >
+            <input type="checkbox" role="switch" checked={!!autoRefresh} onChange={onToggleAuto} />
+            <span className="auto-refresh-track" aria-hidden="true" />
+            <span>Auto</span>
+          </label>
+        )}
         <button className="icon-btn" title="Rafraîchir" onClick={onRefresh}>
           <Icon.refresh />
         </button>
