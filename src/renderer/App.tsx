@@ -11,6 +11,8 @@ import { CommitPanel } from './components/CommitPanel';
 import { DiffView } from './components/DiffView';
 import { ContextMenu, type MenuState } from './components/ContextMenu';
 import { PromptDialog, type PromptState } from './components/PromptDialog';
+import { FileView } from './components/FileView';
+import type { FileViewTarget } from './ui';
 import { UiContext, type Ui } from './ui';
 
 export type Selection = { kind: 'wip' } | { kind: 'commit'; sha: string };
@@ -26,6 +28,8 @@ export function App() {
   const [prompt, setPrompt] = useState<PromptState | null>(null);
   const [draft, setDraft] = useState<CommitDraft>(EMPTY_DRAFT);
   const [openError, setOpenError] = useState<string | null>(null);
+  const [fileView, setFileView] = useState<FileViewTarget | null>(null);
+  const closeFileView = useCallback(() => setFileView(null), []);
   const repoRef = useRef(repo);
   repoRef.current = repo;
 
@@ -52,6 +56,7 @@ export function App() {
     setSelection({ kind: 'wip' });
     setDiffTarget(null);
     setDraft(EMPTY_DRAFT);
+    setFileView(null);
     void refresh();
   }, [repo]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -90,7 +95,14 @@ export function App() {
         setMenu({ x: e.clientX, y: e.clientY, items });
       },
       ask: (p) => setPrompt(p),
-      showDiff: setDiffTarget,
+      showDiff: (t) => {
+        setFileView(null);
+        setDiffTarget(t);
+      },
+      showFile: (v) => {
+        setDiffTarget(null);
+        setFileView(v);
+      },
     }),
     [refresh],
   );
@@ -127,7 +139,7 @@ export function App() {
         <div className="main">
           {snap ? (
             <>
-              <Sidebar snap={snap} onSelectCommit={(sha) => { setSelection({ kind: 'commit', sha }); setDiffTarget(null); }} />
+              <Sidebar snap={snap} onSelectCommit={(sha) => { setSelection({ kind: 'commit', sha }); setDiffTarget(null); setFileView(null); }} />
               <div className="center">
                 {diffTarget ? (
                   <DiffView repo={repo} target={diffTarget} onClose={() => setDiffTarget(null)} />
@@ -141,6 +153,9 @@ export function App() {
                       setDiffTarget(null);
                     }}
                   />
+                )}
+                {fileView && (
+                  <FileView repo={repo} snap={snap} target={fileView} onClose={closeFileView} onSelectCommit={(sha) => setSelection({ kind: 'commit', sha })} />
                 )}
               </div>
               <aside className="right">

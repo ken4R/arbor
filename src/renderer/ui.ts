@@ -9,6 +9,18 @@ export interface Ui {
   openMenu(e: React.MouseEvent, items: MenuItem[]): void;
   ask(p: PromptState): void;
   showDiff(t: DiffTarget | null): void;
+  /** Ouvre l'historique ou le blame d'un fichier (ferme le diff affiché). */
+  showFile(v: FileViewTarget | null): void;
+}
+
+/** Fichier affiché dans la vue Historique / Blame. */
+export interface FileViewTarget {
+  path: string;
+  /** Révision de départ de l'historique et du blame ; null = HEAD (blame : arbre de travail). */
+  rev: string | null;
+  /** Révision du blame si elle diffère de `rev` (fichier supprimé : blame sur le parent). */
+  blameRev?: string | null;
+  tab: 'history' | 'blame';
 }
 
 export const UiContext = createContext<Ui>(null as unknown as Ui);

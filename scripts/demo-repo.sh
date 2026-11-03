@@ -34,6 +34,11 @@ git checkout -qb feature/api
 c api.js "api()" "Hugo Petit" hugo@example.com "Client API"
 git checkout -q main
 c app.js "console.log(4)" "Léa Dubois" lea@example.com "Ajoute la télémétrie"
+# Renommage suivi par l'historique d'un fichier
+mkdir -p auth
+git mv login.js auth/login.js
+GIT_AUTHOR_NAME="Hugo Petit" GIT_AUTHOR_EMAIL=hugo@example.com git commit -qm "Range la connexion dans auth/"
+c auth/login.js "logout()" "Léa Dubois" lea@example.com "Ajoute la déconnexion"
 
 # Remote local + un commit non poussé
 git clone -q --bare . "../$(basename "$DIR")-remote.git"

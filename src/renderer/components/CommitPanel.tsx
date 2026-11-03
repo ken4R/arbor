@@ -4,6 +4,7 @@ import { api } from '../api';
 import { useUi } from '../ui';
 import { fullDate, hashColor, initials } from '../util';
 import { FileList } from './FileList';
+import { fileViewItems } from './FileView';
 import { PanelSection } from './WorkingPanel';
 
 export function CommitPanel({ repo, snap, commit, activeDiff }: { repo: string; snap: RepoSnapshot; commit: Commit; activeDiff: DiffTarget | null }) {
@@ -66,6 +67,8 @@ export function CommitPanel({ repo, snap, commit, activeDiff }: { repo: string; 
             files={files}
             activeDiff={activeDiff}
             diffFor={(f) => ({ kind: 'commit', sha: commit.sha, path: f.path, oldPath: f.oldPath })}
+            // Fichier supprimé par ce commit : blame de la version du parent (désactivé pour un commit racine).
+            menu={(f) => fileViewItems(ui, f.path, commit.sha, f.status === 'D' ? commit.parents[0] ?? false : commit.sha)}
           />
         )}
       </PanelSection>
