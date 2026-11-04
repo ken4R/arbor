@@ -16,7 +16,7 @@ npm start -- /chemin/vers/un/depot   # ouvre directement un dépôt
 npm test               # tests unitaires
 ```
 
-## Fonctionnalités (v0.1)
+## Fonctionnalités (v0.2)
 
 - **Dépôts** : ouvrir, initialiser, cloner, liste des dépôts récents.
 - **Graphe** : toutes les branches, couleurs par ligne, badges de branches/tags/remotes, défilement virtualisé, navigation au clavier.
@@ -39,15 +39,15 @@ npm test               # tests unitaires
 
 | Dossier | Rôle |
 | --- | --- |
-| `src/main` | Processus principal Electron. `git.ts` appelle le binaire `git` et analyse sa sortie. |
-| `src/shared` | Types partagés et contrat de l'API exposée au rendu. |
+| `src/main` | Processus principal Electron. `git.ts` appelle le binaire `git` et analyse sa sortie ; `watcher.ts` surveille le dépôt. |
+| `src/shared` | Types partagés, contrat de l'API exposée au rendu, et fonctions pures utilisées des deux côtés (`diff.ts`, `patch.ts`). |
 | `src/renderer` | Interface React. `graph.ts` calcule la disposition du graphe, `diff.ts` analyse les patchs. |
 
 Le rendu n'a aucun accès direct au système : toutes les commandes passent par l'IPC (`window.arbor`).
 
 ## Feuille de route
 
-1. Indexation par bloc (hunk) et par ligne, recherche dans l'historique.
-2. Rebase interactif (glisser-déposer), éditeur de fusion à trois panneaux.
-3. Authentification GitHub/GitLab, pull requests, gestion des remotes.
-4. Thème clair, raccourcis configurables, paquets d'installation (electron-builder).
+1. Palette de commandes et raccourcis, thème clair et préférences, onglets pour plusieurs dépôts.
+2. Rebase interactif (glisser-déposer), éditeur de fusion à trois panneaux, gestion des remotes et des tags, annulation via le reflog.
+3. Authentification GitHub/GitLab, pull requests, identifiants SSH/HTTPS.
+4. Performances sur gros dépôts, tests de bout en bout en CI, paquets d'installation (electron-builder).

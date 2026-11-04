@@ -13,8 +13,9 @@ Arbor est un client Git graphique de bureau (Electron + React + TypeScript), ins
 | --- | --- |
 | `src/main/git.ts` | **Seul** endroit qui exécute `git` (via `execFile`, jamais via un shell). Fonctions d'analyse pures (`parseStatus`, `parseLog`…) testées unitairement. |
 | `src/main/main.ts` | Fenêtre Electron, dialogues natifs, enregistrement des handlers IPC `arbor:<méthode>`. |
-| `src/main/preload.ts` | Expose `window.arbor.call` au rendu (contextIsolation activé). |
-| `src/shared/types.ts` | Types partagés et interface `ArborApi`, le contrat entre rendu et processus principal. |
+| `src/main/watcher.ts` | Surveillance du dépôt (dossier Git et arbre de travail), regroupement des événements, mise en sourdine pendant les commandes IPC. N'exécute pas `git` lui-même (passe par `git.ts`). |
+| `src/main/preload.ts` | Expose `window.arbor.call` et `window.arbor.on` (événements poussés par le processus principal, liste blanche) au rendu (contextIsolation activé). |
+| `src/shared/` | `types.ts` : types partagés et interface `ArborApi`, le contrat entre rendu et processus principal. Fonctions pures utilisées des deux côtés (`diff.ts`, `patch.ts`). |
 | `src/renderer/` | UI React. `graph.ts` = disposition du graphe, `diff.ts` = analyse des patchs, `actions.ts` = menus contextuels, `ui.ts` = contexte (`run`, `ask`, `openMenu`, `showDiff`). |
 
 Règles :
@@ -22,6 +23,9 @@ Règles :
 - Toute opération Git déclenchée par l'UI passe par `ui.run(label, fn, succès?)`, qui gère l'indicateur, les erreurs et le rafraîchissement.
 - Pas de `window.prompt/confirm` (non supportés par Electron) : utiliser `ui.ask`.
 - Les opérations destructrices (reset hard, suppression de branche, annulation de modifications) demandent une confirmation.
+- Toute commande IPC absente de la liste `READ_ONLY` de `main.ts` s'exécute sous `watcher.mute()` : une action d'Arbor ne déclenche jamais de rafraîchissement automatique. N'ajoutez à `READ_ONLY` qu'une commande qui n'écrit rien dans `.git` (attention : `git diff` peut réécrire l'index).
+- Les lectures (`status`) utilisent `--no-optional-locks` ; `diff()` force `--no-color --no-ext-diff --no-textconv --src-prefix=a/ --dst-prefix=b/` pour ne pas dépendre de la configuration de l'utilisateur.
+- Un patch partiel est toujours construit dans le processus principal, à partir d'un diff recalculé et comparé à celui affiché.
 - Couleurs et espacements : variables CSS de `styles.css` (`--bg`, `--accent`…), pas de valeurs en dur dans les composants.
 
 ## Commandes
