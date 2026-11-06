@@ -1435,3 +1435,88 @@ tr.cf-marker {
 /* ==== Préférences ==== */
 
 /* ==== Onglets ==== */
+.tabs-shell {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+.tabs-content {
+  flex: 1;
+  min-height: 0;
+}
+.tabbar {
+  height: 32px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: stretch;
+  gap: 1px;
+  padding: 0 6px;
+  background: var(--bg-3);
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 90px;
+  max-width: 220px;
+  padding: 0 6px 0 12px;
+  color: var(--text-dim);
+  border-top: 2px solid transparent;
+  cursor: default;
+}
+.tab:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+.tab-active,
+.tab-active:hover {
+  background: var(--bg-2);
+  color: var(--text);
+  border-top-color: var(--accent);
+}
+.tab-locked {
+  opacity: 0.55;
+}
+.tab-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tab-close {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: var(--radius);
+  color: var(--text-faint);
+  visibility: hidden;
+}
+.tab:hover .tab-close,
+.tab-active .tab-close {
+  visibility: visible;
+}
+.tab-close:hover:not(:disabled) {
+  background: var(--bg-select);
+  color: var(--text);
+}
+.tab-close svg {
+  width: 12px;
+  height: 12px;
+}
+.tab-new {
+  width: 28px;
+  font-size: 16px;
+  color: var(--text-dim);
+}
+.tab-new:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--bg-hover);
+}
+.tab-new:disabled,
+.tab-close:disabled {
+  opacity: 0.4;
+}

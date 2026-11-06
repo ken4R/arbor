@@ -16,7 +16,8 @@ import type { FileViewTarget } from './ui';
 import { UiContext, type Ui } from './ui';
 import { updatePreferences, usePreferences } from './prefs';
 import { setCommandContext, type AppHooks } from './commands';
-import { activeTab, closeTabById, getTabState, openRepoTab, saveTabState, setTabsBusy, useTabsModel } from './tabs';
+import { activeTab, closeTabById, getTabState, openRepoTab, saveTabState, setTabsBusy, useTabsBusy, useTabsModel } from './tabs';
+import { TabBar } from './components/TabBar';
 
 export type Selection = { kind: 'wip' } | { kind: 'commit'; sha: string };
 
@@ -27,6 +28,7 @@ export type Selection = { kind: 'wip' } | { kind: 'commit'; sha: string };
 export function App() {
   const model = useTabsModel();
   const tab = activeTab(model);
+  const busy = useTabsBusy();
   const [ready, setReady] = useState(false);
   const [openError, setOpenError] = useState<string | null>(null);
 
@@ -50,8 +52,20 @@ export function App() {
   }, [emptyTab]);
 
   if (!ready) return <div className="app" />;
-  if (!tab?.repo) return <Welcome onOpen={(p) => openRepoTab(p, 'current')} initialError={openError} />;
-  return <RepoView key={tab.id} tabId={tab.id} repo={tab.repo} onBusy={setTabsBusy} />;
+  // Barre masquée tant que seul l'écran d'accueil est ouvert.
+  const showBar = model.tabs.length > 1 || !!tab?.repo;
+  return (
+    <div className="tabs-shell">
+      {showBar && <TabBar model={model} busy={busy} />}
+      <div className="tabs-content">
+        {tab?.repo ? (
+          <RepoView key={tab.id} tabId={tab.id} repo={tab.repo} onBusy={setTabsBusy} />
+        ) : (
+          <Welcome key={tab?.id} onOpen={(p) => openRepoTab(p, 'current')} initialError={openError} />
+        )}
+      </div>
+    </div>
+  );
 }
 
 /** Rappels des commandes quand aucun dépôt n'est affiché. */
