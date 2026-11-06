@@ -16,6 +16,8 @@ Arbor est un client Git graphique de bureau (Electron + React + TypeScript), ins
 | `src/main/watcher.ts` | Surveillance du dépôt (dossier Git et arbre de travail), regroupement des événements, mise en sourdine pendant les commandes IPC. N'exécute pas `git` lui-même (passe par `git.ts`). |
 | `src/main/preload.ts` | Expose `window.arbor.call` et `window.arbor.on` (événements poussés par le processus principal, liste blanche) au rendu (contextIsolation activé). |
 | `src/shared/` | `types.ts` : types partagés et interface `ArborApi`, le contrat entre rendu et processus principal. Fonctions pures utilisées des deux côtés (`diff.ts`, `patch.ts`). |
+| `src/shared/prefs.ts` | Préférences (`Preferences`, `DEFAULT_PREFERENCES`, `normalizePreferences`) stockées par le main dans `userData/prefs.json` (`getPreferences`/`setPreferences`), jamais dans localStorage. Côté rendu : `src/renderer/prefs.ts` (`usePreferences`, `updatePreferences`). |
+| `src/renderer/commands.ts` | Registre de commandes consommé par la palette (`registerCommands`, `getCommands`, `setCommandContext`, `matchShortcut`). Toute nouvelle action utilisateur y ajoute une commande dans `commands/<domaine>.ts`. Actions Git réutilisables (barre d'outils, palette) dans `actions.ts`. |
 | `src/renderer/` | UI React. `graph.ts` = disposition du graphe, `diff.ts` = analyse des patchs, `actions.ts` = menus contextuels, `ui.ts` = contexte (`run`, `ask`, `openMenu`, `showDiff`). |
 
 Règles :
@@ -26,7 +28,10 @@ Règles :
 - Toute commande IPC absente de la liste `READ_ONLY` de `main.ts` s'exécute sous `watcher.mute()` : une action d'Arbor ne déclenche jamais de rafraîchissement automatique. N'ajoutez à `READ_ONLY` qu'une commande qui n'écrit rien dans `.git` (attention : `git diff` peut réécrire l'index).
 - Les lectures (`status`) utilisent `--no-optional-locks` ; `diff()` force `--no-color --no-ext-diff --no-textconv --src-prefix=a/ --dst-prefix=b/` pour ne pas dépendre de la configuration de l'utilisateur.
 - Un patch partiel est toujours construit dans le processus principal, à partir d'un diff recalculé et comparé à celui affiché.
-- Couleurs et espacements : variables CSS de `styles.css` (`--bg`, `--accent`…), pas de valeurs en dur dans les composants.
+- Couleurs et espacements : variables CSS de `styles.css` (`--bg`, `--accent`…), pas de valeurs en dur dans les composants ni dans les règles CSS. Toute couleur nouvelle = variable définie dans le thème sombre ET le thème clair.
+- Handlers IPC qui ne reçoivent pas de dépôt en premier argument : à ajouter à `NO_REPO` dans `main.ts`.
+- Surcouches (dialogue, menu, palette…) : attribut `data-overlay` sur leur élément racine ; Échap ne ferme pas le diff ni la vue fichier tant qu'une surcouche est ouverte.
+- `ARBOR_USER_DATA` isole les données utilisateur (préférences, dépôts récents) ; `scripts/ui-check.cjs` utilise un dossier temporaire neuf à chaque lancement, sauf avec `--keep-user-data[=<dossier>]` (scénarios de redémarrage).
 
 ## Commandes
 
