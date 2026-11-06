@@ -23,6 +23,8 @@ export interface CommandContext {
   repo: string | null;
   /** null pendant le chargement du dépôt. */
   snap: RepoSnapshot | null;
+  /** Libellé de l'opération Git en cours, ou null. Les commandes Git doivent être désactivées tant qu'elle tourne. */
+  busy: string | null;
   app: AppHooks;
 }
 
@@ -52,7 +54,7 @@ const NOOP_HOOKS: AppHooks = {
   showDiff: () => {},
 };
 
-export const EMPTY_COMMAND_CONTEXT: CommandContext = { ui: null, repo: null, snap: null, app: NOOP_HOOKS };
+export const EMPTY_COMMAND_CONTEXT: CommandContext = { ui: null, repo: null, snap: null, busy: null, app: NOOP_HOOKS };
 
 const providers = new Map<string, CommandProvider>();
 // Contexte courant, publié par `App` à chaque changement (dépôt, instantané, ui).

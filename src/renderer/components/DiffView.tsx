@@ -141,7 +141,7 @@ function PatchView({ repo, target, onClose, reloadKey }: { repo: string; target:
     };
   }, []);
 
-  const changeMode = (m: Mode) => void updatePreferences({ diffMode: m });
+  const changeMode = (m: Mode) => updatePreferences({ diffMode: m }).catch(() => {}); // échec : l'affichage revient à la valeur enregistrée
 
   const context = target.kind === 'commit' ? `commit ${target.sha.slice(0, 7)}` : target.staged ? 'indexé' : 'non indexé';
 

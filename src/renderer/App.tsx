@@ -38,7 +38,7 @@ export function App() {
   const busyRef = useRef(busy);
   busyRef.current = busy;
   const { autoRefresh } = usePreferences();
-  const toggleAutoRefresh = () => void updatePreferences({ autoRefresh: !autoRefresh });
+  const toggleAutoRefresh = () => updatePreferences({ autoRefresh: !autoRefresh }).catch(() => {}); // échec : l'interrupteur revient à la valeur enregistrée
 
   const refresh = useCallback(async () => {
     if (!repo) return;
@@ -162,6 +162,7 @@ export function App() {
       ui: repo ? ui : null,
       repo,
       snap,
+      busy,
       app: {
         openRepo: (path) => setRepo(path),
         closeRepo: () => setRepo(null),
@@ -174,7 +175,7 @@ export function App() {
         showDiff: (t) => ui.showDiff(t),
       },
     });
-  }, [ui, repo, snap, refresh]);
+  }, [ui, repo, snap, busy, refresh]);
 
   // Si le commit sélectionné disparaît (reset, rebase...), on revient au WIP.
   useEffect(() => {
