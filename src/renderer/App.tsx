@@ -48,7 +48,7 @@ export function App() {
   // Onglet vide : le registre de commandes voit « aucun dépôt ».
   const emptyTab = !tab?.repo;
   useEffect(() => {
-    if (emptyTab) setCommandContext({ ui: null, repo: null, snap: null, app: SHELL_HOOKS });
+    if (emptyTab) setCommandContext({ ui: null, repo: null, snap: null, busy: null, app: SHELL_HOOKS });
   }, [emptyTab]);
 
   if (!ready) return <div className="app" />;
@@ -106,7 +106,7 @@ function RepoView({ tabId, repo, onBusy }: RepoViewProps) {
   const busyRef = useRef(busy);
   busyRef.current = busy;
   const { autoRefresh } = usePreferences();
-  const toggleAutoRefresh = () => void updatePreferences({ autoRefresh: !autoRefresh });
+  const toggleAutoRefresh = () => updatePreferences({ autoRefresh: !autoRefresh }).catch(() => {}); // échec : l'interrupteur revient à la valeur enregistrée
 
   const refresh = useCallback(async () => {
     if (!repo) return;
@@ -239,6 +239,7 @@ function RepoView({ tabId, repo, onBusy }: RepoViewProps) {
       ui: repo ? ui : null,
       repo,
       snap,
+      busy,
       app: {
         openRepo: switchRepo,
         closeRepo,
@@ -251,7 +252,7 @@ function RepoView({ tabId, repo, onBusy }: RepoViewProps) {
         showDiff: (t) => ui.showDiff(t),
       },
     });
-  }, [ui, repo, snap, refresh, switchRepo, closeRepo]);
+  }, [ui, repo, snap, busy, refresh, switchRepo, closeRepo]);
 
   // Si le commit sélectionné disparaît (reset, rebase...), on revient au WIP.
   useEffect(() => {

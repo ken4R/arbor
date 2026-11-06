@@ -31,6 +31,9 @@ export const DEFAULT_PREFERENCES: Readonly<Preferences> = Object.freeze({
   restoreTabs: true,
 });
 
+/** Caractères permis dans un nom de police : lettres, chiffres, espace, virgule, guillemets, point, tiret, souligné. */
+const MONO_FONT_PATTERN = /^[\p{L}\p{N} ,'"._-]*$/u;
+
 const THEMES: readonly ThemePreference[] = ['system', 'dark', 'light'];
 const DIFF_MODES: readonly DiffMode[] = ['unified', 'split'];
 
@@ -43,16 +46,16 @@ function oneOf<T extends string>(v: unknown, allowed: readonly T[], fallback: T)
  * correctif partiel venu du rendu) : champs inconnus ignorés, valeurs invalides remplacées par les défauts,
  * taille de police arrondie et bornée.
  */
-export function normalizePreferences(raw: unknown): Preferences {
+export function normalizePreferences(raw: unknown, fallback: Readonly<Preferences> = DEFAULT_PREFERENCES): Preferences {
   const r = (raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {}) as Record<string, unknown>;
-  const d = DEFAULT_PREFERENCES;
+  const d = fallback;
   const size = typeof r.diffFontSize === 'number' && Number.isFinite(r.diffFontSize) ? Math.round(r.diffFontSize) : d.diffFontSize;
-  // Le nom de police finit dans une déclaration CSS : on écarte ce qui pourrait en sortir.
+  // Le nom de police finit dans une valeur CSS (à appliquer par `style.setProperty`) : liste blanche stricte.
   const font = typeof r.monoFont === 'string' ? r.monoFont.trim() : d.monoFont;
   return {
     theme: oneOf(r.theme, THEMES, d.theme),
     diffFontSize: Math.min(DIFF_FONT_SIZE_MAX, Math.max(DIFF_FONT_SIZE_MIN, size)),
-    monoFont: font.length <= MONO_FONT_MAX_LENGTH && !/[;{}<>\\]/.test(font) ? font : d.monoFont,
+    monoFont: font.length <= MONO_FONT_MAX_LENGTH && MONO_FONT_PATTERN.test(font) ? font : d.monoFont,
     diffMode: oneOf(r.diffMode, DIFF_MODES, d.diffMode),
     autoRefresh: typeof r.autoRefresh === 'boolean' ? r.autoRefresh : d.autoRefresh,
     restoreTabs: typeof r.restoreTabs === 'boolean' ? r.restoreTabs : d.restoreTabs,
@@ -62,5 +65,6 @@ export function normalizePreferences(raw: unknown): Preferences {
 /** Applique un correctif partiel (non vérifié, venu du rendu) à des préférences valides. */
 export function mergePreferences(current: Preferences, patch: unknown): Preferences {
   const p = patch && typeof patch === 'object' && !Array.isArray(patch) ? patch : {};
-  return normalizePreferences({ ...current, ...p });
+  // Une valeur invalide du correctif garde la valeur courante (et non le défaut).
+  return normalizePreferences({ ...current, ...p }, current);
 }

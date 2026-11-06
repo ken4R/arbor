@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 export type MenuItem = { label: string; onClick: () => void; danger?: boolean; disabled?: boolean } | 'separator';
 
@@ -22,6 +22,18 @@ export function ContextMenu({ menu, onClose }: { menu: MenuState; onClose: () =>
       top: Math.min(menu.y, window.innerHeight - r.height - 8),
     });
   }, [menu]);
+
+  // Échap ferme le menu (le diff en dessous l'ignore tant qu'une surcouche est ouverte).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        onClose();
+      }
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [onClose]);
 
   return (
     <div className="menu" data-overlay ref={ref} style={pos} onClick={(e) => e.stopPropagation()}>
