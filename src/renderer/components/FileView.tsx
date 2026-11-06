@@ -35,13 +35,13 @@ export function FileView({ repo, snap, target, onClose, onSelectCommit }: Props)
   const targetKey = JSON.stringify(target);
   useEffect(() => setTab(target.tab), [targetKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Échap ferme toute la vue, sauf si un dialogue ou un menu est ouvert.
+  // Échap ferme toute la vue, sauf si une surcouche (`[data-overlay]` : dialogue, menu…) est ouverte.
   // Écouté sur `document` en remontée : après les gestionnaires React (dialogue) et avant celui du diff intégré
   // (sur `window`), qui ne doit jamais masquer le diff. L'état du dialogue est relevé avant que React ne le ferme.
   useEffect(() => {
     let overlayOpen = false;
     const onCapture = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') overlayOpen = !!document.querySelector('.dialog, .menu');
+      if (e.key === 'Escape') overlayOpen = !!document.querySelector('[data-overlay]');
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;

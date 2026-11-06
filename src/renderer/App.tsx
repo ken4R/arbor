@@ -14,6 +14,8 @@ import { PromptDialog, type PromptState } from './components/PromptDialog';
 import { FileView } from './components/FileView';
 import type { FileViewTarget } from './ui';
 import { UiContext, type Ui } from './ui';
+import { updatePreferences, usePreferences } from './prefs';
+import { setCommandContext } from './commands';
 
 export type Selection = { kind: 'wip' } | { kind: 'commit'; sha: string };
 
@@ -32,26 +34,11 @@ export function App() {
   const closeFileView = useCallback(() => setFileView(null), []);
   const repoRef = useRef(repo);
   repoRef.current = repo;
-  // Rafraîchissement automatique (préférence locale, activé par défaut).
-  const AUTO_REFRESH_KEY = 'arbor.autoRefresh';
+  // Rafraîchissement automatique (préférence enregistrée, activé par défaut).
   const busyRef = useRef(busy);
   busyRef.current = busy;
-  const [autoRefresh, setAutoRefresh] = useState(() => {
-    try {
-      return localStorage.getItem(AUTO_REFRESH_KEY) !== 'off';
-    } catch {
-      return true;
-    }
-  });
-  const toggleAutoRefresh = () =>
-    setAutoRefresh((on) => {
-      try {
-        localStorage.setItem(AUTO_REFRESH_KEY, on ? 'off' : 'on');
-      } catch {
-        /* préférence non mémorisée */
-      }
-      return !on;
-    });
+  const { autoRefresh } = usePreferences();
+  const toggleAutoRefresh = () => void updatePreferences({ autoRefresh: !autoRefresh });
 
   const refresh = useCallback(async () => {
     if (!repo) return;
@@ -168,6 +155,26 @@ export function App() {
   );
 
   const rows = useMemo(() => (snap ? layoutGraph(snap.commits) : []), [snap]);
+
+  // Contexte publié pour le registre de commandes (palette, raccourcis).
+  useEffect(() => {
+    setCommandContext({
+      ui: repo ? ui : null,
+      repo,
+      snap,
+      app: {
+        openRepo: (path) => setRepo(path),
+        closeRepo: () => setRepo(null),
+        refresh: () => void refresh(),
+        selectCommit: (sha) => {
+          setSelection({ kind: 'commit', sha });
+          setDiffTarget(null);
+          setFileView(null);
+        },
+        showDiff: (t) => ui.showDiff(t),
+      },
+    });
+  }, [ui, repo, snap, refresh]);
 
   // Si le commit sélectionné disparaît (reset, rebase...), on revient au WIP.
   useEffect(() => {

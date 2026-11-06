@@ -24,7 +24,7 @@ export function ContextMenu({ menu, onClose }: { menu: MenuState; onClose: () =>
   }, [menu]);
 
   return (
-    <div className="menu" ref={ref} style={pos} onClick={(e) => e.stopPropagation()}>
+    <div className="menu" data-overlay ref={ref} style={pos} onClick={(e) => e.stopPropagation()}>
       {menu.items.map((item, i) =>
         item === 'separator' ? (
           <div key={i} className="menu-sep" />

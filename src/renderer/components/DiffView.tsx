@@ -3,9 +3,11 @@ import type { DiffTarget, PatchAction, PatchSelection } from '../../shared/types
 import { api } from '../api';
 import { parseDiff, toSplit, type DiffLine } from '../diff';
 import { useUi } from '../ui';
+import { updatePreferences, usePreferences } from '../prefs';
+import type { DiffMode } from '../../shared/prefs';
 import { Icon } from './Icons';
 
-type Mode = 'unified' | 'split';
+type Mode = DiffMode;
 
 /**
  * `reloadKey` (facultatif) : pour un diff du répertoire de travail, toute nouvelle valeur recharge le diff
@@ -29,13 +31,7 @@ function PatchView({ repo, target, onClose, reloadKey }: { repo: string; target:
   const ui = useUi();
   const [raw, setRaw] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [mode, setMode] = useState<Mode>(() => {
-    try {
-      return (localStorage.getItem('arbor.diffMode') as Mode) || 'unified';
-    } catch {
-      return 'unified';
-    }
-  });
+  const mode: Mode = usePreferences().diffMode;
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
   const anchor = useRef<{ h: number; k: number } | null>(null);
   const shown = useRef<{ key: string; raw: string | null }>({ key: '', raw: null });
@@ -126,20 +122,26 @@ function PatchView({ repo, target, onClose, reloadKey }: { repo: string; target:
   const nSel = linesSelectable ? selected.size : 0;
   const plural = nSel > 1 ? 's' : '';
 
+  // Échap ferme le diff, sauf si une surcouche (`[data-overlay]` : dialogue, menu, palette…) est ouverte.
+  // Son état est relevé en capture, avant que React ne la ferme sur ce même Échap. Abonnement unique (`onClose`
+  // lu par référence) : sinon le rendu provoqué par la fermeture réabonnerait un écouteur neuf pendant l'événement.
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
+    let overlayOpen = false;
+    const onCapture = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') overlayOpen = !!document.querySelector('[data-overlay]');
+    };
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && !overlayOpen && onCloseRef.current();
+    window.addEventListener('keydown', onCapture, true);
     window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+    return () => {
+      window.removeEventListener('keydown', onCapture, true);
+      window.removeEventListener('keydown', onKey);
+    };
+  }, []);
 
-  const changeMode = (m: Mode) => {
-    setMode(m);
-    try {
-      localStorage.setItem('arbor.diffMode', m);
-    } catch {
-      // préférence non mémorisée : sans conséquence
-    }
-  };
+  const changeMode = (m: Mode) => void updatePreferences({ diffMode: m });
 
   const context = target.kind === 'commit' ? `commit ${target.sha.slice(0, 7)}` : target.staged ? 'indexé' : 'non indexé';
 

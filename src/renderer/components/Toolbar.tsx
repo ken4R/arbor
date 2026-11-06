@@ -1,6 +1,20 @@
 import { useEffect, useState } from 'react';
 import type { RepoSnapshot } from '../../shared/types';
 import { api } from '../api';
+import {
+  canFetch,
+  canNewBranch,
+  canPull,
+  canPush,
+  canStashPop,
+  canStashSave,
+  fetchAction,
+  newBranchAction,
+  pullAction,
+  pushAction,
+  stashPopAction,
+  stashSaveAction,
+} from '../actions';
 import { useUi } from '../ui';
 import { Icon, Logo } from './Icons';
 
@@ -24,27 +38,6 @@ export function Toolbar({ repo, snap, busy, onClose, onSwitch, onRefresh, autoRe
   }, [repo]);
 
   const st = snap?.status;
-  const hasRemote = (snap?.remotes.length ?? 0) > 0;
-  const dirty = !!st && st.staged.length + st.unstaged.length > 0;
-
-  const push = () => {
-    if (st?.upstream) return ui.run('Push…', () => api.push(repo, false), 'Push terminé');
-    ui.ask({
-      title: 'Publier la branche',
-      message: `La branche « ${st?.branch} » n'a pas encore de branche distante. Elle sera publiée sur ${snap?.remotes.includes('origin') ? 'origin' : snap?.remotes[0]}.`,
-      confirm: 'Publier',
-      onSubmit: () => ui.run('Push…', () => api.push(repo, true), 'Branche publiée'),
-    });
-  };
-
-  const newBranch = () =>
-    ui.ask({
-      title: 'Nouvelle branche',
-      label: 'Nom de la branche',
-      confirm: 'Créer',
-      checkbox: { label: 'Basculer sur la nouvelle branche', initial: true },
-      onSubmit: (name, co) => ui.run('Création de la branche…', () => api.createBranch(repo, name, 'HEAD', co)),
-    });
 
   const repoMenu = (e: React.MouseEvent) =>
     ui.openMenu(e, [
@@ -64,26 +57,13 @@ export function Toolbar({ repo, snap, busy, onClose, onSwitch, onRefresh, autoRe
         </button>
       </div>
       <div className="toolbar-actions">
-        <ToolButton label="Fetch" icon={<Icon.fetch />} disabled={!hasRemote || !!busy} onClick={() => ui.run('Fetch…', () => api.fetch(repo), 'Fetch terminé')} />
-        <ToolButton label="Pull" icon={<Icon.pull />} badge={st?.behind} disabled={!st?.upstream || !!busy} onClick={() => ui.run('Pull…', () => api.pull(repo), 'Pull terminé')} />
-        <ToolButton label="Push" icon={<Icon.push />} badge={st?.ahead} disabled={!hasRemote || !st?.branch || !!busy} onClick={push} />
+        <ToolButton label="Fetch" icon={<Icon.fetch />} disabled={!canFetch(snap) || !!busy} onClick={() => snap && fetchAction(ui, snap)} />
+        <ToolButton label="Pull" icon={<Icon.pull />} badge={st?.behind} disabled={!canPull(snap) || !!busy} onClick={() => snap && pullAction(ui, snap)} />
+        <ToolButton label="Push" icon={<Icon.push />} badge={st?.ahead} disabled={!canPush(snap) || !!busy} onClick={() => snap && pushAction(ui, snap)} />
         <span className="toolbar-sep" />
-        <ToolButton label="Branche" icon={<Icon.branch />} disabled={!snap?.head || !!busy} onClick={newBranch} />
-        <ToolButton
-          label="Stash"
-          icon={<Icon.stash />}
-          disabled={!dirty || !!busy}
-          onClick={() =>
-            ui.ask({
-              title: 'Mettre de côté les modifications',
-              label: 'Message (facultatif)',
-              optional: true,
-              confirm: 'Stash',
-              onSubmit: (msg) => ui.run('Stash…', () => api.stashSave(repo, msg)),
-            })
-          }
-        />
-        <ToolButton label="Pop" icon={<Icon.pop />} disabled={!snap?.stashes.length || !!busy} onClick={() => snap && ui.run('Pop…', () => api.stashApply(repo, 0, snap.stashes[0].sha, true))} />
+        <ToolButton label="Branche" icon={<Icon.branch />} disabled={!canNewBranch(snap) || !!busy} onClick={() => snap && newBranchAction(ui, snap)} />
+        <ToolButton label="Stash" icon={<Icon.stash />} disabled={!canStashSave(snap) || !!busy} onClick={() => snap && stashSaveAction(ui, snap)} />
+        <ToolButton label="Pop" icon={<Icon.pop />} disabled={!canStashPop(snap) || !!busy} onClick={() => snap && stashPopAction(ui, snap)} />
       </div>
       <div className="toolbar-right">
         {busy && <span className="busy"><span className="spinner" />{busy}</span>}
