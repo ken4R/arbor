@@ -160,12 +160,13 @@ function staticCommands(): Command[] {
       title: 'Ouvrir un dépôt…',
       group: GROUP_REPO,
       keywords: ['dossier', 'projet'],
-      enabled: (c) => !c.busy,
+      // L'écran d'accueil a son propre bouton (qui y affiche les erreurs) : commande réservée à un dépôt ouvert.
+      enabled: (c) => !!c.ui && !c.busy,
       run: (c) =>
-        void api
-          .openRepoDialog()
-          .then((p) => p && c.app.openRepo(p))
-          .catch((e: Error) => c.ui?.ask({ title: 'Ouverture impossible', message: e.message, confirm: 'OK', onSubmit: () => {} })),
+        void c.ui?.run('Ouverture…', async () => {
+          const p = await api.openRepoDialog();
+          if (p) c.app.openRepo(p);
+        }),
     },
     {
       id: 'git.closeRepo',
@@ -188,8 +189,12 @@ function dynamicCommands(c: CommandContext): Command[] {
   const out: Command[] = [];
   if (hasSnap(c)) {
     const { snap } = c;
+    const current = snap.status.branch;
+    const currentUpstream = snap.branches.find((b) => b.current)?.upstream ?? null;
     for (const b of snap.branches) {
       if (b.current || (b.remote && b.name.endsWith('/HEAD'))) continue;
+      // « Checkout origin/X » quand X est la branche courante : ne ferait que rebasculer sur X.
+      if (b.remote && (b.name === currentUpstream || b.name.split('/').slice(1).join('/') === current)) continue;
       out.push({
         id: `git.checkout:${b.remote ? 'remote' : 'local'}:${b.name}`,
         title: `Checkout ${b.name}`,
@@ -199,15 +204,18 @@ function dynamicCommands(c: CommandContext): Command[] {
         run: (x) => hasSnap(x) && void checkoutBranch(x.ui, x.snap.path, b.name),
       });
     }
+    // Commit de chaque tag, en un seul passage sur l'historique.
+    const tagSha = new Map<string, string>();
+    for (const cm of snap.commits) for (const r of cm.refs) if (r.type === 'tag' && !tagSha.has(r.name)) tagSha.set(r.name, cm.sha);
     for (const tag of snap.tags) {
-      const commit = snap.commits.find((cm) => cm.refs.some((r) => r.type === 'tag' && r.name === tag));
-      if (!commit) continue;
+      const sha = tagSha.get(tag);
+      if (!sha) continue;
       out.push({
         id: `git.tag:${tag}`,
         title: `Aller au tag ${tag}`,
         group: GROUP_TAGS,
         keywords: ['étiquette'],
-        run: (x) => x.app.selectCommit(commit.sha),
+        run: (x) => x.app.selectCommit(sha),
       });
     }
     const st = snap.status;
@@ -233,6 +241,7 @@ function dynamicCommands(c: CommandContext): Command[] {
       title: `Ouvrir ${baseName(p)}`,
       group: GROUP_RECENT,
       keywords: [p],
+      enabled: (x) => !x.busy,
       run: (x) => x.app.openRepo(p),
     });
   }

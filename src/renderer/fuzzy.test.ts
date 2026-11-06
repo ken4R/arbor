@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { fuzzyScore, prepareText, rankItems } from './fuzzy';
+import { fuzzyMatch, fuzzyScore, prepareQuery, prepareText } from './fuzzy';
 
 describe('fuzzyScore', () => {
   it('trouve une sous-séquence et renvoie les indices des caractères', () => {
@@ -54,30 +54,30 @@ describe('fuzzyScore', () => {
   });
 });
 
-describe('rankItems', () => {
-  const items = [{ text: 'Pull' }, { text: 'Push' }, { text: 'Fetch' }, { text: 'Checkout feature/login' }, { text: 'Fermer le dépôt' }];
-
-  it('filtre et trie par score', () => {
-    const r = rankItems('fe', items).map((x) => x.item.text);
-    expect(r[0]).toBe('Fetch');
-    expect(r).toContain('Checkout feature/login');
-    expect(r).not.toContain('Push');
+describe('fuzzyMatch', () => {
+  it('donne le même résultat quels que soient les appels précédents (tampons partagés)', () => {
+    const p = prepareText('Checkout origin/feature/api');
+    const first = fuzzyMatch(prepareQuery('cofa'), p);
+    fuzzyMatch(prepareQuery('une requête beaucoup plus longue'), prepareText('une requête beaucoup plus longue que le texte précédent, pour agrandir les tampons'));
+    fuzzyMatch(prepareQuery('x'), prepareText('x'));
+    expect(fuzzyMatch(prepareQuery('cofa'), p)).toEqual(first);
+    expect(first!.indices).toEqual([0, 9, 16, 24]);
   });
 
-  it('requête vide : tout, dans l’ordre, avec le bonus en premier', () => {
-    expect(rankItems('', items).map((x) => x.item.text)).toEqual(items.map((x) => x.text));
-    const boosted = items.map((x) => (x.text === 'Fetch' ? { ...x, boost: 1 } : x));
-    expect(rankItems('', boosted)[0].item.text).toBe('Fetch');
-  });
-
-  it('le bonus départage deux scores égaux', () => {
-    const r = rankItems('pu', [{ text: 'Pull' }, { text: 'Push', boost: 0.5 }]);
-    expect(r.map((x) => x.item.text)).toEqual(['Push', 'Pull']);
-  });
-
-  it('respecte la limite et réutilise le texte préparé', () => {
-    const many = Array.from({ length: 80 }, (_, i) => ({ text: `branche-${i}`, prepared: prepareText(`branche-${i}`) }));
-    expect(rankItems('br', many)).toHaveLength(50);
-    expect(rankItems('br', many, 5)).toHaveLength(5);
+  it('5 000 références en moins de 16 ms par frappe', () => {
+    const refs = Array.from({ length: 5000 }, (_, i) => prepareText(`Checkout origin/feature/ticket-${i}`));
+    const q = prepareQuery('checkoutoriginfeature');
+    const run = () => {
+      let hits = 0;
+      for (const r of refs) if (fuzzyMatch(q, r)) hits++;
+      return hits;
+    };
+    run(); // préchauffage
+    const runs = 5;
+    const t0 = performance.now();
+    for (let i = 0; i < runs; i++) expect(run()).toBe(5000);
+    const perRun = (performance.now() - t0) / runs;
+    expect(perRun).toBeLessThan(16);
   });
 });
+

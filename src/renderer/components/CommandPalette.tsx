@@ -1,23 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { formatShortcut, getCommandContext, getCommands, matchShortcut, useCommandContext, type Command } from '../commands';
 import { GROUP_BRANCHES, GROUP_FILES, GROUP_TAGS, loadRecentRepos } from '../commands/git';
-import { prepareQuery, prepareText, fuzzyMatch, type PreparedText } from '../fuzzy';
+import { makeEntry, searchEntries, type PaletteEntry, type PaletteKind, type PaletteResult } from '../paletteSearch';
 
 // Palette de commandes : Ctrl/Cmd+Maj+P ou Ctrl/Cmd+K. Recherche floue sur les commandes du registre
 // (dont branches, tags, dépôts récents et fichiers modifiés). Préfixes : `>` commandes, `@` branches et tags,
 // `#` fichiers modifiés.
 
 const SHORTCUTS = ['Mod+Shift+P', 'Mod+K'];
-const LIMIT = 50;
 const HISTORY_MAX = 20;
-/** Les fichiers modifiés n'apparaissent sans préfixe qu'au-delà de cette longueur de requête. */
-const FILES_MIN_QUERY = 3;
-/** Une correspondance sur les mots-clés seulement passe derrière une correspondance sur le titre. */
-const KEYWORD_PENALTY = 10;
 
-type Kind = 'command' | 'ref' | 'file';
-
-const kindOf = (cmd: Command): Kind => (cmd.group === GROUP_BRANCHES || cmd.group === GROUP_TAGS ? 'ref' : cmd.group === GROUP_FILES ? 'file' : 'command');
+const kindOf = (cmd: Command): PaletteKind =>
+  cmd.group === GROUP_BRANCHES || cmd.group === GROUP_TAGS ? 'ref' : cmd.group === GROUP_FILES ? 'file' : 'command';
 
 // Dernières commandes lancées (la plus récente en tête), en mémoire pour la session : départage les scores.
 const history: string[] = [];
@@ -34,49 +28,13 @@ function historyBoost(id: string): number {
   return i < 0 ? 0 : 1 - i / HISTORY_MAX;
 }
 
-interface Entry {
-  cmd: Command;
-  kind: Kind;
-  title: PreparedText;
-  keywords: PreparedText | null;
-}
-
-interface Result {
-  entry: Entry;
-  score: number;
-  indices: number[];
-}
-
-function parseQuery(raw: string): { kind: Kind | null; text: string } {
-  const c = raw[0];
-  if (c === '>') return { kind: 'command', text: raw.slice(1) };
-  if (c === '@') return { kind: 'ref', text: raw.slice(1) };
-  if (c === '#') return { kind: 'file', text: raw.slice(1) };
-  return { kind: null, text: raw };
-}
-
-function search(entries: Entry[], raw: string): Result[] {
-  const { kind, text } = parseQuery(raw);
-  const q = prepareQuery(text);
-  const out: (Result & { order: number })[] = [];
-  entries.forEach((entry, order) => {
-    if (kind ? entry.kind !== kind : entry.kind === 'file' ? q.length < FILES_MIN_QUERY : entry.kind === 'ref' && !q) return;
-    let m = fuzzyMatch(q, entry.title);
-    if (!m && entry.keywords) {
-      const k = fuzzyMatch(q, entry.keywords);
-      if (k) m = { score: k.score - KEYWORD_PENALTY, indices: [] };
-    }
-    if (m) out.push({ entry, score: m.score + historyBoost(entry.cmd.id), indices: m.indices, order });
-  });
-  out.sort((a, b) => b.score - a.score || a.order - b.order);
-  return out.slice(0, LIMIT);
-}
+const isShortcut = (e: KeyboardEvent) => SHORTCUTS.some((s) => matchShortcut(e, s));
 
 function Highlight({ text, indices }: { text: string; indices: number[] }) {
   if (!indices.length) return <>{text}</>;
   const parts: React.ReactNode[] = [];
-  let last = 0;
   const set = new Set(indices);
+  let last = 0;
   let i = 0;
   while (i < text.length) {
     if (!set.has(i)) {
@@ -100,20 +58,17 @@ export function CommandPalette() {
   const [recentsVersion, setRecentsVersion] = useState(0);
   const ctx = useCommandContext();
   const listRef = useRef<HTMLDivElement>(null);
-  const openRef = useRef(open);
-  openRef.current = open;
+  const inputRef = useRef<HTMLInputElement>(null);
 
+  // Ouverture : écouteur permanent (phase de bouillonnement), inactif quand la palette est ouverte (l'écouteur de
+  // capture ci-dessous prend alors le relais) ou quand une autre surcouche l'est déjà.
   useEffect(() => {
+    if (open) return;
     const onKey = (e: KeyboardEvent) => {
-      if (!SHORTCUTS.some((s) => matchShortcut(e, s))) return;
-      // Une autre surcouche (dialogue, menu…) est ouverte : on ne l'empile pas.
-      if (!openRef.current && document.querySelector('[data-overlay]')) return;
+      if (e.repeat || !isShortcut(e)) return;
+      if (document.querySelector('[data-overlay]')) return;
       e.preventDefault();
       e.stopPropagation();
-      if (openRef.current) {
-        setOpen(false);
-        return;
-      }
       setQuery('');
       setActive(0);
       setOpen(true);
@@ -121,21 +76,69 @@ export function CommandPalette() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, []);
+  }, [open]);
 
   // Textes normalisés calculés une fois par contexte (instantané) et non à chaque frappe.
-  const entries = useMemo<Entry[]>(() => {
+  const entries = useMemo<PaletteEntry<Command>[]>(() => {
     if (!open) return [];
-    return getCommands(ctx).map((cmd) => ({
-      cmd,
-      kind: kindOf(cmd),
-      title: prepareText(cmd.title),
-      keywords: cmd.keywords?.length ? prepareText(`${cmd.group} ${cmd.keywords.join(' ')}`) : prepareText(cmd.group),
-    }));
+    return getCommands(ctx).map((cmd) =>
+      makeEntry(cmd, kindOf(cmd), cmd.title, [cmd.group, ...(cmd.keywords ?? [])].join(' '), historyBoost(cmd.id)),
+    );
   }, [open, ctx, recentsVersion]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const results = useMemo(() => search(entries, query), [entries, query]);
+  const results = useMemo(() => searchEntries(entries, query), [entries, query]);
   const current = Math.min(active, Math.max(results.length - 1, 0));
+
+  const close = () => setOpen(false);
+  const runResult = (r: PaletteResult<Command> | undefined) => {
+    if (!r) return;
+    close();
+    remember(r.entry.item.id);
+    r.entry.item.run(getCommandContext());
+  };
+
+  // Clavier pendant que la palette est ouverte : écouteur de capture sur window, avant tout autre écouteur
+  // (recherche Ctrl+F, diff, vue fichier…). Il gère Échap, ↑/↓, Entrée et le raccourci (qui referme), et retient
+  // les autres raccourcis Mod+… (sans empêcher leur effet natif dans le champ : copier, coller, tout sélectionner).
+  const keyRef = useRef<(e: KeyboardEvent) => void>(() => {});
+  keyRef.current = (e) => {
+    if (isShortcut(e)) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (!e.repeat) close();
+      return;
+    }
+    switch (e.key) {
+      case 'Escape':
+        // Ne ferme que la palette (pas le diff ni la vue fichier en dessous).
+        e.preventDefault();
+        e.stopPropagation();
+        close();
+        return;
+      case 'ArrowDown':
+      case 'ArrowUp': {
+        e.preventDefault();
+        e.stopPropagation();
+        const n = results.length;
+        if (n) setActive((current + (e.key === 'ArrowDown' ? 1 : -1) + n) % n);
+        return;
+      }
+      case 'Enter':
+        // Validation d'une composition (IME) : ce n'est pas une exécution.
+        if (e.isComposing || e.keyCode === 229) return;
+        e.preventDefault();
+        e.stopPropagation();
+        runResult(results[current]);
+        return;
+    }
+    if (e.ctrlKey || e.metaKey) e.stopPropagation();
+  };
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => keyRef.current(e);
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [open]);
 
   useEffect(() => {
     listRef.current?.querySelector<HTMLElement>('.palette-item.active')?.scrollIntoView({ block: 'nearest' });
@@ -143,41 +146,20 @@ export function CommandPalette() {
 
   if (!open) return null;
 
-  const close = () => setOpen(false);
-  const runEntry = (r: Result | undefined) => {
-    if (!r) return;
-    close();
-    remember(r.entry.cmd.id);
-    r.entry.cmd.run(getCommandContext());
-  };
-
-  const onKeyDown = (e: React.KeyboardEvent) => {
-    switch (e.key) {
-      case 'Escape':
-        // Ne ferme que la palette (pas le diff ni la vue fichier en dessous).
-        e.preventDefault();
-        e.stopPropagation();
-        close();
-        break;
-      case 'ArrowDown':
-        e.preventDefault();
-        if (results.length) setActive((current + 1) % results.length);
-        break;
-      case 'ArrowUp':
-        e.preventDefault();
-        if (results.length) setActive((current - 1 + results.length) % results.length);
-        break;
-      case 'Enter':
-        e.preventDefault();
-        runEntry(results[current]);
-        break;
-    }
-  };
-
   return (
     <div className="overlay palette-overlay" data-overlay onMouseDown={close}>
-      <div className="palette" role="dialog" aria-label="Palette de commandes" onMouseDown={(e) => e.stopPropagation()} onKeyDown={onKeyDown}>
+      <div
+        className="palette"
+        role="dialog"
+        aria-label="Palette de commandes"
+        onMouseDown={(e) => {
+          e.stopPropagation();
+          // Le champ garde le focus (et donc le clavier) quel que soit l'endroit cliqué dans la palette.
+          if (e.target !== inputRef.current) e.preventDefault();
+        }}
+      >
         <input
+          ref={inputRef}
           className="palette-input"
           autoFocus
           value={query}
@@ -192,18 +174,18 @@ export function CommandPalette() {
           {results.length === 0 && <div className="palette-empty">Aucun résultat</div>}
           {results.map((r, i) => (
             <div
-              key={r.entry.cmd.id}
+              key={r.entry.item.id}
               role="option"
               aria-selected={i === current}
               className={`palette-item${i === current ? ' active' : ''}`}
               onMouseMove={() => i !== current && setActive(i)}
-              onClick={() => runEntry(r)}
+              onClick={() => runResult(r)}
             >
               <span className="palette-title">
-                <Highlight text={r.entry.cmd.title} indices={r.indices} />
+                <Highlight text={r.entry.item.title} indices={r.indices} />
               </span>
-              <span className="palette-group">{r.entry.cmd.group}</span>
-              {r.entry.cmd.shortcut && <kbd className="palette-kbd">{formatShortcut(r.entry.cmd.shortcut)}</kbd>}
+              <span className="palette-group">{r.entry.item.group}</span>
+              {r.entry.item.shortcut && <kbd className="palette-kbd">{formatShortcut(r.entry.item.shortcut)}</kbd>}
             </div>
           ))}
         </div>
