@@ -43,6 +43,8 @@ export async function loadRecentRepos(): Promise<void> {
 }
 
 const hasSnap = (c: CommandContext): c is CommandContext & { snap: RepoSnapshot; ui: NonNullable<CommandContext['ui']> } => !!c.snap && !!c.ui;
+/** Dépôt chargé et aucune opération Git en cours (`busy`). */
+const ready = (c: CommandContext): c is CommandContext & { snap: RepoSnapshot; ui: NonNullable<CommandContext['ui']> } => hasSnap(c) && !c.busy;
 const inOperation = (c: CommandContext) => !!c.snap && c.snap.status.state !== 'clean';
 
 const baseName = (p: string) => p.split(/[\\/]/).filter(Boolean).pop() ?? p;
@@ -68,7 +70,7 @@ function staticCommands(): Command[] {
       title: 'Fetch',
       group: GROUP_GIT,
       keywords: ['récupérer', 'distant'],
-      enabled: (c) => hasSnap(c) && canFetch(c.snap),
+      enabled: (c) => ready(c) && canFetch(c.snap),
       run: (c) => hasSnap(c) && void fetchAction(c.ui, c.snap),
     },
     {
@@ -76,7 +78,7 @@ function staticCommands(): Command[] {
       title: 'Pull',
       group: GROUP_GIT,
       keywords: ['tirer', 'mettre à jour'],
-      enabled: (c) => hasSnap(c) && canPull(c.snap) && !inOperation(c),
+      enabled: (c) => ready(c) && canPull(c.snap) && !inOperation(c),
       run: (c) => hasSnap(c) && void pullAction(c.ui, c.snap),
     },
     {
@@ -84,7 +86,7 @@ function staticCommands(): Command[] {
       title: 'Push',
       group: GROUP_GIT,
       keywords: ['pousser', 'publier'],
-      enabled: (c) => hasSnap(c) && canPush(c.snap),
+      enabled: (c) => ready(c) && canPush(c.snap),
       run: (c) => hasSnap(c) && pushAction(c.ui, c.snap),
     },
     {
@@ -92,7 +94,7 @@ function staticCommands(): Command[] {
       title: 'Commit…',
       group: GROUP_GIT,
       keywords: ['valider', 'message'],
-      enabled: (c) => hasSnap(c),
+      enabled: (c) => ready(c),
       run: () => focusCommitSummary(),
     },
     {
@@ -100,7 +102,7 @@ function staticCommands(): Command[] {
       title: 'Stash : mettre de côté les modifications',
       group: GROUP_GIT,
       keywords: ['remiser'],
-      enabled: (c) => hasSnap(c) && canStashSave(c.snap) && !inOperation(c),
+      enabled: (c) => ready(c) && canStashSave(c.snap) && !inOperation(c),
       run: (c) => hasSnap(c) && stashSaveAction(c.ui, c.snap),
     },
     {
@@ -108,7 +110,7 @@ function staticCommands(): Command[] {
       title: 'Pop : réappliquer le dernier stash',
       group: GROUP_GIT,
       keywords: ['stash', 'remise'],
-      enabled: (c) => hasSnap(c) && canStashPop(c.snap) && !inOperation(c),
+      enabled: (c) => ready(c) && canStashPop(c.snap) && !inOperation(c),
       run: (c) => hasSnap(c) && void stashPopAction(c.ui, c.snap),
     },
     {
@@ -116,7 +118,7 @@ function staticCommands(): Command[] {
       title: 'Nouvelle branche…',
       group: GROUP_GIT,
       keywords: ['créer', 'branch'],
-      enabled: (c) => hasSnap(c) && canNewBranch(c.snap),
+      enabled: (c) => ready(c) && canNewBranch(c.snap),
       run: (c) => hasSnap(c) && newBranchAction(c.ui, c.snap),
     },
     {
@@ -124,7 +126,7 @@ function staticCommands(): Command[] {
       title: 'Abandonner l’opération en cours',
       group: GROUP_GIT,
       keywords: ['annuler', 'fusion', 'merge', 'rebase', 'abort'],
-      enabled: (c) => hasSnap(c) && inOperation(c),
+      enabled: (c) => ready(c) && inOperation(c),
       run: (c) => {
         if (!hasSnap(c)) return;
         const { ui, snap } = c;
@@ -142,7 +144,7 @@ function staticCommands(): Command[] {
       title: 'Continuer l’opération en cours',
       group: GROUP_GIT,
       keywords: ['fusion', 'merge', 'rebase', 'continue'],
-      enabled: (c) => hasSnap(c) && inOperation(c) && c.snap.status.conflicted.length === 0,
+      enabled: (c) => ready(c) && inOperation(c) && c.snap.status.conflicted.length === 0,
       run: (c) => hasSnap(c) && void c.ui.run('Continuer…', () => api.continueOp(c.snap.path)),
     },
     {
@@ -150,7 +152,7 @@ function staticCommands(): Command[] {
       title: 'Rafraîchir',
       group: GROUP_REPO,
       keywords: ['recharger', 'actualiser'],
-      enabled: (c) => !!c.repo,
+      enabled: (c) => !!c.repo && !c.busy,
       run: (c) => c.app.refresh(),
     },
     {
@@ -158,6 +160,7 @@ function staticCommands(): Command[] {
       title: 'Ouvrir un dépôt…',
       group: GROUP_REPO,
       keywords: ['dossier', 'projet'],
+      enabled: (c) => !c.busy,
       run: (c) =>
         void api
           .openRepoDialog()
@@ -168,7 +171,7 @@ function staticCommands(): Command[] {
       id: 'git.closeRepo',
       title: 'Fermer le dépôt',
       group: GROUP_REPO,
-      enabled: (c) => !!c.repo,
+      enabled: (c) => !!c.repo && !c.busy,
       run: (c) => c.app.closeRepo(),
     },
     {
@@ -176,7 +179,7 @@ function staticCommands(): Command[] {
       title: getPreferences().autoRefresh ? 'Désactiver le rafraîchissement automatique' : 'Activer le rafraîchissement automatique',
       group: GROUP_REPO,
       keywords: ['surveillance', 'basculer'],
-      run: () => void updatePreferences({ autoRefresh: !getPreferences().autoRefresh }),
+      run: () => void updatePreferences({ autoRefresh: !getPreferences().autoRefresh }).catch(() => {}),
     },
   ];
 }
@@ -192,7 +195,7 @@ function dynamicCommands(c: CommandContext): Command[] {
         title: `Checkout ${b.name}`,
         group: GROUP_BRANCHES,
         keywords: [b.remote ? 'distante' : 'locale'],
-        enabled: (x) => !inOperation(x),
+        enabled: (x) => ready(x) && !inOperation(x),
         run: (x) => hasSnap(x) && void checkoutBranch(x.ui, x.snap.path, b.name),
       });
     }
