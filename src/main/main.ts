@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, nativeTheme } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, type MenuItemConstructorOptions } from 'electron';
 import { closeSync, existsSync, fsyncSync, openSync, readFileSync, renameSync, rmSync, writeFileSync, writeSync } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
 import * as g from './git';
@@ -90,8 +90,80 @@ function assertOpened(repo: unknown) {
   }
 }
 
+// Session des onglets : `userData/session.json` = { repos: chemins des onglets, active: index de l'onglet actif }.
+const sessionFile = () => join(app.getPath('userData'), 'session.json');
+
+/** Rouvre un dépôt de la session sans le remettre en tête des récents ; `null` s'il n'existe plus. */
+async function reopenRepo(path: string): Promise<string | null> {
+  try {
+    if (!existsSync(path) || !(await g.isRepo(path))) return null;
+    const top = await g.toplevel(path);
+    openedRepos.add(top);
+    return top;
+  } catch {
+    return null;
+  }
+}
+
+async function restoreSession(): Promise<{ repos: string[]; active: number }> {
+  let data: { repos?: unknown; active?: unknown };
+  try {
+    data = JSON.parse(readFileSync(sessionFile(), 'utf8'));
+  } catch {
+    return { repos: [], active: 0 };
+  }
+  const saved = Array.isArray(data?.repos) ? data.repos.filter((p): p is string => typeof p === 'string') : [];
+  const activeIndex = typeof data?.active === 'number' ? data.active : 0;
+  const repos: string[] = [];
+  let active = 0;
+  for (const [i, p] of saved.entries()) {
+    const top = await reopenRepo(p);
+    if (!top) continue; // dépôt supprimé ou déplacé entre deux sessions : onglet écarté
+    if (!repos.includes(top)) repos.push(top);
+    if (i === activeIndex) active = repos.indexOf(top);
+  }
+  return { repos, active };
+}
+
+/** N'enregistre que des dépôts ouverts dans Arbor (mêmes règles que `assertOpened`). */
+function saveSession(repos: unknown, active: unknown) {
+  const recent = loadRecent();
+  const list = Array.isArray(repos) ? repos.filter((p): p is string => typeof p === 'string' && (openedRepos.has(p) || recent.includes(p))) : [];
+  const i = typeof active === 'number' && Array.isArray(repos) ? list.indexOf(repos[active]) : -1;
+  const tmp = `${sessionFile()}.${process.pid}.tmp`;
+  try {
+    writeFileSync(tmp, JSON.stringify({ repos: list, active: Math.max(0, i) }));
+    renameSync(tmp, sessionFile());
+  } finally {
+    rmSync(tmp, { force: true });
+  }
+}
+
+/**
+ * Menu minimal : rôles d'édition (copier, coller…) pour les champs de saisie, sans « Fermer » ni « Recharger »,
+ * afin que Ctrl/Cmd+W ferme l'onglet (géré par le rendu) et non la fenêtre.
+ */
+function installMenu() {
+  const template: MenuItemConstructorOptions[] = [];
+  if (process.platform === 'darwin') template.push({ role: 'appMenu' });
+  template.push({
+    label: 'Édition',
+    submenu: [
+      { role: 'undo', label: 'Annuler' },
+      { role: 'redo', label: 'Rétablir' },
+      { type: 'separator' },
+      { role: 'cut', label: 'Couper' },
+      { role: 'copy', label: 'Copier' },
+      { role: 'paste', label: 'Coller' },
+      { role: 'selectAll', label: 'Tout sélectionner' },
+    ],
+  });
+  if (!app.isPackaged) template.push({ label: 'Développement', submenu: [{ role: 'toggleDevTools', label: 'Outils de développement' }] });
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
+
 // Handlers qui ne reçoivent pas de dépôt en premier argument.
-const NO_REPO = new Set(['openRepoDialog', 'initRepoDialog', 'cloneRepo', 'recentRepos', 'initialRepo', 'unwatchRepo', 'getPreferences', 'setPreferences']);
+const NO_REPO = new Set(['openRepoDialog', 'initRepoDialog', 'cloneRepo', 'recentRepos', 'initialRepo', 'unwatchRepo', 'getPreferences', 'setPreferences', 'restoreSession', 'saveSession']);
 
 // Handlers en lecture seule, hors sourdine du rafraîchissement automatique. Liste blanche : toute nouvelle
 // commande est mise en sourdine par défaut. Les noms absents de `handlers` (autres branches) sont sans effet.
@@ -110,6 +182,8 @@ const READ_ONLY = new Set([
   'blame',
   'getPreferences',
   'setPreferences',
+  'restoreSession',
+  'saveSession',
 ]);
 
 const handlers: Record<string, (...args: any[]) => Promise<unknown>> = {
@@ -174,6 +248,8 @@ const handlers: Record<string, (...args: any[]) => Promise<unknown>> = {
   unwatchRepo: async () => watcher.stop(),
   getPreferences: async () => loadPreferences(),
   setPreferences: async (patch: unknown) => savePreferences(patch),
+  restoreSession: async () => restoreSession(),
+  saveSession: async (repos: unknown, active: unknown) => saveSession(repos, active),
 };
 
 for (const [name, fn] of Object.entries(handlers)) {
@@ -191,6 +267,7 @@ for (const [name, fn] of Object.entries(handlers)) {
 }
 
 function createWindow() {
+  installMenu();
   nativeTheme.themeSource = loadPreferences().theme;
   win = new BrowserWindow({
     width: 1440,

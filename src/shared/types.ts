@@ -172,4 +172,8 @@ export interface ArborApi {
   getPreferences(): Promise<Preferences>;
   /** Fusionne un correctif dans les préférences, les enregistre et renvoie le résultat normalisé. */
   setPreferences(patch: Partial<Preferences>): Promise<Preferences>;
+  /** Onglets de la session précédente (`userData/session.json`) ; dépôts disparus écartés, récents inchangés. */
+  restoreSession(): Promise<{ repos: string[]; active: number }>;
+  /** Enregistre les onglets ouverts (seuls les dépôts ouverts dans Arbor sont retenus). */
+  saveSession(repos: string[], active: number): Promise<void>;
 }

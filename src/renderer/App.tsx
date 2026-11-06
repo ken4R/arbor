@@ -14,9 +14,9 @@ import { PromptDialog, type PromptState } from './components/PromptDialog';
 import { FileView } from './components/FileView';
 import type { FileViewTarget } from './ui';
 import { UiContext, type Ui } from './ui';
-import { updatePreferences, usePreferences } from './prefs';
+import { loadPreferences, updatePreferences, usePreferences } from './prefs';
 import { setCommandContext, type AppHooks } from './commands';
-import { activeTab, closeTabById, getTabState, openRepoTab, saveTabState, setTabsBusy, useTabsBusy, useTabsModel } from './tabs';
+import { activeTab, closeTabById, getTabState, openRepoTab, restoreTabs, saveTabState, setTabsBusy, toSession, useTabsBusy, useTabsModel } from './tabs';
 import { TabBar } from './components/TabBar';
 
 export type Selection = { kind: 'wip' } | { kind: 'commit'; sha: string };
@@ -34,6 +34,15 @@ export function App() {
 
   useEffect(() => {
     (async () => {
+      // Onglets de la session précédente, puis dépôt passé en argument (ouvert ou activé dans son onglet).
+      try {
+        if ((await loadPreferences()).restoreTabs) {
+          const s = await api.restoreSession();
+          if (s.repos.length) restoreTabs(s.repos, s.active);
+        }
+      } catch {
+        // session illisible : on démarre sans onglet restauré
+      }
       try {
         const p = await api.initialRepo();
         if (p) openRepoTab(p, 'new');
@@ -44,6 +53,13 @@ export function App() {
       }
     })();
   }, []);
+
+  // Session enregistrée à chaque changement d'onglets (après la restauration, pour ne pas l'écraser).
+  const session = useMemo(() => toSession(model), [model]);
+  const sessionKey = JSON.stringify(session);
+  useEffect(() => {
+    if (ready) api.saveSession(session.repos, session.active).catch(() => {});
+  }, [ready, sessionKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Onglet vide : le registre de commandes voit « aucun dépôt ».
   const emptyTab = !tab?.repo;
