@@ -1,5 +1,5 @@
 import { useEffect, useState, useSyncExternalStore } from 'react';
-import { DIFF_FONT_SIZE_MAX, DIFF_FONT_SIZE_MIN, MONO_FONT_MAX_LENGTH, type DiffMode, type ThemePreference } from '../../shared/prefs';
+import { DIFF_FONT_SIZE_MAX, DIFF_FONT_SIZE_MIN, normalizePreferences, type DiffMode, type Preferences, type ThemePreference } from '../../shared/prefs';
 import { matchShortcut } from '../commands';
 import { updatePreferences, usePreferences } from '../prefs';
 import { Icon } from './Icons';
@@ -43,8 +43,11 @@ const DIFF_MODES: { value: DiffMode; label: string }[] = [
   { value: 'split', label: 'Côte à côte' },
 ];
 
-// Caractères refusés par `normalizePreferences` (le nom finit dans une déclaration CSS).
-const FORBIDDEN_FONT_CHARS = /[;{}<>\\]/;
+/** Nom de police accepté par `normalizePreferences` (liste blanche de caractères, longueur bornée). */
+const fontAccepted = (v: string) => normalizePreferences({ monoFont: v }).monoFont === v.trim();
+
+/** Enregistre un champ ; en cas d'échec, `updatePreferences` remet la valeur enregistrée (visible dans le dialogue). */
+const save = (patch: Partial<Preferences>) => void updatePreferences(patch).catch(() => {});
 
 export function PreferencesDialog() {
   const isOpen = useSyncExternalStore(subscribe, () => open);
@@ -68,19 +71,19 @@ function PreferencesForm() {
   const prefs = usePreferences();
   // Saisie libre de la police : enregistrée à chaque frappe si elle est acceptable.
   const [font, setFont] = useState(prefs.monoFont);
-  const fontInvalid = FORBIDDEN_FONT_CHARS.test(font) || font.trim().length > MONO_FONT_MAX_LENGTH;
+  const fontInvalid = !fontAccepted(font);
   const [size, setSize] = useState(String(prefs.diffFontSize));
   useEffect(() => setSize(String(prefs.diffFontSize)), [prefs.diffFontSize]);
 
   const changeFont = (v: string) => {
     setFont(v);
-    if (!FORBIDDEN_FONT_CHARS.test(v) && v.trim().length <= MONO_FONT_MAX_LENGTH) void updatePreferences({ monoFont: v.trim() });
+    if (fontAccepted(v)) save({ monoFont: v.trim() });
   };
 
   const changeSize = (v: string) => {
     setSize(v);
     const n = Number(v);
-    if (v.trim() && Number.isFinite(n) && n >= DIFF_FONT_SIZE_MIN && n <= DIFF_FONT_SIZE_MAX) void updatePreferences({ diffFontSize: n });
+    if (v.trim() && Number.isFinite(n) && n >= DIFF_FONT_SIZE_MIN && n <= DIFF_FONT_SIZE_MAX) save({ diffFontSize: n });
   };
 
   const close = () => closePreferences();
@@ -120,7 +123,7 @@ function PreferencesForm() {
                   aria-checked={prefs.theme === t.value}
                   className={prefs.theme === t.value ? 'on' : ''}
                   autoFocus={prefs.theme === t.value || (i === 0 && !THEMES.some((x) => x.value === prefs.theme))}
-                  onClick={() => void updatePreferences({ theme: t.value })}
+                  onClick={() => save({ theme: t.value })}
                 >
                   {t.label}
                 </button>
@@ -140,7 +143,7 @@ function PreferencesForm() {
                   role="radio"
                   aria-checked={prefs.diffMode === m.value}
                   className={prefs.diffMode === m.value ? 'on' : ''}
-                  onClick={() => void updatePreferences({ diffMode: m.value })}
+                  onClick={() => save({ diffMode: m.value })}
                 >
                   {m.label}
                 </button>
@@ -182,7 +185,7 @@ function PreferencesForm() {
               onChange={(e) => changeFont(e.target.value)}
             />
             {fontInvalid ? (
-              <span className="prefs-hint prefs-hint-error">Nom de police invalide (caractères ; {'{ } < > \\'} interdits).</span>
+              <span className="prefs-hint prefs-hint-error">Nom de police invalide : lettres, chiffres, espaces et , ' " . _ - seulement.</span>
             ) : (
               <span className="prefs-hint">Ex. « Fira Code » ; laisser vide pour la police par défaut.</span>
             )}
@@ -196,14 +199,14 @@ function PreferencesForm() {
         <section className="prefs-section">
           <h3>Comportement</h3>
           <label className="check prefs-check">
-            <input type="checkbox" checked={prefs.autoRefresh} onChange={(e) => void updatePreferences({ autoRefresh: e.target.checked })} />
+            <input type="checkbox" checked={prefs.autoRefresh} onChange={(e) => save({ autoRefresh: e.target.checked })} />
             <span>
               Rafraîchissement automatique
               <span className="prefs-hint">Suivre les changements faits hors d'Arbor.</span>
             </span>
           </label>
           <label className="check prefs-check">
-            <input type="checkbox" checked={prefs.restoreTabs} onChange={(e) => void updatePreferences({ restoreTabs: e.target.checked })} />
+            <input type="checkbox" checked={prefs.restoreTabs} onChange={(e) => save({ restoreTabs: e.target.checked })} />
             <span>
               Rouvrir les onglets au démarrage
               <span className="prefs-hint">Pris en compte au prochain lancement.</span>

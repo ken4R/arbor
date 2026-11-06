@@ -27,7 +27,7 @@ registerCommands('prefs', (): Command[] => [
       group: 'Préférences',
       keywords: ['apparence', 'couleurs', 'theme', ...t.keywords],
       enabled: () => getPreferences().theme !== t.value,
-      run: () => void updatePreferences({ theme: t.value }),
+      run: () => void updatePreferences({ theme: t.value }).catch(() => {}),
     }),
   ),
 ]);
