@@ -66,23 +66,23 @@
   --border: #d5d9e1;
   --text: #1c212b;
   --text-dim: #525a69;
-  --text-faint: #7f8796;
-  --accent: #11847a;
-  --accent-strong: #0c6d64;
-  --warn: #a5650a;
+  --text-faint: #666e7d;
+  --accent: #0f7d73;
+  --accent-strong: #0b675e;
+  --warn: #8f5708;
   --danger: #c4314f;
   --add: #1d7f3d;
   --add-bg: rgba(46, 160, 83, 0.14);
   --del: #c4314f;
   --del-bg: rgba(214, 64, 96, 0.12);
   /* Lignes du graphe : teintes assombries pour rester lisibles sur fond clair */
-  --lane-0: #138b80;
-  --lane-1: #c07f0c;
+  --lane-0: #0f7d73;
+  --lane-1: #9a6608;
   --lane-2: #6a58d8;
   --lane-3: #d0405f;
   --lane-4: #2a78c8;
-  --lane-5: #5b9221;
-  --lane-6: #c75d1c;
+  --lane-5: #4a7a1a;
+  --lane-6: #b35215;
   --lane-7: #a440b4;
   /* Texte posé sur un fond coloré */
   --on-accent: #ffffff;
@@ -100,7 +100,7 @@
   --warn-bg: rgba(214, 142, 20, 0.2);
   --warn-bg-soft: rgba(214, 142, 20, 0.13);
   --warn-bg-faint: rgba(214, 142, 20, 0.08);
-  --warn-border: rgba(165, 101, 10, 0.45);
+  --warn-border: rgba(143, 87, 8, 0.45);
   --purple: #6a58d8;
   --purple-text: #5543c4;
   --purple-bg: rgba(106, 88, 216, 0.14);
@@ -111,6 +111,66 @@
   --stripe: rgba(20, 30, 50, 0.03);
   color-scheme: light;
 }
+
+/* Repli avant l'exécution du JS (première image) : `prefers-color-scheme` suit déjà la préférence enregistrée
+   (nativeTheme.themeSource). Copie exacte du bloc précédent, vérifiée par theme.test.ts. */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) {
+    --bg: #f6f7f9;
+    --bg-2: #ffffff;
+    --bg-3: #eceef2;
+    --bg-hover: #e4e7ed;
+    --bg-select: #d9efeb;
+    --border: #d5d9e1;
+    --text: #1c212b;
+    --text-dim: #525a69;
+    --text-faint: #666e7d;
+    --accent: #0f7d73;
+    --accent-strong: #0b675e;
+    --warn: #8f5708;
+    --danger: #c4314f;
+    --add: #1d7f3d;
+    --add-bg: rgba(46, 160, 83, 0.14);
+    --del: #c4314f;
+    --del-bg: rgba(214, 64, 96, 0.12);
+    /* Lignes du graphe : teintes assombries pour rester lisibles sur fond clair */
+    --lane-0: #0f7d73;
+    --lane-1: #9a6608;
+    --lane-2: #6a58d8;
+    --lane-3: #d0405f;
+    --lane-4: #2a78c8;
+    --lane-5: #4a7a1a;
+    --lane-6: #b35215;
+    --lane-7: #a440b4;
+    /* Texte posé sur un fond coloré */
+    --on-accent: #ffffff;
+    --on-danger: #ffffff;
+    --on-warn: #ffffff;
+    --on-avatar: #ffffff;
+    /* Surcouches */
+    --shadow: 0 10px 30px rgba(24, 32, 48, 0.18);
+    --shadow-sm: 0 1px 2px rgba(24, 32, 48, 0.14);
+    --overlay: rgba(24, 30, 42, 0.32);
+    --welcome-glow: #dcefeb;
+    --toast-error-bg: #fdecef;
+    --toast-ok-bg: #e3f4f1;
+    /* Teintes secondaires */
+    --warn-bg: rgba(214, 142, 20, 0.2);
+    --warn-bg-soft: rgba(214, 142, 20, 0.13);
+    --warn-bg-faint: rgba(214, 142, 20, 0.08);
+    --warn-border: rgba(143, 87, 8, 0.45);
+    --purple: #6a58d8;
+    --purple-text: #5543c4;
+    --purple-bg: rgba(106, 88, 216, 0.14);
+    --purple-bg-faint: rgba(106, 88, 216, 0.07);
+    --blue: #2a78c8;
+    --conflict-ours-bg: rgba(42, 120, 200, 0.12);
+    --conflict-theirs-bg: rgba(106, 88, 216, 0.13);
+    --stripe: rgba(20, 30, 50, 0.03);
+    color-scheme: light;
+  }
+}
+
 
 * {
   box-sizing: border-box;
@@ -1558,8 +1618,21 @@ tr.cf-marker {
 .prefs-font {
   font-family: var(--mono);
 }
-.prefs-font.invalid {
+.prefs-font.invalid,
+.prefs-size-input.invalid {
   border-color: var(--danger);
+}
+.prefs-dialog:focus {
+  outline: none;
+}
+.prefs-error {
+  padding: 6px 10px;
+  margin-bottom: 4px;
+  border: 1px solid var(--danger);
+  border-radius: var(--radius);
+  background: var(--toast-error-bg);
+  color: var(--text);
+  font-size: 12px;
 }
 .prefs-hint {
   display: block;

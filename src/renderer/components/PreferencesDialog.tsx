@@ -1,7 +1,7 @@
-import { useEffect, useState, useSyncExternalStore } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { DIFF_FONT_SIZE_MAX, DIFF_FONT_SIZE_MIN, normalizePreferences, type DiffMode, type Preferences, type ThemePreference } from '../../shared/prefs';
 import { matchShortcut } from '../commands';
-import { updatePreferences, usePreferences } from '../prefs';
+import { getPreferences, updatePreferences, usePreferences } from '../prefs';
 import { Icon } from './Icons';
 
 // Dialogue des préférences : monté une fois hors de l'application (main.tsx), ouvert par `openPreferences()`,
@@ -46,8 +46,9 @@ const DIFF_MODES: { value: DiffMode; label: string }[] = [
 /** Nom de police accepté par `normalizePreferences` (liste blanche de caractères, longueur bornée). */
 const fontAccepted = (v: string) => normalizePreferences({ monoFont: v }).monoFont === v.trim();
 
-/** Enregistre un champ ; en cas d'échec, `updatePreferences` remet la valeur enregistrée (visible dans le dialogue). */
-const save = (patch: Partial<Preferences>) => void updatePreferences(patch).catch(() => {});
+const sizeInRange = (n: number) => Number.isFinite(n) && n >= DIFF_FONT_SIZE_MIN && n <= DIFF_FONT_SIZE_MAX;
+
+const FOCUSABLE = 'button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])';
 
 export function PreferencesDialog() {
   const isOpen = useSyncExternalStore(subscribe, () => open);
@@ -74,6 +75,54 @@ function PreferencesForm() {
   const fontInvalid = !fontAccepted(font);
   const [size, setSize] = useState(String(prefs.diffFontSize));
   useEffect(() => setSize(String(prefs.diffFontSize)), [prefs.diffFontSize]);
+  const sizeInvalid = !size.trim() || !sizeInRange(Number(size));
+  const [error, setError] = useState<string | null>(null);
+  const root = useRef<HTMLDivElement>(null);
+  // Élément qui avait le focus à l'ouverture (engrenage, lien…), lu au premier rendu, avant l'autoFocus.
+  const [previous] = useState(() => (document.activeElement instanceof HTMLElement ? document.activeElement : null));
+
+  /** Enregistre un champ ; en cas d'échec, `updatePreferences` remet la valeur enregistrée et on le signale. */
+  const save = (patch: Partial<Preferences>) => {
+    setError(null);
+    updatePreferences(patch).catch((e: unknown) => {
+      setError(`Préférence non enregistrée : ${e instanceof Error ? e.message : String(e)}`);
+      if ('monoFont' in patch) setFont(getPreferences().monoFont);
+    });
+  };
+
+  useEffect(() => {
+    const el = root.current;
+    if (el && !el.contains(document.activeElement)) el.focus();
+    // Échap et piège Tab écoutés sur window (capture) : ils marchent même si le focus a quitté le dialogue.
+    const onKey = (e: KeyboardEvent) => {
+      if (!el) return;
+      if (e.key === 'Escape') {
+        // Seul le dialogue se ferme (pas le diff ouvert dessous).
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        closePreferences();
+      } else if (e.key === 'Tab') {
+        const items = Array.from(el.querySelectorAll<HTMLElement>(FOCUSABLE));
+        if (!items.length) return;
+        const first = items[0];
+        const last = items[items.length - 1];
+        const inside = el.contains(document.activeElement);
+        if (e.shiftKey && (!inside || document.activeElement === first || document.activeElement === el)) {
+          e.preventDefault();
+          last.focus();
+        } else if (!e.shiftKey && (!inside || document.activeElement === last)) {
+          e.preventDefault();
+          first.focus();
+        }
+      }
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => {
+      window.removeEventListener('keydown', onKey, true);
+      // Focus rendu à l'élément d'origine à la fermeture.
+      if (previous && previous.isConnected) previous.focus();
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const changeFont = (v: string) => {
     setFont(v);
@@ -83,7 +132,7 @@ function PreferencesForm() {
   const changeSize = (v: string) => {
     setSize(v);
     const n = Number(v);
-    if (v.trim() && Number.isFinite(n) && n >= DIFF_FONT_SIZE_MIN && n <= DIFF_FONT_SIZE_MAX) save({ diffFontSize: n });
+    if (v.trim() && sizeInRange(n)) save({ diffFontSize: n });
   };
 
   const close = () => closePreferences();
@@ -91,18 +140,13 @@ function PreferencesForm() {
   return (
     <div className="overlay" data-overlay onMouseDown={close}>
       <div
+        ref={root}
         className="dialog prefs-dialog"
         role="dialog"
         aria-modal="true"
         aria-labelledby="prefs-title"
+        tabIndex={-1}
         onMouseDown={(e) => e.stopPropagation()}
-        onKeyDown={(e) => {
-          if (e.key !== 'Escape') return;
-          // Seul le dialogue se ferme (pas le diff ouvert dessous).
-          e.stopPropagation();
-          e.nativeEvent.stopImmediatePropagation();
-          close();
-        }}
       >
         <div className="prefs-head">
           <h2 id="prefs-title">Préférences</h2>
@@ -110,6 +154,12 @@ function PreferencesForm() {
             <Icon.close />
           </button>
         </div>
+
+        {error && (
+          <div className="prefs-error" role="alert">
+            {error}
+          </div>
+        )}
 
         <section className="prefs-section">
           <h3>Apparence</h3>
@@ -165,9 +215,12 @@ function PreferencesForm() {
               />
               <input
                 type="number"
-                className="prefs-size-input"
+                className={`prefs-size-input ${sizeInvalid ? 'invalid' : ''}`}
+                aria-label="Taille du code en pixels"
+                aria-invalid={sizeInvalid}
                 min={DIFF_FONT_SIZE_MIN}
                 max={DIFF_FONT_SIZE_MAX}
+                step={1}
                 value={size}
                 onChange={(e) => changeSize(e.target.value)}
                 onBlur={() => setSize(String(prefs.diffFontSize))}

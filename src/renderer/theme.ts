@@ -14,16 +14,23 @@ export function resolveTheme(pref: ThemePreference, systemDark: boolean): Resolv
   return systemDark ? 'dark' : 'light';
 }
 
+const GENERIC_FONTS = new Set(['monospace', 'ui-monospace']);
+
 /**
  * Valeur de `--mono` pour une police choisie par l'utilisateur, ou `null` pour garder la police par défaut.
- * Un nom simple est mis entre guillemets ; une liste déjà écrite (virgule ou guillemets) est reprise telle quelle.
- * Une police générique de repli termine toujours la liste.
+ * La saisie est découpée sur les virgules ; éléments vides et guillemets (même non fermés) sont écartés, puis chaque
+ * nom est remis entre guillemets. Une police générique de repli termine toujours la liste : la valeur reste valide
+ * quelle que soit la saisie en cours.
  */
 export function monoFontStack(font: string): string | null {
-  const f = font.trim();
-  if (!f) return null;
-  const list = /[,'"]/.test(f) ? f : `"${f}"`;
-  return /(^|,)\s*monospace\s*$/i.test(list) ? list : `${list}, monospace`;
+  const names = font
+    .split(',')
+    .map((n) => n.replace(/["']/g, '').trim().replace(/\s+/g, ' '))
+    .filter(Boolean);
+  if (!names.length) return null;
+  const list = names.map((n) => (GENERIC_FONTS.has(n.toLowerCase()) ? n.toLowerCase() : `"${n}"`));
+  if (!names.some((n) => n.toLowerCase() === 'monospace')) list.push('monospace');
+  return list.join(', ');
 }
 
 const media = typeof window !== 'undefined' && window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;
@@ -52,7 +59,10 @@ export function ThemeSync(): null {
   // Tant que le fichier n'est pas lu, les préférences sont les défauts : on garde le thème du système.
   const theme: ThemePreference = loaded ? prefs.theme : 'system';
   useLayoutEffect(() => applyTheme(theme), [theme]);
-  useLayoutEffect(() => applyCode(prefs), [prefs]);
+  // Taille et police : seulement une fois le fichier lu, pour que le code ne change pas de taille au démarrage.
+  useLayoutEffect(() => {
+    if (loaded) applyCode(prefs);
+  }, [loaded, prefs]);
   useEffect(() => {
     if (!media) return;
     const onChange = () => applyTheme(theme);
