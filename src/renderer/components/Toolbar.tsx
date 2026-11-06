@@ -38,6 +38,8 @@ export function Toolbar({ repo, snap, busy, onClose, onSwitch, onRefresh, autoRe
   }, [repo]);
 
   const st = snap?.status;
+  // Instantané du dépôt affiché seulement : jamais d'action sur l'ancien dépôt pendant un changement.
+  const current = snap && snap.path === repo ? snap : null;
 
   const repoMenu = (e: React.MouseEvent) =>
     ui.openMenu(e, [
@@ -57,13 +59,13 @@ export function Toolbar({ repo, snap, busy, onClose, onSwitch, onRefresh, autoRe
         </button>
       </div>
       <div className="toolbar-actions">
-        <ToolButton label="Fetch" icon={<Icon.fetch />} disabled={!canFetch(snap) || !!busy} onClick={() => snap && fetchAction(ui, snap)} />
-        <ToolButton label="Pull" icon={<Icon.pull />} badge={st?.behind} disabled={!canPull(snap) || !!busy} onClick={() => snap && pullAction(ui, snap)} />
-        <ToolButton label="Push" icon={<Icon.push />} badge={st?.ahead} disabled={!canPush(snap) || !!busy} onClick={() => snap && pushAction(ui, snap)} />
+        <ToolButton label="Fetch" icon={<Icon.fetch />} disabled={!canFetch(current) || !!busy} onClick={() => current && fetchAction(ui, current)} />
+        <ToolButton label="Pull" icon={<Icon.pull />} badge={st?.behind} disabled={!canPull(current) || !!busy} onClick={() => current && pullAction(ui, current)} />
+        <ToolButton label="Push" icon={<Icon.push />} badge={st?.ahead} disabled={!canPush(current) || !!busy} onClick={() => current && pushAction(ui, current)} />
         <span className="toolbar-sep" />
-        <ToolButton label="Branche" icon={<Icon.branch />} disabled={!canNewBranch(snap) || !!busy} onClick={() => snap && newBranchAction(ui, snap)} />
-        <ToolButton label="Stash" icon={<Icon.stash />} disabled={!canStashSave(snap) || !!busy} onClick={() => snap && stashSaveAction(ui, snap)} />
-        <ToolButton label="Pop" icon={<Icon.pop />} disabled={!canStashPop(snap) || !!busy} onClick={() => snap && stashPopAction(ui, snap)} />
+        <ToolButton label="Branche" icon={<Icon.branch />} disabled={!canNewBranch(current) || !!busy} onClick={() => current && newBranchAction(ui, current)} />
+        <ToolButton label="Stash" icon={<Icon.stash />} disabled={!canStashSave(current) || !!busy} onClick={() => current && stashSaveAction(ui, current)} />
+        <ToolButton label="Pop" icon={<Icon.pop />} disabled={!canStashPop(current) || !!busy} onClick={() => current && stashPopAction(ui, current)} />
       </div>
       <div className="toolbar-right">
         {busy && <span className="busy"><span className="spinner" />{busy}</span>}

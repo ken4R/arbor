@@ -1,5 +1,5 @@
 import { app, BrowserWindow, dialog, ipcMain, nativeTheme } from 'electron';
-import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, fsyncSync, openSync, readFileSync, renameSync, rmSync, writeFileSync, writeSync } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
 import * as g from './git';
 import { RepoWatcher } from './watcher';
@@ -33,8 +33,17 @@ function loadPreferences(): Preferences {
   if (!prefsCache) {
     try {
       prefsCache = normalizePreferences(JSON.parse(readFileSync(prefsFile(), 'utf8')));
-    } catch {
+    } catch (e) {
       prefsCache = normalizePreferences(undefined);
+      if ((e as NodeJS.ErrnoException).code !== 'ENOENT') {
+        // Fichier illisible ou corrompu : on le met de côté au lieu de l'écraser à la prochaine écriture.
+        console.warn('Préférences illisibles, valeurs par défaut utilisées :', e);
+        try {
+          renameSync(prefsFile(), `${prefsFile()}.corrupt`);
+        } catch {
+          // rien à mettre de côté
+        }
+      }
     }
   }
   return prefsCache;
@@ -44,8 +53,18 @@ function savePreferences(patch: unknown): Preferences {
   const next = mergePreferences(loadPreferences(), patch);
   // Écriture atomique : un arrêt brutal ne laisse jamais un fichier tronqué.
   const tmp = `${prefsFile()}.${process.pid}.tmp`;
-  writeFileSync(tmp, JSON.stringify(next, null, 2));
-  renameSync(tmp, prefsFile());
+  try {
+    const fd = openSync(tmp, 'w');
+    try {
+      writeSync(fd, JSON.stringify(next, null, 2));
+      fsyncSync(fd);
+    } finally {
+      closeSync(fd);
+    }
+    renameSync(tmp, prefsFile());
+  } finally {
+    rmSync(tmp, { force: true });
+  }
   prefsCache = next;
   nativeTheme.themeSource = next.theme;
   return next;

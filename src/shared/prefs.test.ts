@@ -36,6 +36,11 @@ describe('normalizePreferences', () => {
     expect(normalizePreferences({ monoFont: '  Fira Code ' }).monoFont).toBe('Fira Code');
     expect(normalizePreferences({ monoFont: 'x; color: red' }).monoFont).toBe('');
     expect(normalizePreferences({ monoFont: 'a'.repeat(300) }).monoFont).toBe('');
+    expect(normalizePreferences({ monoFont: 'Fira /*' }).monoFont).toBe('');
+    expect(normalizePreferences({ monoFont: 'Fira\nCode' }).monoFont).toBe('');
+    expect(normalizePreferences({ monoFont: 'url(x)' }).monoFont).toBe('');
+    expect(normalizePreferences({ monoFont: 'x !important' }).monoFont).toBe('');
+    expect(normalizePreferences({ monoFont: '"JetBrains Mono", Menlo, monospace' }).monoFont).toBe('"JetBrains Mono", Menlo, monospace');
   });
 });
 
@@ -49,5 +54,12 @@ describe('mergePreferences', () => {
     const cur = { ...DEFAULT_PREFERENCES, theme: 'light' as const };
     expect(mergePreferences(cur, { diffFontSize: 50 }).diffFontSize).toBe(20);
     expect(mergePreferences(cur, null)).toEqual(cur);
+  });
+
+  it('garde la valeur courante quand le correctif est invalide', () => {
+    const cur = { ...DEFAULT_PREFERENCES, theme: 'light' as const, diffFontSize: 16, monoFont: 'Fira Code' };
+    expect(mergePreferences(cur, { diffFontSize: '14' })).toEqual(cur);
+    expect(mergePreferences(cur, { theme: 'sepia' })).toEqual(cur);
+    expect(mergePreferences(cur, { monoFont: 'X;' })).toEqual(cur);
   });
 });
