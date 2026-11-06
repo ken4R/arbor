@@ -7,6 +7,9 @@ import './styles.css';
 // palette
 
 // préférences
+import { ThemeSync } from './theme';
+import { PreferencesDialog } from './components/PreferencesDialog';
+import './commands/prefs';
 
 // onglets
 
@@ -20,6 +23,8 @@ createRoot(document.getElementById('root')!).render(
     {/* palette */}
 
     {/* préférences */}
+    <ThemeSync />
+    <PreferencesDialog />
 
     {/* onglets */}
   </>,
