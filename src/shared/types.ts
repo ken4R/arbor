@@ -1,3 +1,5 @@
+import type { Preferences } from './prefs';
+
 export interface Commit {
   sha: string;
   parents: string[];
@@ -166,4 +168,8 @@ export interface ArborApi {
   /** Surveille ce dépôt (un seul à la fois) et émet l'événement `repoChanged`. */
   watchRepo(repo: string): Promise<void>;
   unwatchRepo(): Promise<void>;
+  /** Préférences de l'utilisateur (`userData/prefs.json`), normalisées. */
+  getPreferences(): Promise<Preferences>;
+  /** Fusionne un correctif dans les préférences, les enregistre et renvoie le résultat normalisé. */
+  setPreferences(patch: Partial<Preferences>): Promise<Preferences>;
 }
