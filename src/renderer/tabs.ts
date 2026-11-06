@@ -40,14 +40,19 @@ export function activeTab(m: TabsModel): Tab | undefined {
 }
 
 /**
- * Ouvre un dépôt. S'il est déjà ouvert dans un onglet, cet onglet est activé (pas de doublon).
+ * Ouvre un dépôt. S'il est déjà ouvert dans un onglet, cet onglet est activé (pas de doublon) et l'onglet actif,
+ * s'il était vide, est retiré.
  * `current` : remplace le dépôt de l'onglet actif ; `new` : nouvel onglet, sauf si l'onglet actif est vide.
  * Un onglet dont le dépôt change reçoit l'identifiant `newId` (son état d'affichage repart de zéro).
  */
 export function openInTabs(m: TabsModel, path: string, mode: 'current' | 'new', newId: number): TabsModel {
   const existing = m.tabs.find((t) => t.repo === path);
-  if (existing) return { ...m, activeId: existing.id };
   const active = activeTab(m);
+  if (existing) {
+    // L'onglet vide d'où l'on ouvrait le dépôt n'a plus de raison d'être.
+    const tabs = active && active.repo === null ? m.tabs.filter((t) => t !== active) : m.tabs;
+    return { tabs, activeId: existing.id };
+  }
   if (!active) return { tabs: [{ id: newId, repo: path }], activeId: newId };
   if (mode === 'current' || active.repo === null) {
     return { tabs: m.tabs.map((t) => (t.id === active.id ? { id: newId, repo: path } : t)), activeId: newId };

@@ -9,6 +9,7 @@ import './styles.css';
 // préférences
 
 // onglets
+import './commands/tabs';
 
 // Préférences enregistrées lues dès le démarrage (et migration des anciennes clés localStorage).
 void loadPreferences();

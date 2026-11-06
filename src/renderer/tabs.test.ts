@@ -13,6 +13,12 @@ describe('openInTabs', () => {
     expect(r.activeId).toBe(2);
   });
 
+  it('retire l’onglet vide actif quand le dépôt est déjà ouvert ailleurs', () => {
+    const r = openInTabs(m(['/a', '/b', null], 2), '/a', 'current', 9);
+    expect(r.tabs.map((t) => t.repo)).toEqual(['/a', '/b']);
+    expect(r.activeId).toBe(1);
+  });
+
   it('remplit l’onglet actif vide même en mode nouvel onglet', () => {
     const r = openInTabs(m(['/a', null], 1), '/c', 'new', 9);
     expect(r.tabs).toEqual([
