@@ -5,6 +5,8 @@ import './styles.css';
 
 // Imports à effet de bord des fonctionnalités (enregistrement de commandes, etc.) : un bloc par fonctionnalité.
 // palette
+import './commands/git';
+import { CommandPalette } from './components/CommandPalette';
 
 // préférences
 
@@ -18,6 +20,7 @@ createRoot(document.getElementById('root')!).render(
     <App />
     {/* Montages hors de l'application (surcouches globales) : un bloc par fonctionnalité. */}
     {/* palette */}
+    <CommandPalette />
 
     {/* préférences */}
 
