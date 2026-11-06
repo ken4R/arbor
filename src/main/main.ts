@@ -49,22 +49,26 @@ function loadPreferences(): Preferences {
   return prefsCache;
 }
 
-function savePreferences(patch: unknown): Preferences {
-  const next = mergePreferences(loadPreferences(), patch);
-  // Écriture atomique : un arrêt brutal ne laisse jamais un fichier tronqué.
-  const tmp = `${prefsFile()}.${process.pid}.tmp`;
+/** Écriture atomique : un arrêt brutal ne laisse jamais un fichier tronqué. */
+function writeFileAtomic(file: string, content: string) {
+  const tmp = `${file}.${process.pid}.tmp`;
   try {
     const fd = openSync(tmp, 'w');
     try {
-      writeSync(fd, JSON.stringify(next, null, 2));
+      writeSync(fd, content);
       fsyncSync(fd);
     } finally {
       closeSync(fd);
     }
-    renameSync(tmp, prefsFile());
+    renameSync(tmp, file);
   } finally {
     rmSync(tmp, { force: true });
   }
+}
+
+function savePreferences(patch: unknown): Preferences {
+  const next = mergePreferences(loadPreferences(), patch);
+  writeFileAtomic(prefsFile(), JSON.stringify(next, null, 2));
   prefsCache = next;
   nativeTheme.themeSource = next.theme;
   return next;
@@ -114,14 +118,15 @@ async function restoreSession(): Promise<{ repos: string[]; active: number }> {
   }
   const saved = Array.isArray(data?.repos) ? data.repos.filter((p): p is string => typeof p === 'string') : [];
   const activeIndex = typeof data?.active === 'number' ? data.active : 0;
+  // Vérifications en parallèle, ordre conservé.
+  const tops = await Promise.all(saved.map(reopenRepo));
   const repos: string[] = [];
   let active = 0;
-  for (const [i, p] of saved.entries()) {
-    const top = await reopenRepo(p);
-    if (!top) continue; // dépôt supprimé ou déplacé entre deux sessions : onglet écarté
+  tops.forEach((top, i) => {
+    if (!top) return; // dépôt supprimé ou déplacé entre deux sessions : onglet écarté
     if (!repos.includes(top)) repos.push(top);
     if (i === activeIndex) active = repos.indexOf(top);
-  }
+  });
   return { repos, active };
 }
 
@@ -130,13 +135,7 @@ function saveSession(repos: unknown, active: unknown) {
   const recent = loadRecent();
   const list = Array.isArray(repos) ? repos.filter((p): p is string => typeof p === 'string' && (openedRepos.has(p) || recent.includes(p))) : [];
   const i = typeof active === 'number' && Array.isArray(repos) ? list.indexOf(repos[active]) : -1;
-  const tmp = `${sessionFile()}.${process.pid}.tmp`;
-  try {
-    writeFileSync(tmp, JSON.stringify({ repos: list, active: Math.max(0, i) }));
-    renameSync(tmp, sessionFile());
-  } finally {
-    rmSync(tmp, { force: true });
-  }
+  writeFileAtomic(sessionFile(), JSON.stringify({ repos: list, active: Math.max(0, i) }));
 }
 
 /**
@@ -158,6 +157,26 @@ function installMenu() {
       { role: 'selectAll', label: 'Tout sélectionner' },
     ],
   });
+  template.push({
+    label: 'Affichage',
+    submenu: [
+      { role: 'resetZoom', label: 'Taille réelle' },
+      { role: 'zoomIn', label: 'Zoom avant' },
+      { role: 'zoomOut', label: 'Zoom arrière' },
+      { type: 'separator' },
+      { role: 'togglefullscreen', label: 'Plein écran' },
+    ],
+  });
+  // macOS : menu Fenêtre construit à la main (le rôle `windowMenu` ajouterait « Fermer », Cmd+W).
+  if (process.platform === 'darwin') {
+    template.push({
+      label: 'Fenêtre',
+      submenu: [
+        { role: 'minimize', label: 'Réduire' },
+        { role: 'zoom', label: 'Agrandir' },
+      ],
+    });
+  }
   if (!app.isPackaged) template.push({ label: 'Développement', submenu: [{ role: 'toggleDevTools', label: 'Outils de développement' }] });
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }

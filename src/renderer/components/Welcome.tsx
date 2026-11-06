@@ -1,13 +1,25 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api';
 import { Logo } from './Icons';
+import { OPENING_LABEL } from '../tabs';
 
-export function Welcome({ onOpen, initialError }: { onOpen: (path: string) => void; initialError?: string | null }) {
+export function Welcome({
+  onOpen,
+  initialError,
+  onBusy,
+}: {
+  onOpen: (path: string) => void;
+  initialError?: string | null;
+  /** Ouverture, initialisation ou clonage en cours (bloque le changement d'onglet). */
+  onBusy?: (label: string | null) => void;
+}) {
   const [recent, setRecent] = useState<string[]>([]);
   const [cloneUrl, setCloneUrl] = useState('');
   const [error, setError] = useState<string | null>(initialError ?? null);
   useEffect(() => setError(initialError ?? null), [initialError]);
   const [busy, setBusy] = useState(false);
+  useEffect(() => onBusy?.(busy ? OPENING_LABEL : null), [busy, onBusy]);
+  useEffect(() => () => onBusy?.(null), [onBusy]);
 
   useEffect(() => {
     api.recentRepos().then(setRecent).catch(() => {});

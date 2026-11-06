@@ -1,4 +1,4 @@
-import { activateTab, closeTabById, newTab, type TabsModel } from '../tabs';
+import { activateTab, newTab, requestCloseTab, type TabsModel } from '../tabs';
 import { formatShortcut } from '../commands';
 import { Icon } from './Icons';
 
@@ -24,7 +24,7 @@ export function TabBar({ model, busy }: { model: TabsModel; busy: string | null 
               // Clic du milieu : ferme l'onglet.
               if (e.button === 1) {
                 e.preventDefault();
-                closeTabById(t.id);
+                requestCloseTab(t.id);
               }
             }}
             onClick={() => activateTab(t.id)}
@@ -37,7 +37,7 @@ export function TabBar({ model, busy }: { model: TabsModel; busy: string | null 
               disabled={locked}
               onClick={(e) => {
                 e.stopPropagation();
-                closeTabById(t.id);
+                requestCloseTab(t.id);
               }}
             >
               <Icon.close />

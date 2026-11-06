@@ -16,7 +16,22 @@ import type { FileViewTarget } from './ui';
 import { UiContext, type Ui } from './ui';
 import { loadPreferences, updatePreferences, usePreferences } from './prefs';
 import { setCommandContext, type AppHooks } from './commands';
-import { activeTab, closeTabById, getTabState, openRepoTab, restoreTabs, saveTabState, setTabsBusy, toSession, useTabsBusy, useTabsModel } from './tabs';
+import {
+  activeTab,
+  clearPendingClose,
+  closeTabById,
+  getTabState,
+  openRepoTab,
+  requestCloseTab,
+  restoreTabs,
+  saveTabState,
+  setTabsBusy,
+  toSession,
+  usePendingClose,
+  useTabsBusy,
+  useTabsModel,
+  getTabsModel,
+} from './tabs';
 import { TabBar } from './components/TabBar';
 
 export type Selection = { kind: 'wip' } | { kind: 'commit'; sha: string };
@@ -30,7 +45,9 @@ export function App() {
   const tab = activeTab(model);
   const busy = useTabsBusy();
   const [ready, setReady] = useState(false);
-  const [openError, setOpenError] = useState<string | null>(null);
+  // Erreur du dépôt passé en argument : montrée une seule fois, sur l'accueil de l'onglet actif au démarrage
+  // (`tabId`) ou, si cet onglet affiche un dépôt restauré, dans un message temporaire.
+  const [openError, setOpenError] = useState<{ text: string; tabId: number | null } | null>(null);
 
   useEffect(() => {
     (async () => {
@@ -47,12 +64,20 @@ export function App() {
         const p = await api.initialRepo();
         if (p) openRepoTab(p, 'new');
       } catch (e) {
-        setOpenError((e as Error).message);
+        const t = activeTab(getTabsModel());
+        setOpenError({ text: (e as Error).message, tabId: t && !t.repo ? t.id : null });
       } finally {
         setReady(true);
       }
     })();
   }, []);
+
+  const errorToast = openError && openError.tabId === null ? openError.text : null;
+  useEffect(() => {
+    if (!errorToast) return;
+    const t = setTimeout(() => setOpenError(null), 9000);
+    return () => clearTimeout(t);
+  }, [errorToast]);
 
   // Session enregistrée à chaque changement d'onglets (après la restauration, pour ne pas l'écraser).
   const session = useMemo(() => toSession(model), [model]);
@@ -77,9 +102,22 @@ export function App() {
         {tab?.repo ? (
           <RepoView key={tab.id} tabId={tab.id} repo={tab.repo} onBusy={setTabsBusy} />
         ) : (
-          <Welcome key={tab?.id} onOpen={(p) => openRepoTab(p, 'current')} initialError={openError} />
+          <Welcome
+            key={tab?.id}
+            // L'ouverture vise l'onglet d'origine : rien ne se passe s'il a été fermé pendant un clonage.
+            onOpen={(p) => {
+              if (openRepoTab(p, 'current', tab?.id)) setOpenError(null);
+            }}
+            onBusy={setTabsBusy}
+            initialError={openError && openError.tabId === tab?.id ? openError.text : null}
+          />
         )}
       </div>
+      {errorToast && (
+        <div className="toast toast-error" onClick={() => setOpenError(null)}>
+          {errorToast}
+        </div>
+      )}
     </div>
   );
 }
@@ -87,7 +125,7 @@ export function App() {
 /** Rappels des commandes quand aucun dépôt n'est affiché. */
 const SHELL_HOOKS: AppHooks = {
   openRepo: (path) => openRepoTab(path, 'current'),
-  closeRepo: () => closeTabById(),
+  closeRepo: () => requestCloseTab(),
   refresh: () => {},
   selectCommit: () => {},
   showDiff: () => {},
@@ -114,8 +152,14 @@ function RepoView({ tabId, repo, onBusy }: RepoViewProps) {
   const [fileView, setFileView] = useState<FileViewTarget | null>(saved?.fileView ?? null);
   const closeFileView = useCallback(() => setFileView(null), []);
   // Autre dépôt dans cet onglet (barre d'outils) ou fermeture de l'onglet.
-  const switchRepo = useCallback((path: string) => openRepoTab(path, 'current'), []);
-  const closeRepo = useCallback(() => closeTabById(tabId), [tabId]);
+  // Refusé pendant une opération (sauf « Ouverture… ») : l'onglet et le message de résultat seraient perdus.
+  const switchRepo = useCallback(
+    (path: string) => {
+      if (!openRepoTab(path, 'current', tabId)) setToast({ kind: 'error', text: 'Une opération est en cours : attendez sa fin pour changer de dépôt.' });
+    },
+    [tabId],
+  );
+  const closeRepo = useCallback(() => requestCloseTab(tabId), [tabId]);
   const repoRef = useRef(repo);
   repoRef.current = repo;
   // Rafraîchissement automatique (préférence enregistrée, activé par défaut).
@@ -134,6 +178,20 @@ function RepoView({ tabId, repo, onBusy }: RepoViewProps) {
       if (repoRef.current === repo) setToast({ kind: 'error', text: (e as Error).message });
     }
   }, [repo]);
+
+  // Fermeture demandée alors que le brouillon de commit n'est pas vide : confirmation.
+  const pendingClose = usePendingClose();
+  useEffect(() => {
+    if (pendingClose !== tabId) return;
+    clearPendingClose();
+    setPrompt({
+      title: "Fermer l'onglet ?",
+      message: `Le brouillon de commit de « ${repo.split(/[\\/]/).pop()} » n'est pas vide. Il pourra être retrouvé avec « Rouvrir l'onglet fermé ».`,
+      confirm: "Fermer l'onglet",
+      danger: true,
+      onSubmit: () => closeTabById(tabId),
+    });
+  }, [pendingClose, tabId, repo]);
 
   // Premier affichage : état restauré de l'onglet (instantané en cache compris), puis relecture du dépôt.
   // Le dépôt d'un `RepoView` ne change pas en pratique (autre dépôt = autre identifiant d'onglet = autre montage) :

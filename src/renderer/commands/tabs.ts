@@ -1,5 +1,5 @@
 import { matchShortcut, registerCommands, runCommand, type Command } from '../commands';
-import { canReopenClosed, closeTabById, cycleTabs, getTabsBusy, getTabsModel, newTab, reopenClosedTab } from '../tabs';
+import { canReopenClosed, requestCloseTab, cycleTabs, getTabsBusy, getTabsModel, newTab, reopenClosedTab } from '../tabs';
 
 // Commandes des onglets. Changer ou fermer d'onglet est indisponible pendant une opération.
 
@@ -21,7 +21,7 @@ registerCommands('tabs', () => {
       shortcut: SHORTCUTS.close,
       // Le seul onglet, s'il est vide, n'a rien à fermer.
       enabled: () => idle() && (many || model.tabs[0]?.repo != null),
-      run: () => closeTabById(),
+      run: () => requestCloseTab(),
     },
     { id: 'tabs.next', title: 'Onglet suivant', group: 'Onglets', keywords: ['tab'], shortcut: SHORTCUTS.next, enabled: () => idle() && many, run: () => cycleTabs(1) },
     {

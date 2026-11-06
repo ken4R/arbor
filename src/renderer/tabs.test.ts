@@ -1,5 +1,22 @@
 import { describe, expect, it } from 'vitest';
-import { addEmptyTab, closeTab, cycleTab, fromSession, openInTabs, staleTabs, toSession, touchRecency, type TabsModel } from './tabs';
+import {
+  addEmptyTab,
+  canOpenWhileBusy,
+  closeTab,
+  cycleTab,
+  displacedTab,
+  fromSession,
+  hasDraft,
+  OPENING_LABEL,
+  openInTabs,
+  popClosed,
+  pushClosed,
+  staleTabs,
+  toSession,
+  touchRecency,
+  type ClosedTab,
+  type TabsModel,
+} from './tabs';
 
 const m = (repos: (string | null)[], activeIndex = 0): TabsModel => {
   const tabs = repos.map((repo, i) => ({ id: i + 1, repo }));
@@ -134,5 +151,68 @@ describe('cache des instantanés', () => {
     expect(staleTabs(recency, open)).toEqual([2, 1]);
     expect(staleTabs(recency, open.filter((id) => id !== 9))).toEqual([1]);
     expect(staleTabs([3, 2, 1], [1, 2, 3], 2)).toEqual([1]);
+  });
+});
+
+describe('ouverture depuis un onglet d’origine', () => {
+  it('ouvre dans l’onglet d’origine même s’il n’est plus actif', () => {
+    const r = openInTabs(m([null, '/a'], 1), '/c', 'current', 9, 1);
+    expect(r.tabs).toEqual([
+      { id: 9, repo: '/c' },
+      { id: 2, repo: '/a' },
+    ]);
+    expect(r.activeId).toBe(9);
+  });
+
+  it('ne fait rien si l’onglet d’origine a été fermé', () => {
+    const before = m(['/a', '/b'], 0);
+    expect(openInTabs(before, '/c', 'current', 9, 42)).toBe(before);
+  });
+});
+
+describe('ouverture pendant une opération', () => {
+  it('n’est permise que sans opération ou pendant « Ouverture… »', () => {
+    expect(canOpenWhileBusy(null)).toBe(true);
+    expect(canOpenWhileBusy(OPENING_LABEL)).toBe(true);
+    expect(canOpenWhileBusy('Push…')).toBe(false);
+  });
+
+  it('repère l’onglet non vide dont le dépôt serait remplacé', () => {
+    const two = m(['/a', null], 0);
+    expect(displacedTab(two, '/c', 'current')).toEqual({ id: 1, repo: '/a' });
+    expect(displacedTab(two, '/c', 'new')).toBeNull();
+    expect(displacedTab(two, '/c', 'current', 2)).toBeNull(); // onglet vide
+    expect(displacedTab(two, '/a', 'current')).toBeNull(); // déjà ouvert : simple activation
+  });
+});
+
+describe('onglets fermés', () => {
+  const entry = (repo: string, summary = ''): ClosedTab => ({
+    repo,
+    state: { selection: { kind: 'wip' }, diffTarget: null, fileView: null, draft: { summary, description: '', amend: false } },
+  });
+
+  it('empile sans doublon et dans la limite', () => {
+    let c = pushClosed([], entry('/a'));
+    c = pushClosed(c, entry('/b'));
+    c = pushClosed(c, entry('/a', 'nouveau'));
+    expect(c.map((x) => x.repo)).toEqual(['/b', '/a']);
+    expect(c[1].state?.draft.summary).toBe('nouveau');
+    expect(pushClosed(c, entry('/c'), 2).map((x) => x.repo)).toEqual(['/a', '/c']);
+  });
+
+  it('dépile le plus récent avec son brouillon', () => {
+    const { entry: e, rest } = popClosed([entry('/a'), entry('/b', 'brouillon B')]);
+    expect(e?.repo).toBe('/b');
+    expect(e?.state?.draft.summary).toBe('brouillon B');
+    expect(rest.map((x) => x.repo)).toEqual(['/a']);
+    expect(popClosed([])).toEqual({ entry: null, rest: [] });
+  });
+
+  it('détecte un brouillon non vide', () => {
+    expect(hasDraft(undefined)).toBe(false);
+    expect(hasDraft({ draft: { summary: '  ', description: '', amend: true } })).toBe(false);
+    expect(hasDraft({ draft: { summary: '', description: 'texte', amend: false } })).toBe(true);
+    expect(hasDraft(entry('/a', 'x').state)).toBe(true);
   });
 });
