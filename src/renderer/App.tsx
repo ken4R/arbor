@@ -15,23 +15,77 @@ import { FileView } from './components/FileView';
 import type { FileViewTarget } from './ui';
 import { UiContext, type Ui } from './ui';
 import { updatePreferences, usePreferences } from './prefs';
-import { setCommandContext } from './commands';
+import { setCommandContext, type AppHooks } from './commands';
+import { activeTab, closeTabById, getTabState, openRepoTab, saveTabState, setTabsBusy, useTabsModel } from './tabs';
 
 export type Selection = { kind: 'wip' } | { kind: 'commit'; sha: string };
 
+/**
+ * Coquille de l'application : onglets, écran d'accueil d'un onglet vide, démarrage.
+ * Un seul `RepoView` est monté (l'onglet actif) ; l'état des autres onglets est conservé dans `tabs.ts`.
+ */
 export function App() {
-  const [repo, setRepo] = useState<string | null>(null);
-  const [snap, setSnap] = useState<RepoSnapshot | null>(null);
-  const [selection, setSelection] = useState<Selection>({ kind: 'wip' });
-  const [diffTarget, setDiffTarget] = useState<DiffTarget | null>(null);
+  const model = useTabsModel();
+  const tab = activeTab(model);
+  const [ready, setReady] = useState(false);
+  const [openError, setOpenError] = useState<string | null>(null);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const p = await api.initialRepo();
+        if (p) openRepoTab(p, 'new');
+      } catch (e) {
+        setOpenError((e as Error).message);
+      } finally {
+        setReady(true);
+      }
+    })();
+  }, []);
+
+  // Onglet vide : le registre de commandes voit « aucun dépôt ».
+  const emptyTab = !tab?.repo;
+  useEffect(() => {
+    if (emptyTab) setCommandContext({ ui: null, repo: null, snap: null, app: SHELL_HOOKS });
+  }, [emptyTab]);
+
+  if (!ready) return <div className="app" />;
+  if (!tab?.repo) return <Welcome onOpen={(p) => openRepoTab(p, 'current')} initialError={openError} />;
+  return <RepoView key={tab.id} tabId={tab.id} repo={tab.repo} onBusy={setTabsBusy} />;
+}
+
+/** Rappels des commandes quand aucun dépôt n'est affiché. */
+const SHELL_HOOKS: AppHooks = {
+  openRepo: (path) => openRepoTab(path, 'current'),
+  closeRepo: () => closeTabById(),
+  refresh: () => {},
+  selectCommit: () => {},
+  showDiff: () => {},
+};
+
+interface RepoViewProps {
+  tabId: number;
+  repo: string;
+  /** Opération en cours (ou `null`) : la coquille bloque alors le changement et la fermeture d'onglet. */
+  onBusy: (label: string | null) => void;
+}
+
+/** Un dépôt, affiché dans l'onglet actif. Son état d'affichage est relu puis enregistré dans `tabs.ts`. */
+function RepoView({ tabId, repo, onBusy }: RepoViewProps) {
+  const [saved] = useState(() => getTabState(tabId));
+  const [snap, setSnap] = useState<RepoSnapshot | null>(saved?.snap ?? null);
+  const [selection, setSelection] = useState<Selection>(saved?.selection ?? { kind: 'wip' });
+  const [diffTarget, setDiffTarget] = useState<DiffTarget | null>(saved?.diffTarget ?? null);
   const [busy, setBusy] = useState<string | null>(null);
   const [toast, setToast] = useState<{ kind: 'error' | 'ok'; text: string } | null>(null);
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [prompt, setPrompt] = useState<PromptState | null>(null);
-  const [draft, setDraft] = useState<CommitDraft>(EMPTY_DRAFT);
-  const [openError, setOpenError] = useState<string | null>(null);
-  const [fileView, setFileView] = useState<FileViewTarget | null>(null);
+  const [draft, setDraft] = useState<CommitDraft>(saved?.draft ?? EMPTY_DRAFT);
+  const [fileView, setFileView] = useState<FileViewTarget | null>(saved?.fileView ?? null);
   const closeFileView = useCallback(() => setFileView(null), []);
+  // Autre dépôt dans cet onglet (barre d'outils) ou fermeture de l'onglet.
+  const switchRepo = useCallback((path: string) => openRepoTab(path, 'current'), []);
+  const closeRepo = useCallback(() => closeTabById(tabId), [tabId]);
   const repoRef = useRef(repo);
   repoRef.current = repo;
   // Rafraîchissement automatique (préférence enregistrée, activé par défaut).
@@ -51,21 +105,30 @@ export function App() {
     }
   }, [repo]);
 
+  // Premier affichage : état restauré de l'onglet (instantané en cache compris), puis relecture du dépôt.
+  // Le dépôt d'un `RepoView` ne change pas en pratique (autre dépôt = autre identifiant d'onglet = autre montage) :
+  // la remise à zéro ne s'applique qu'à un changement ultérieur, jamais à l'état restauré.
+  const firstLoad = useRef(true);
   useEffect(() => {
-    api
-      .initialRepo()
-      .then((p) => p && setRepo(p))
-      .catch((e) => setOpenError((e as Error).message));
-  }, []);
-
-  useEffect(() => {
-    setSnap(null);
-    setSelection({ kind: 'wip' });
-    setDiffTarget(null);
-    setDraft(EMPTY_DRAFT);
-    setFileView(null);
+    if (firstLoad.current) firstLoad.current = false;
+    else {
+      setSnap(null);
+      setSelection({ kind: 'wip' });
+      setDiffTarget(null);
+      setDraft(EMPTY_DRAFT);
+      setFileView(null);
+    }
     void refresh();
   }, [repo]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // État d'affichage de l'onglet, relu quand il redevient actif.
+  useEffect(() => {
+    saveTabState(tabId, { selection, diffTarget, fileView, draft, snap });
+  }, [tabId, selection, diffTarget, fileView, draft, snap]);
+
+  // L'opération en cours est remontée à la coquille (et oubliée au démontage).
+  useEffect(() => onBusy(busy), [busy, onBusy]);
+  useEffect(() => () => onBusy(null), [onBusy]);
 
   useEffect(() => {
     const onFocus = () => void refresh();
@@ -163,8 +226,8 @@ export function App() {
       repo,
       snap,
       app: {
-        openRepo: (path) => setRepo(path),
-        closeRepo: () => setRepo(null),
+        openRepo: switchRepo,
+        closeRepo,
         refresh: () => void refresh(),
         selectCommit: (sha) => {
           setSelection({ kind: 'commit', sha });
@@ -174,7 +237,7 @@ export function App() {
         showDiff: (t) => ui.showDiff(t),
       },
     });
-  }, [ui, repo, snap, refresh]);
+  }, [ui, repo, snap, refresh, switchRepo, closeRepo]);
 
   // Si le commit sélectionné disparaît (reset, rebase...), on revient au WIP.
   useEffect(() => {
@@ -195,14 +258,12 @@ export function App() {
     setDiffTarget(moved ? { kind: 'working', path: moved.path, staged: !diffTarget.staged, untracked: moved.status === '?' } : null);
   }, [snap, diffTarget]);
 
-  if (!repo) return <Welcome onOpen={setRepo} initialError={openError} />;
-
   const selectedCommit = selection.kind === 'commit' ? snap?.commits.find((c) => c.sha === selection.sha) : undefined;
 
   return (
     <UiContext.Provider value={ui}>
       <div className="app" onClick={() => setMenu(null)}>
-        <Toolbar repo={repo} snap={snap} busy={busy} onClose={() => setRepo(null)} onSwitch={setRepo} onRefresh={refresh} autoRefresh={autoRefresh} onToggleAuto={toggleAutoRefresh} />
+        <Toolbar repo={repo} snap={snap} busy={busy} onClose={closeRepo} onSwitch={switchRepo} onRefresh={refresh} autoRefresh={autoRefresh} onToggleAuto={toggleAutoRefresh} />
         <div className="main">
           {snap ? (
             <>
