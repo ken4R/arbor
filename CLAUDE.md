@@ -32,6 +32,7 @@ Règles :
 - Handlers IPC qui ne reçoivent pas de dépôt en premier argument : à ajouter à `NO_REPO` dans `main.ts`.
 - Surcouches (dialogue, menu, palette…) : attribut `data-overlay` sur leur élément racine ; Échap ne ferme pas le diff ni la vue fichier tant qu'une surcouche est ouverte.
 - `ARBOR_USER_DATA` isole les données utilisateur (préférences, dépôts récents) ; `scripts/ui-check.cjs` utilise un dossier temporaire neuf à chaque lancement, sauf avec `--keep-user-data[=<dossier>]` (scénarios de redémarrage).
+- Onglets : `App` est la coquille (barre d'onglets, onglet vide = `Welcome`, restauration de session) et `RepoView` affiche un dépôt. Un seul `RepoView` est monté (`key` = identifiant de l'onglet) et seul son dépôt est surveillé. L'état par onglet (sélection, diff, vue fichier, brouillon, dernier instantané) vit dans `tabs.ts` ; la session dans `userData/session.json` (`restoreSession`/`saveSession`). Changer ou fermer d'onglet est bloqué pendant une opération `ui.run`. Le menu de l'application n'a ni « Fermer » ni « Recharger » : Ctrl/Cmd+W appartient aux onglets.
 
 ## Commandes
 

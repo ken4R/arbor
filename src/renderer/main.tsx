@@ -14,6 +14,7 @@ import { PreferencesDialog } from './components/PreferencesDialog';
 import './commands/prefs';
 
 // onglets
+import './commands/tabs';
 
 // Préférences enregistrées lues dès le démarrage (et migration des anciennes clés localStorage).
 void loadPreferences();
