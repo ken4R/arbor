@@ -14,6 +14,8 @@ export interface AppHooks {
   refresh(): void;
   /** Sélectionne un commit dans le graphe (ferme le diff et la vue fichier). */
   selectCommit(sha: string): void;
+  /** Affiche les modifications en cours et le panneau de commit (ferme le diff et la vue fichier). */
+  selectWip(): void;
   showDiff(t: DiffTarget): void;
 }
 
@@ -51,6 +53,7 @@ const NOOP_HOOKS: AppHooks = {
   closeRepo: () => {},
   refresh: () => {},
   selectCommit: () => {},
+  selectWip: () => {},
   showDiff: () => {},
 };
 
@@ -109,6 +112,8 @@ export function useCommandContext(): CommandContext {
 /** Événement clavier réduit à ce que lit `matchShortcut` (compatible avec `KeyboardEvent` et `React.KeyboardEvent`). */
 export interface ShortcutEvent {
   key: string;
+  /** Touche physique (`KeyP`, `Digit1`…), utilisée quand `key` dépend de la disposition du clavier. */
+  code?: string;
   ctrlKey: boolean;
   metaKey: boolean;
   shiftKey: boolean;
@@ -155,12 +160,21 @@ export function matchShortcut(e: ShortcutEvent, spec: string, mac: boolean = isM
         return false;
     }
   }
-  if (e.ctrlKey !== want.ctrl || e.metaKey !== want.meta || e.shiftKey !== want.shift || e.altKey !== want.alt) return false;
+  if (e.ctrlKey !== want.ctrl || e.metaKey !== want.meta || e.altKey !== want.alt) return false;
   const k = key.toLowerCase();
   const ek = e.key.toLowerCase();
-  if (ek === k) return true;
-  // Raccourcis lettres avec Maj : `e.key` peut valoir « P » ; espace nommée.
-  return (k === 'space' && ek === ' ') || (k === 'esc' && ek === 'escape');
+  // Lettres et chiffres : touche physique, indépendante de la disposition (AZERTY : Mod+1 donne « & » ;
+  // macOS : Alt+P donne « π »).
+  const physical = /^[a-z]$/.test(k) ? `key${k}` : /^[0-9]$/.test(k) ? `digit${k}` : null;
+  const keyMatches =
+    ek === k ||
+    (physical !== null && e.code?.toLowerCase() === physical) ||
+    (k === 'space' && ek === ' ') ||
+    (k === 'esc' && ek === 'escape');
+  if (!keyMatches) return false;
+  if (e.shiftKey === want.shift) return true;
+  // Ponctuation (« + », « , »…) : Maj peut être nécessaire pour la taper, on l'ignore si le raccourci ne la demande pas.
+  return !want.shift && physical === null && k.length === 1;
 }
 
 /** Texte affichable d'un raccourci (ex. `Ctrl+Maj+P` ou `⌘⇧P`). */
@@ -175,6 +189,11 @@ export function formatShortcut(spec: string, mac: boolean = isMac()): string {
     shift: ['⇧', 'Maj'],
     alt: ['⌥', 'Alt'],
     option: ['⌥', 'Alt'],
+    escape: ['⎋', 'Échap'],
+    esc: ['⎋', 'Échap'],
+    enter: ['↩', 'Entrée'],
+    space: ['␣', 'Espace'],
+    tab: ['⇥', 'Tab'],
   };
   const out = parts.map((p) => {
     const n = names[p.toLowerCase()];
