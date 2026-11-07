@@ -1,28 +1,41 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api';
 import { Logo } from './Icons';
+import type { BusyOptions } from '../tabs';
 
-export function Welcome({ onOpen, initialError }: { onOpen: (path: string) => void; initialError?: string | null }) {
+export function Welcome({
+  onOpen,
+  initialError,
+  onBusy,
+}: {
+  onOpen: (path: string) => void;
+  initialError?: string | null;
+  /** Ouverture, initialisation ou clonage en cours (bloque le changement d'onglet). */
+  onBusy?: (label: string | null, opts?: BusyOptions) => void;
+}) {
   const [recent, setRecent] = useState<string[]>([]);
   const [cloneUrl, setCloneUrl] = useState('');
   const [error, setError] = useState<string | null>(initialError ?? null);
   useEffect(() => setError(initialError ?? null), [initialError]);
-  const [busy, setBusy] = useState(false);
+  // Opération en cours : elle se termine par l'ouverture d'un dépôt, qui reste donc permise.
+  const [busy, setBusy] = useState<string | null>(null);
+  useEffect(() => onBusy?.(busy, { allowOpen: true }), [busy, onBusy]);
+  useEffect(() => () => onBusy?.(null), [onBusy]);
 
   useEffect(() => {
     api.recentRepos().then(setRecent).catch(() => {});
   }, []);
 
-  const attempt = async (fn: () => Promise<string | null>) => {
+  const attempt = async (label: string, fn: () => Promise<string | null>) => {
     setError(null);
-    setBusy(true);
+    setBusy(label);
     try {
       const p = await fn();
       if (p) onOpen(p);
     } catch (e) {
       setError((e as Error).message);
     } finally {
-      setBusy(false);
+      setBusy(null);
     }
   };
 
@@ -38,10 +51,10 @@ export function Welcome({ onOpen, initialError }: { onOpen: (path: string) => vo
         </div>
 
         <div className="welcome-actions">
-          <button className="btn btn-primary" disabled={busy} onClick={() => attempt(api.openRepoDialog)}>
+          <button className="btn btn-primary" disabled={!!busy} onClick={() => attempt('Ouverture…', api.openRepoDialog)}>
             Ouvrir un dépôt…
           </button>
-          <button className="btn" disabled={busy} onClick={() => attempt(api.initRepoDialog)}>
+          <button className="btn" disabled={!!busy} onClick={() => attempt('Initialisation…', api.initRepoDialog)}>
             Initialiser un dépôt…
           </button>
         </div>
@@ -50,12 +63,12 @@ export function Welcome({ onOpen, initialError }: { onOpen: (path: string) => vo
           className="clone-row"
           onSubmit={(e) => {
             e.preventDefault();
-            if (cloneUrl.trim()) attempt(() => api.cloneRepo(cloneUrl.trim()));
+            if (cloneUrl.trim()) attempt('Clonage…', () => api.cloneRepo(cloneUrl.trim()));
           }}
         >
           <input placeholder="https://github.com/utilisateur/projet.git" value={cloneUrl} onChange={(e) => setCloneUrl(e.target.value)} spellCheck={false} />
-          <button className="btn" disabled={busy || !cloneUrl.trim()}>
-            {busy ? 'En cours…' : 'Cloner'}
+          <button className="btn" disabled={!!busy || !cloneUrl.trim()}>
+            {busy ?? 'Cloner'}
           </button>
         </form>
 

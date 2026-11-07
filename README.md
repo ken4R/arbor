@@ -32,6 +32,7 @@ npm test               # tests unitaires
 - **Stash** : mettre de côté, appliquer, pop, supprimer.
 - **Commits** : cherry-pick, revert, reset soft/mixed/hard, tag, branche depuis un commit, copie du SHA.
 - **Historique d'un fichier et blame** : clic droit sur un fichier, liste des commits qui l'ont modifié (renommages suivis) avec le diff de chaque version, blame ligne par ligne (lignes non commitées comprises) qui renvoie vers les commits.
+- **Onglets multi-dépôts** : un onglet par dépôt (Ctrl/Cmd+T, Ctrl/Cmd+W, Ctrl+Tab / Ctrl+Maj+Tab, clic du milieu), chaque onglet garde sa sélection, son diff et son brouillon de commit ; seul l'onglet actif est surveillé ; onglets rouverts au redémarrage (préférence « restaurer les onglets »), dépôts supprimés écartés, dépôts momentanément inaccessibles (disque externe, partage réseau) gardés et rouverts au lancement suivant ; dépôts de même nom distingués par leur dossier parent.
 
 ![Résolution de conflits](docs/conflits.png)
 
@@ -47,7 +48,7 @@ Le rendu n'a aucun accès direct au système : toutes les commandes passent par 
 
 ## Feuille de route
 
-1. Palette de commandes et raccourcis, thème clair et préférences, onglets pour plusieurs dépôts.
+1. Palette de commandes et raccourcis, thème clair et préférences, onglets pour plusieurs dépôts. Limite actuelle des onglets : l'état propre aux composants (défilement du graphe, recherche, panneaux repliés) n'est pas conservé par onglet et repart de zéro à chaque activation.
 2. Rebase interactif (glisser-déposer), éditeur de fusion à trois panneaux, gestion des remotes et des tags, annulation via le reflog.
 3. Authentification GitHub/GitLab, pull requests, identifiants SSH/HTTPS.
 4. Performances sur gros dépôts, tests de bout en bout en CI, paquets d'installation (electron-builder).

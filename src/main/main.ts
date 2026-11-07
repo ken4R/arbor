@@ -1,9 +1,11 @@
-import { app, BrowserWindow, dialog, ipcMain, nativeTheme } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, type MenuItemConstructorOptions } from 'electron';
 import { closeSync, existsSync, fsyncSync, openSync, readFileSync, renameSync, rmSync, writeFileSync, writeSync } from 'node:fs';
+import { access, realpath } from 'node:fs/promises';
 import { basename, join, resolve } from 'node:path';
 import * as g from './git';
 import { RepoWatcher } from './watcher';
 import { mergePreferences, normalizePreferences, type Preferences } from '../shared/prefs';
+import { MISSING_LIMIT, normalizeSession, type SessionData } from '../shared/session';
 
 // Données utilisateur isolées (tests d'interface) : à fixer avant `ready`.
 if (process.env.ARBOR_USER_DATA) app.setPath('userData', resolve(process.env.ARBOR_USER_DATA));
@@ -49,22 +51,26 @@ function loadPreferences(): Preferences {
   return prefsCache;
 }
 
-function savePreferences(patch: unknown): Preferences {
-  const next = mergePreferences(loadPreferences(), patch);
-  // Écriture atomique : un arrêt brutal ne laisse jamais un fichier tronqué.
-  const tmp = `${prefsFile()}.${process.pid}.tmp`;
+/** Écriture atomique : un arrêt brutal ne laisse jamais un fichier tronqué. */
+function writeFileAtomic(file: string, content: string) {
+  const tmp = `${file}.${process.pid}.tmp`;
   try {
     const fd = openSync(tmp, 'w');
     try {
-      writeSync(fd, JSON.stringify(next, null, 2));
+      writeSync(fd, content);
       fsyncSync(fd);
     } finally {
       closeSync(fd);
     }
-    renameSync(tmp, prefsFile());
+    renameSync(tmp, file);
   } finally {
     rmSync(tmp, { force: true });
   }
+}
+
+function savePreferences(patch: unknown): Preferences {
+  const next = mergePreferences(loadPreferences(), patch);
+  writeFileAtomic(prefsFile(), JSON.stringify(next, null, 2));
   prefsCache = next;
   nativeTheme.themeSource = next.theme;
   return next;
@@ -90,8 +96,142 @@ function assertOpened(repo: unknown) {
   }
 }
 
+// Session des onglets : `userData/session.json` = { repos, active, missing } (voir `shared/session.ts`).
+const sessionFile = () => join(app.getPath('userData'), 'session.json');
+
+/** Délai maximal de vérification d'un dépôt à la restauration (montage réseau figé). */
+const REOPEN_TIMEOUT_MS = 3000;
+
+/**
+ * Dépôts de la session indisponibles à la restauration, réinjectés à chaque sauvegarde (tant qu'ils ne sont pas
+ * rouverts) ; `null` tant que la session n'a été ni restaurée ni relue.
+ */
+let missingRepos: string[] | null = null;
+
+function readSession(): SessionData {
+  try {
+    return normalizeSession(JSON.parse(readFileSync(sessionFile(), 'utf8')));
+  } catch {
+    return normalizeSession(undefined);
+  }
+}
+
+type Reopened = { kind: 'ok'; top: string } | { kind: 'missing' | 'gone' };
+
+/**
+ * Vérifie un dépôt de la session sans le remettre en tête des récents : `ok` avec son chemin ; `missing` s'il est
+ * inaccessible (dossier absent, délai dépassé) ; `gone` s'il n'est plus un dépôt à cet endroit (`.git` supprimé :
+ * `git` remonterait alors jusqu'à un dépôt parent, par exemple le dossier personnel).
+ */
+async function reopenRepo(path: string): Promise<Reopened> {
+  let timedOut = false;
+  const check = async (): Promise<Reopened> => {
+    try {
+      await access(path);
+    } catch {
+      return { kind: 'missing' };
+    }
+    try {
+      if (!(await g.isRepo(path))) return { kind: 'gone' };
+      const top = await g.toplevel(path);
+      if ((await realpath(top)) !== (await realpath(path))) return { kind: 'gone' };
+      // Réponse arrivée après le délai : le dépôt reste indisponible pour cette session.
+      if (timedOut) return { kind: 'missing' };
+      openedRepos.add(top);
+      return { kind: 'ok', top };
+    } catch {
+      return { kind: 'gone' };
+    }
+  };
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<Reopened>((done) => {
+    timer = setTimeout(() => {
+      timedOut = true;
+      done({ kind: 'missing' });
+    }, REOPEN_TIMEOUT_MS);
+  });
+  try {
+    return await Promise.race([check(), timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function restoreSession(): Promise<{ repos: string[]; active: number }> {
+  const saved = readSession();
+  // Dépôts indisponibles la dernière fois en fin de liste : leur onglet revient s'ils sont de nouveau accessibles.
+  const candidates = [...saved.repos, ...saved.missing];
+  const results = await Promise.all(candidates.map(reopenRepo)); // en parallèle, ordre conservé
+  const repos: string[] = [];
+  const missing: string[] = [];
+  let active = 0;
+  results.forEach((r, i) => {
+    if (r.kind === 'missing') missing.push(candidates[i]);
+    if (r.kind !== 'ok') return; // `gone` : onglet écarté
+    if (!repos.includes(r.top)) repos.push(r.top);
+    if (i === saved.active && i < saved.repos.length) active = repos.indexOf(r.top);
+  });
+  missingRepos = missing.slice(0, MISSING_LIMIT);
+  return { repos, active };
+}
+
+/** N'enregistre que des dépôts ouverts dans Arbor (mêmes règles que `assertOpened`), plus les dépôts indisponibles. */
+function saveSession(repos: unknown, active: unknown) {
+  const recent = loadRecent();
+  const s = normalizeSession({ repos, active }, (p) => openedRepos.has(p) || recent.includes(p));
+  if (missingRepos === null) missingRepos = readSession().missing; // restauration désactivée : on les garde
+  missingRepos = missingRepos.filter((p) => !s.repos.includes(p));
+  const data: SessionData = { ...s, missing: missingRepos };
+  writeFileAtomic(sessionFile(), JSON.stringify(data));
+}
+
+/**
+ * Menu minimal : rôles d'édition (copier, coller…) pour les champs de saisie, sans « Fermer » ni « Recharger »,
+ * afin que Ctrl/Cmd+W ferme l'onglet (géré par le rendu) et non la fenêtre.
+ */
+function installMenu() {
+  const template: MenuItemConstructorOptions[] = [];
+  if (process.platform === 'darwin') template.push({ role: 'appMenu' });
+  // Hors macOS, « Quitter » (Ctrl+Q) : le menu de l'application n'existe pas.
+  else template.push({ label: 'Fichier', submenu: [{ role: 'quit', label: 'Quitter', accelerator: 'Ctrl+Q' }] });
+  template.push({
+    label: 'Édition',
+    submenu: [
+      { role: 'undo', label: 'Annuler' },
+      { role: 'redo', label: 'Rétablir' },
+      { type: 'separator' },
+      { role: 'cut', label: 'Couper' },
+      { role: 'copy', label: 'Copier' },
+      { role: 'paste', label: 'Coller' },
+      { role: 'selectAll', label: 'Tout sélectionner' },
+    ],
+  });
+  template.push({
+    label: 'Affichage',
+    submenu: [
+      { role: 'resetZoom', label: 'Taille réelle' },
+      { role: 'zoomIn', label: 'Zoom avant' },
+      { role: 'zoomOut', label: 'Zoom arrière' },
+      { type: 'separator' },
+      { role: 'togglefullscreen', label: 'Plein écran' },
+    ],
+  });
+  // macOS : menu Fenêtre construit à la main (le rôle `windowMenu` ajouterait « Fermer », Cmd+W).
+  if (process.platform === 'darwin') {
+    template.push({
+      label: 'Fenêtre',
+      submenu: [
+        { role: 'minimize', label: 'Réduire' },
+        { role: 'zoom', label: 'Agrandir' },
+      ],
+    });
+  }
+  if (!app.isPackaged) template.push({ label: 'Développement', submenu: [{ role: 'toggleDevTools', label: 'Outils de développement' }] });
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
+
 // Handlers qui ne reçoivent pas de dépôt en premier argument.
-const NO_REPO = new Set(['openRepoDialog', 'initRepoDialog', 'cloneRepo', 'recentRepos', 'initialRepo', 'unwatchRepo', 'getPreferences', 'setPreferences']);
+const NO_REPO = new Set(['openRepoDialog', 'initRepoDialog', 'cloneRepo', 'recentRepos', 'initialRepo', 'unwatchRepo', 'getPreferences', 'setPreferences', 'restoreSession', 'saveSession']);
 
 // Handlers en lecture seule, hors sourdine du rafraîchissement automatique. Liste blanche : toute nouvelle
 // commande est mise en sourdine par défaut. Les noms absents de `handlers` (autres branches) sont sans effet.
@@ -110,6 +250,8 @@ const READ_ONLY = new Set([
   'blame',
   'getPreferences',
   'setPreferences',
+  'restoreSession',
+  'saveSession',
 ]);
 
 const handlers: Record<string, (...args: any[]) => Promise<unknown>> = {
@@ -174,6 +316,8 @@ const handlers: Record<string, (...args: any[]) => Promise<unknown>> = {
   unwatchRepo: async () => watcher.stop(),
   getPreferences: async () => loadPreferences(),
   setPreferences: async (patch: unknown) => savePreferences(patch),
+  restoreSession: async () => restoreSession(),
+  saveSession: async (repos: unknown, active: unknown) => saveSession(repos, active),
 };
 
 for (const [name, fn] of Object.entries(handlers)) {
@@ -191,6 +335,7 @@ for (const [name, fn] of Object.entries(handlers)) {
 }
 
 function createWindow() {
+  installMenu();
   nativeTheme.themeSource = loadPreferences().theme;
   win = new BrowserWindow({
     width: 1440,
