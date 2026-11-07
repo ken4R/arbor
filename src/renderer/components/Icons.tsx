@@ -60,3 +60,12 @@ export function Logo({ size = 22 }: { size?: number }) {
     </svg>
   );
 }
+
+/** « + » de la section Tags (nouveau tag sur HEAD). */
+export function IconTagAdd() {
+  return (
+    <svg {...s} width={14} height={14}>
+      <path d="M8 3v10M3 8h10" />
+    </svg>
+  );
+}

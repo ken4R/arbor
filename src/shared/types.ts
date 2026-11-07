@@ -180,7 +180,8 @@ export interface ArborApi {
   stashApply(repo: string, index: number, sha: string, pop: boolean): Promise<void>;
   stashDrop(repo: string, index: number, sha: string): Promise<void>;
   initialRepo(): Promise<string | null>;
-  createTag(repo: string, name: string, sha: string): Promise<void>;
+  /** Tag léger si `message` est null, annoté sinon. */
+  createTag(repo: string, name: string, sha: string, message: string | null): Promise<void>;
   cherryPick(repo: string, sha: string): Promise<void>;
   revert(repo: string, sha: string): Promise<void>;
   reset(repo: string, sha: string, mode: 'soft' | 'mixed' | 'hard'): Promise<void>;
@@ -196,4 +197,18 @@ export interface ArborApi {
   restoreSession(): Promise<{ repos: string[]; active: number }>;
   /** Enregistre les onglets ouverts (seuls les dépôts ouverts dans Arbor sont retenus). */
   saveSession(repos: string[], active: number): Promise<void>;
+  // tags
+  deleteTag(repo: string, name: string): Promise<void>;
+  /** Supprime `refs/tags/<name>` sur le remote. */
+  deleteRemoteTag(repo: string, remote: string, name: string): Promise<void>;
+  pushTag(repo: string, remote: string, name: string): Promise<void>;
+  pushAllTags(repo: string, remote: string): Promise<void>;
+  /** Tags du remote (`git ls-remote`, accès réseau). */
+  remoteTags(repo: string, remote: string): Promise<RemoteTag[]>;
+}
+
+/** Tag présent sur un remote (`git ls-remote --tags --refs`) : `sha` = objet pointé (le tag annoté lui-même). */
+export interface RemoteTag {
+  name: string;
+  sha: string;
 }
