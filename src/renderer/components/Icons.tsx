@@ -43,6 +43,9 @@ export const Icon = {
   search: () => (
     <svg {...s} width={14} height={14}><circle cx="7" cy="7" r="4.5" /><path d="M10.5 10.5 14 14" /></svg>
   ),
+  gear: () => (
+    <svg {...s}><circle cx="8" cy="8" r="2" /><path d="M8 1.5v1.8M8 12.7v1.8M14.5 8h-1.8M3.3 8H1.5M12.6 3.4l-1.3 1.3M4.7 11.3l-1.3 1.3M12.6 12.6l-1.3-1.3M4.7 4.7 3.4 3.4" /><circle cx="8" cy="8" r="4.6" /></svg>
+  ),
 };
 
 /** Logo d'Arbor : un tronc qui se divise en trois branches. */
