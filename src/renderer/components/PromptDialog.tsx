@@ -25,7 +25,7 @@ export function PromptDialog({ prompt, onClose }: { prompt: PromptState; onClose
   };
 
   return (
-    <div className="overlay" onMouseDown={onClose}>
+    <div className="overlay" data-overlay onMouseDown={onClose}>
       <form className="dialog" onSubmit={submit} onMouseDown={(e) => e.stopPropagation()} onKeyDown={(e) => e.key === 'Escape' && onClose()}>
         <h2>{prompt.title}</h2>
         {prompt.message && <p className="dialog-msg">{prompt.message}</p>}
