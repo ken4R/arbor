@@ -28,7 +28,8 @@ const BONUS_WORD_START = 8;
 const BONUS_PREFIX = 6;
 const BONUS_CONSECUTIVE = 5;
 const PENALTY_GAP = 1;
-const PENALTY_LENGTH = 0.01;
+/** Pénalité par caractère du texte : à score égal, le texte le plus court l’emporte. */
+export const PENALTY_LENGTH = 0.01;
 
 export function prepareText(text: string): PreparedText {
   let norm = '';

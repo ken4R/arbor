@@ -49,18 +49,19 @@ const inOperation = (c: CommandContext) => !!c.snap && c.snap.status.state !== '
 
 const baseName = (p: string) => p.split(/[\\/]/).filter(Boolean).pop() ?? p;
 
-/** Affiche le panneau de travail (ligne WIP) et place le curseur dans le résumé du commit. */
-function focusCommitSummary() {
+/**
+ * Affiche le panneau de travail (sélection WIP ; diff et vue fichier fermés) et place le curseur dans le résumé du
+ * commit une fois le panneau rendu (quelques images au plus).
+ */
+function focusCommitSummary(c: CommandContext) {
+  c.app.selectWip();
+  let tries = 10;
   const focus = () => {
     const el = document.querySelector<HTMLTextAreaElement | HTMLInputElement>('.commit-summary');
-    if (!el) return false;
-    el.focus();
-    return true;
+    if (el) el.focus();
+    else if (--tries > 0) requestAnimationFrame(focus);
   };
-  if (focus()) return;
-  document.querySelector<HTMLElement>('.row.wip-row')?.click();
-  // Le panneau est rendu au cycle suivant.
-  requestAnimationFrame(() => requestAnimationFrame(() => void focus()));
+  requestAnimationFrame(focus);
 }
 
 function staticCommands(): Command[] {
@@ -95,7 +96,7 @@ function staticCommands(): Command[] {
       group: GROUP_GIT,
       keywords: ['valider', 'message'],
       enabled: (c) => ready(c),
-      run: () => focusCommitSummary(),
+      run: (c) => focusCommitSummary(c),
     },
     {
       id: 'git.stash',
@@ -185,10 +186,18 @@ function staticCommands(): Command[] {
   ];
 }
 
-function dynamicCommands(c: CommandContext): Command[] {
+type DiffTarget = Parameters<CommandContext['app']['showDiff']>[0];
+
+/** Nom du dossier parent d'un chemin (vide à la racine). */
+const parentName = (p: string) => p.split(/[\\/]/).filter(Boolean).slice(-2, -1)[0] ?? '';
+
+/**
+ * Entrées dynamiques de la palette (fonction pure) : checkout des branches, tags, fichiers modifiés et dépôts
+ * récents. `currentRepo` (par défaut `snap.path`) est écarté des récents.
+ */
+export function buildDynamicCommands(snap: RepoSnapshot | null, recents: readonly string[], currentRepo: string | null = snap?.path ?? null): Command[] {
   const out: Command[] = [];
-  if (hasSnap(c)) {
-    const { snap } = c;
+  if (snap) {
     const current = snap.status.branch;
     const currentUpstream = snap.branches.find((b) => b.current)?.upstream ?? null;
     for (const b of snap.branches) {
@@ -204,7 +213,9 @@ function dynamicCommands(c: CommandContext): Command[] {
         run: (x) => hasSnap(x) && void checkoutBranch(x.ui, x.snap.path, b.name),
       });
     }
-    // Commit de chaque tag, en un seul passage sur l'historique.
+    // Commit de chaque tag, en un seul passage sur l'historique chargé. Un tag posé sur un commit absent du graphe
+    // (au-delà de la limite de commits chargés, ou hors de l'historique des branches) est écarté : « Aller au tag »
+    // n'aurait rien à sélectionner.
     const tagSha = new Map<string, string>();
     for (const cm of snap.commits) for (const r of cm.refs) if (r.type === 'tag' && !tagSha.has(r.name)) tagSha.set(r.name, cm.sha);
     for (const tag of snap.tags) {
@@ -218,12 +229,17 @@ function dynamicCommands(c: CommandContext): Command[] {
         run: (x) => x.app.selectCommit(sha),
       });
     }
+    // Un fichier à la fois indexé et modifié a deux entrées (deux diffs différents) : le libellé fait partie de l'id.
     const st = snap.status;
-    const files: [string, Parameters<CommandContext['app']['showDiff']>[0], string][] = [
-      ...st.conflicted.map((f) => [f.path, { kind: 'working', path: f.path, staged: false, conflict: true }, 'en conflit'] as const),
-      ...st.staged.map((f) => [f.path, { kind: 'working', path: f.path, oldPath: f.oldPath, staged: true }, 'indexé'] as const),
-      ...st.unstaged.map((f) => [f.path, { kind: 'working', path: f.path, oldPath: f.oldPath, staged: false, untracked: f.status === '?' }, f.status === '?' ? 'non suivi' : 'modifié'] as const),
-    ] as [string, Parameters<CommandContext['app']['showDiff']>[0], string][];
+    const files: [string, DiffTarget, string][] = [
+      ...st.conflicted.map((f): [string, DiffTarget, string] => [f.path, { kind: 'working', path: f.path, staged: false, conflict: true }, 'en conflit']),
+      ...st.staged.map((f): [string, DiffTarget, string] => [f.path, { kind: 'working', path: f.path, oldPath: f.oldPath, staged: true }, 'indexé']),
+      ...st.unstaged.map((f): [string, DiffTarget, string] => [
+        f.path,
+        { kind: 'working', path: f.path, oldPath: f.oldPath, staged: false, untracked: f.status === '?' },
+        f.status === '?' ? 'non suivi' : 'modifié',
+      ]),
+    ];
     for (const [path, target, label] of files) {
       out.push({
         id: `git.file:${label}:${path}`,
@@ -234,11 +250,17 @@ function dynamicCommands(c: CommandContext): Command[] {
       });
     }
   }
-  for (const p of recentRepos) {
-    if (p === c.repo) continue;
+  const shown = recents.filter((p) => p !== currentRepo);
+  const nameCount = new Map<string, number>();
+  for (const p of shown) nameCount.set(baseName(p), (nameCount.get(baseName(p)) ?? 0) + 1);
+  for (const p of shown) {
+    const name = baseName(p);
+    // Deux dépôts récents de même nom : le dossier parent les distingue.
+    const parent = parentName(p);
+    const title = (nameCount.get(name) ?? 0) > 1 && parent ? `Ouvrir ${name} (${parent})` : `Ouvrir ${name}`;
     out.push({
       id: `git.recent:${p}`,
-      title: `Ouvrir ${baseName(p)}`,
+      title,
       group: GROUP_RECENT,
       keywords: [p],
       enabled: (x) => !x.busy,
@@ -248,4 +270,4 @@ function dynamicCommands(c: CommandContext): Command[] {
   return out;
 }
 
-registerCommands('git', (c) => [...staticCommands(), ...dynamicCommands(c)]);
+registerCommands('git', (c) => [...staticCommands(), ...buildDynamicCommands(c.snap, recentRepos, c.repo)]);

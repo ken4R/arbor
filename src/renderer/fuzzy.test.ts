@@ -81,3 +81,23 @@ describe('fuzzyMatch', () => {
   });
 });
 
+describe('fuzzyScore : indices dans le texte d’origine', () => {
+  const increasing = (xs: number[]) => xs.every((x, i) => i === 0 || x > xs[i - 1]);
+
+  it('« ß » et « İ » : un indice par caractère d’origine, croissants et sans doublon', () => {
+    expect(fuzzyScore('strasse', 'Straße')).toBeNull(); // « ß » n'est pas développé en « ss »
+    expect(fuzzyScore('straß', 'Straße')!.indices).toEqual([0, 1, 2, 3, 4]);
+    // « İ » (I point suscrit) : NFD donne « I » + diacritique, retiré ; un seul indice pour ce caractère.
+    const m = fuzzyScore('istanbul', 'İstanbul')!;
+    expect(m.indices).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
+    expect(increasing(m.indices)).toBe(true);
+  });
+
+  it('caractère développé en plusieurs caractères normalisés : indice d’origine dédoublonné', () => {
+    // « 한 » se décompose (NFD) en trois jamos : les trois correspondances pointent sur le même caractère.
+    const m = fuzzyScore('한글', '한글 문서')!;
+    expect(m.indices).toEqual([0, 1]);
+    expect(increasing(m.indices)).toBe(true);
+  });
+});
+

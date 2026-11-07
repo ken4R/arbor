@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { formatShortcut, getCommandContext, getCommands, matchShortcut, useCommandContext, type Command } from '../commands';
 import { GROUP_BRANCHES, GROUP_FILES, GROUP_TAGS, loadRecentRepos } from '../commands/git';
+import { PENALTY_LENGTH } from '../fuzzy';
 import { makeEntry, searchEntries, type PaletteEntry, type PaletteKind, type PaletteResult } from '../paletteSearch';
 
 // Palette de commandes : Ctrl/Cmd+Maj+P ou Ctrl/Cmd+K. Recherche floue sur les commandes du registre
@@ -23,9 +24,13 @@ function remember(id: string) {
   history.length = Math.min(history.length, HISTORY_MAX);
 }
 
+/**
+ * Bonus d'historique, toujours inférieur à `PENALTY_LENGTH` : il ne départage que des entrées de même score et de
+ * même longueur (dont toutes les commandes quand la requête est vide), sans passer devant un titre plus court.
+ */
 function historyBoost(id: string): number {
   const i = history.indexOf(id);
-  return i < 0 ? 0 : 1 - i / HISTORY_MAX;
+  return i < 0 ? 0 : (PENALTY_LENGTH / 2) * (1 - i / HISTORY_MAX);
 }
 
 const isShortcut = (e: KeyboardEvent) => SHORTCUTS.some((s) => matchShortcut(e, s));
@@ -54,11 +59,15 @@ function Highlight({ text, indices }: { text: string; indices: number[] }) {
 export function CommandPalette() {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
-  const [active, setActive] = useState(0);
+  // Entrée active retenue par son id : elle le reste si la liste est recalculée (instantané rafraîchi) ; sinon la
+  // première entrée est active.
+  const [activeId, setActiveId] = useState<string | null>(null);
   const [recentsVersion, setRecentsVersion] = useState(0);
   const ctx = useCommandContext();
   const listRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  // Élément qui avait le focus avant l'ouverture, rendu à la fermeture par Échap ou clic dehors.
+  const returnFocusRef = useRef<HTMLElement | null>(null);
 
   // Ouverture : écouteur permanent (phase de bouillonnement), inactif quand la palette est ouverte (l'écouteur de
   // capture ci-dessous prend alors le relais) ou quand une autre surcouche l'est déjà.
@@ -70,7 +79,8 @@ export function CommandPalette() {
       e.preventDefault();
       e.stopPropagation();
       setQuery('');
-      setActive(0);
+      setActiveId(null);
+      returnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
       setOpen(true);
       void loadRecentRepos().then(() => setRecentsVersion((v) => v + 1));
     };
@@ -87,9 +97,19 @@ export function CommandPalette() {
   }, [open, ctx, recentsVersion]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const results = useMemo(() => searchEntries(entries, query), [entries, query]);
-  const current = Math.min(active, Math.max(results.length - 1, 0));
+  const current = Math.max(
+    results.findIndex((r) => r.entry.item.id === activeId),
+    0,
+  );
+  const setActive = (i: number) => setActiveId(results[i]?.entry.item.id ?? null);
 
-  const close = () => setOpen(false);
+  /** Ferme la palette ; `restoreFocus` rend le focus à l'élément actif avant l'ouverture (abandon, pas exécution). */
+  const close = (restoreFocus = false) => {
+    setOpen(false);
+    const el = returnFocusRef.current;
+    returnFocusRef.current = null;
+    if (restoreFocus && el?.isConnected) requestAnimationFrame(() => el.focus());
+  };
   const runResult = (r: PaletteResult<Command> | undefined) => {
     if (!r) return;
     close();
@@ -105,15 +125,20 @@ export function CommandPalette() {
     if (isShortcut(e)) {
       e.preventDefault();
       e.stopPropagation();
-      if (!e.repeat) close();
+      if (!e.repeat) close(true);
       return;
     }
     switch (e.key) {
       case 'Escape':
+        // Échap pendant une composition (IME) l'annule : la palette reste ouverte.
+        if (e.isComposing || e.keyCode === 229) {
+          e.stopPropagation();
+          return;
+        }
         // Ne ferme que la palette (pas le diff ni la vue fichier en dessous).
         e.preventDefault();
         e.stopPropagation();
-        close();
+        close(true);
         return;
       case 'ArrowDown':
       case 'ArrowUp': {
@@ -147,7 +172,7 @@ export function CommandPalette() {
   if (!open) return null;
 
   return (
-    <div className="overlay palette-overlay" data-overlay onMouseDown={close}>
+    <div className="overlay palette-overlay" data-overlay onMouseDown={() => close(true)}>
       <div
         className="palette"
         role="dialog"
@@ -167,7 +192,7 @@ export function CommandPalette() {
           spellCheck={false}
           onChange={(e) => {
             setQuery(e.target.value);
-            setActive(0);
+            setActiveId(null);
           }}
         />
         <div className="palette-list" ref={listRef} role="listbox">
