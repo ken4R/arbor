@@ -9,6 +9,9 @@ import './commands/git';
 import { CommandPalette } from './components/CommandPalette';
 
 // préférences
+import { ThemeSync } from './theme';
+import { PreferencesDialog } from './components/PreferencesDialog';
+import './commands/prefs';
 
 // onglets
 
@@ -23,6 +26,8 @@ createRoot(document.getElementById('root')!).render(
     <CommandPalette />
 
     {/* préférences */}
+    <ThemeSync />
+    <PreferencesDialog />
 
     {/* onglets */}
   </>,
