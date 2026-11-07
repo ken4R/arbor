@@ -193,7 +193,7 @@ function installMenu() {
   const template: MenuItemConstructorOptions[] = [];
   if (process.platform === 'darwin') template.push({ role: 'appMenu' });
   // Hors macOS, « Quitter » (Ctrl+Q) : le menu de l'application n'existe pas.
-  else template.push({ label: 'Fichier', submenu: [{ role: 'quit', label: 'Quitter' }] });
+  else template.push({ label: 'Fichier', submenu: [{ role: 'quit', label: 'Quitter', accelerator: 'Ctrl+Q' }] });
   template.push({
     label: 'Édition',
     submenu: [

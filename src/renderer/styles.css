@@ -1455,6 +1455,8 @@ tr.cf-marker {
   border-bottom: 1px solid var(--border);
   overflow-x: auto;
   overflow-y: hidden;
+  /* L'onglet amené en vue (`scrollIntoView`) ne passe pas sous le bouton + fixe. */
+  scroll-padding-inline-end: 34px;
 }
 /* Barre de défilement fine, mais visible : elle signale les onglets hors de vue. */
 .tabbar::-webkit-scrollbar {
