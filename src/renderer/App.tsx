@@ -161,7 +161,8 @@ export function App() {
     setCommandContext({
       ui: repo ? ui : null,
       repo,
-      snap,
+      // Jamais l'instantané d'un autre dépôt (changement de dépôt en cours) : les actions utilisent `snap.path`.
+      snap: snap && snap.path === repo ? snap : null,
       busy,
       app: {
         openRepo: (path) => setRepo(path),
@@ -169,6 +170,11 @@ export function App() {
         refresh: () => void refresh(),
         selectCommit: (sha) => {
           setSelection({ kind: 'commit', sha });
+          setDiffTarget(null);
+          setFileView(null);
+        },
+        selectWip: () => {
+          setSelection({ kind: 'wip' });
           setDiffTarget(null);
           setFileView(null);
         },

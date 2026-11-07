@@ -11,8 +11,9 @@ import {
   type CommandContext,
 } from './commands';
 
-const ev = (key: string, mods: { ctrl?: boolean; meta?: boolean; shift?: boolean; alt?: boolean } = {}) => ({
+const ev = (key: string, mods: { ctrl?: boolean; meta?: boolean; shift?: boolean; alt?: boolean; code?: string } = {}) => ({
   key,
+  code: mods.code,
   ctrlKey: !!mods.ctrl,
   metaKey: !!mods.meta,
   shiftKey: !!mods.shift,
@@ -44,6 +45,19 @@ describe('matchShortcut', () => {
     expect(matchShortcut(ev('Tab', { ctrl: true }), 'Ctrl+Tab', true)).toBe(true);
   });
 
+  it('ne dépend pas de la disposition du clavier', () => {
+    // AZERTY : Ctrl+1 donne « & », la touche physique reste Digit1.
+    expect(matchShortcut(ev('&', { ctrl: true, code: 'Digit1' }), 'Mod+1', false)).toBe(true);
+    // macOS : Alt+P donne « π ».
+    expect(matchShortcut(ev('π', { alt: true, code: 'KeyP' }), 'Alt+P', true)).toBe(true);
+    // « + » demande Maj en QWERTY/AZERTY : Maj est ignorée pour la ponctuation.
+    expect(matchShortcut(ev('+', { ctrl: true, shift: true, code: 'Equal' }), 'Mod++', false)).toBe(true);
+    // Maj reste exigée exactement pour les lettres et les touches nommées.
+    expect(matchShortcut(ev('P', { ctrl: true, shift: true, code: 'KeyP' }), 'Mod+P', false)).toBe(false);
+    expect(matchShortcut(ev('Tab', { ctrl: true, shift: true }), 'Ctrl+Tab', false)).toBe(false);
+    expect(matchShortcut(ev('Tab', { ctrl: true, shift: true }), 'Ctrl+Shift+Tab', false)).toBe(true);
+  });
+
   it('refuse un modificateur inconnu', () => {
     expect(matchShortcut(ev('p'), 'Hyper+P', false)).toBe(false);
   });
@@ -54,6 +68,8 @@ describe('formatShortcut', () => {
     expect(formatShortcut('Mod+Shift+P', false)).toBe('Ctrl+Maj+P');
     expect(formatShortcut('Mod+Shift+P', true)).toBe('⌘⇧P');
     expect(formatShortcut('Mod++', false)).toBe('Ctrl++');
+    expect(formatShortcut('Escape', false)).toBe('Échap');
+    expect(formatShortcut('Mod+Enter', false)).toBe('Ctrl+Entrée');
   });
 });
 
