@@ -3,6 +3,10 @@ import { useEffect, useId, useRef, useState } from 'react';
 // Coquille des dialogues spécifiques ouverts par `ui.openDialog((close) => <MonDialogue onClose={close} …/>)`.
 // Reprend les classes de `PromptDialog` (`.overlay`, `.dialog`, `.dialog-msg`, `.field`, `.check`, `.dialog-actions`).
 // Porte `data-overlay` : Échap ne ferme ni le diff ni la vue fichier tant qu'elle est ouverte.
+// Le contenu est dans un <form> : tout bouton du contenu doit porter `type="button"` (sinon il valide le dialogue),
+// et Entrée dans un <input> valide aussi ; un message multiligne se saisit dans un <textarea>.
+// Un élément du contenu peut gérer Échap lui-même : `e.preventDefault()` empêche alors la fermeture.
+// Échap et le clic hors du dialogue appellent `onClose` : s'il y a des changements à perdre, `onClose` confirme.
 
 export interface DialogProps {
   title: React.ReactNode;
@@ -44,11 +48,7 @@ export function Dialog(props: DialogProps) {
     const onKey = (e: KeyboardEvent) => {
       const overlays = document.querySelectorAll('[data-overlay]');
       if (!el || !root.current || overlays[overlays.length - 1] !== root.current) return;
-      if (e.key === 'Escape') {
-        e.preventDefault();
-        e.stopImmediatePropagation();
-        latest.current.onClose();
-      } else if (e.key === 'Tab') {
+      if (e.key === 'Tab') {
         const items = Array.from(el.querySelectorAll<HTMLElement>(FOCUSABLE));
         if (!items.length) return;
         const first = items[0];
@@ -63,9 +63,20 @@ export function Dialog(props: DialogProps) {
         }
       }
     };
+    // Échap en phase de bouillonnement : un champ du contenu peut l'intercepter (preventDefault) avant nous.
+    const onEscape = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || e.defaultPrevented) return;
+      const overlays = document.querySelectorAll('[data-overlay]');
+      if (!root.current || overlays[overlays.length - 1] !== root.current) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      latest.current.onClose();
+    };
     window.addEventListener('keydown', onKey, true);
+    window.addEventListener('keydown', onEscape);
     return () => {
       window.removeEventListener('keydown', onKey, true);
+      window.removeEventListener('keydown', onEscape);
       if (previous && previous.isConnected) previous.focus();
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps

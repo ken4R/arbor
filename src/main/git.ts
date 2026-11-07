@@ -392,6 +392,9 @@ export function parseTags(out: string): Tag[] {
 /**
  * Combine `git remote` (tous les noms, y compris un remote sans URL) et `git remote -v` (`nom\turl (fetch|push)`).
  * L'URL peut contenir des espaces : seul le suffixe final est retiré. Ordre de `git remote` ; première URL retenue.
+ * Ce sont des URL effectives (après réécriture `insteadOf`) : pour les modifier, relire les valeurs brutes
+ * (`git config --get-all remote.<nom>.url` / `pushurl`). `git remote -v` répète l'URL de fetch sur la ligne
+ * `(push)` sans `pushurl` : `pushUrl` vaut donc `null` quand elle est identique à `fetchUrl`.
  */
 export function parseRemotes(names: string, verbose: string): Remote[] {
   const remotes = new Map<string, Remote>();
@@ -405,6 +408,7 @@ export function parseRemotes(names: string, verbose: string): Remote[] {
     if (m[2] === 'fetch') r.fetchUrl ??= m[1];
     else r.pushUrl ??= m[1];
   }
+  for (const r of remotes.values()) if (r.pushUrl === r.fetchUrl) r.pushUrl = null;
   return [...remotes.values()];
 }
 

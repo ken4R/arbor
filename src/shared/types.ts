@@ -66,6 +66,7 @@ export interface Tag {
 export interface Remote {
   name: string;
   fetchUrl: string | null;
+  /** URL de push distincte (`pushurl`), `null` si elle est identique à `fetchUrl`. URL effectives (après `insteadOf`). */
   pushUrl: string | null;
 }
 

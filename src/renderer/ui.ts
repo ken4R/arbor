@@ -16,6 +16,8 @@ export interface Ui {
    * au-dessus du dépôt jusqu'à `close()` (sans effet si un autre dialogue l'a remplacé entre-temps). Un nouvel appel
    * remplace le dialogue ouvert. Utiliser la coquille `components/Dialog.tsx` ; `ask` reste la voie pour une
    * confirmation ou un champ unique (et peut s'ouvrir par-dessus).
+   * `render` n'est appelé qu'une fois : les props capturées (instantané, plan…) ne suivent pas les rafraîchissements.
+   * Un dialogue qui dépend de l'état du dépôt le relit par `api.*` au moment d'agir, et le main revérifie.
    */
   openDialog(render: (close: () => void) => React.ReactNode): void;
   showDiff(t: DiffTarget | null): void;

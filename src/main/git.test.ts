@@ -131,7 +131,7 @@ describe('parseRemotes', () => {
       '',
     ].join('\n');
     expect(parseRemotes(names, verbose)).toEqual([
-      { name: 'miroir', fetchUrl: '/chemin/avec des espaces/depot.git', pushUrl: '/chemin/avec des espaces/depot.git' },
+      { name: 'miroir', fetchUrl: '/chemin/avec des espaces/depot.git', pushUrl: null },
       { name: 'origin', fetchUrl: 'https://exemple.org/a.git', pushUrl: 'ssh://git@exemple.org/a.git' },
       { name: 'sansurl', fetchUrl: null, pushUrl: null },
     ]);
@@ -139,7 +139,7 @@ describe('parseRemotes', () => {
 
   it('plusieurs URL : la première est retenue ; aucun remote', () => {
     const verbose = 'o\thttps://a (fetch)\no\thttps://a (push)\no\thttps://b (push)\n';
-    expect(parseRemotes('o\n', verbose)).toEqual([{ name: 'o', fetchUrl: 'https://a', pushUrl: 'https://a' }]);
+    expect(parseRemotes('o\n', verbose)).toEqual([{ name: 'o', fetchUrl: 'https://a', pushUrl: null }]);
     expect(parseRemotes('', '')).toEqual([]);
   });
 });
