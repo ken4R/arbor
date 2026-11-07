@@ -1,4 +1,6 @@
 import type { Commit, RepoSnapshot } from '../shared/types';
+import type { Remote } from '../shared/types';
+import { openAddRemoteDialog, openEditRemoteDialog } from './components/RemoteDialog';
 import { api } from './api';
 import type { MenuItem } from './components/ContextMenu';
 import type { Ui } from './ui';
@@ -161,4 +163,70 @@ export function stashSaveAction(ui: Ui, snap: RepoSnapshot) {
 export function stashPopAction(ui: Ui, snap: RepoSnapshot) {
   if (!snap.stashes.length) return;
   return ui.run('Pop…', () => api.stashApply(snap.path, 0, snap.stashes[0].sha, true));
+}
+
+// remotes
+
+/** Menu d'un remote (en-tête de sa section dans la barre latérale). */
+export function remoteMenu(ui: Ui, snap: RepoSnapshot, remote: Remote): MenuItem[] {
+  const repo = snap.path;
+  const name = remote.name;
+  const url = remote.fetchUrl ?? remote.pushUrl;
+  const remoteBranches = snap.branches.filter((b) => b.remote && remoteOf(snap.remotes, b.name) === name && !b.name.endsWith('/HEAD')).length;
+  return [
+    { label: `Fetch « ${name} »`, onClick: () => fetchRemoteAction(ui, snap, name) },
+    { label: `Prune « ${name} »`, onClick: () => pruneRemoteAction(ui, snap, name) },
+    'separator',
+    { label: "Modifier l'URL…", onClick: () => openEditRemoteDialog(ui, snap, name) },
+    {
+      label: 'Renommer…',
+      onClick: () =>
+        ui.ask({
+          title: `Renommer le remote « ${name} »`,
+          message: 'Les branches distantes et la configuration de suivi des branches locales suivent le nouveau nom.',
+          label: 'Nouveau nom',
+          initial: name,
+          confirm: 'Renommer',
+          onSubmit: (n) => {
+            if (n !== name) void ui.run('Renommage du remote…', () => api.renameRemote(repo, name, n), `Remote renommé en « ${n} »`);
+          },
+        }),
+    },
+    {
+      label: 'Supprimer…',
+      danger: true,
+      onClick: () =>
+        ui.ask({
+          title: `Supprimer le remote « ${name} »`,
+          message:
+            `Le remote sera retiré de la configuration, avec ses ${remoteBranches} branche${remoteBranches > 1 ? 's' : ''} distante${remoteBranches > 1 ? 's' : ''} ` +
+            'et le suivi des branches locales qui s’y rattachent. Les commits et les branches locales sont conservés.',
+          confirm: 'Supprimer',
+          danger: true,
+          onSubmit: () => void ui.run('Suppression du remote…', () => api.removeRemote(repo, name), `Remote « ${name} » supprimé`),
+        }),
+    },
+    'separator',
+    { label: "Copier l'URL", disabled: !url, onClick: () => url && void navigator.clipboard.writeText(url) },
+    'separator',
+    { label: 'Ajouter un remote…', onClick: () => openAddRemoteDialog(ui, snap) },
+  ];
+}
+
+export function fetchRemoteAction(ui: Ui, snap: RepoSnapshot, name: string) {
+  return ui.run(`Fetch de ${name}…`, () => api.fetchRemote(snap.path, name), `Fetch de « ${name} » terminé`);
+}
+
+export function pruneRemoteAction(ui: Ui, snap: RepoSnapshot, name: string) {
+  return ui.run(`Prune de ${name}…`, () => api.pruneRemote(snap.path, name), `Prune de « ${name} » terminé`);
+}
+
+/**
+ * Remote auquel appartient une branche distante (`<remote>/<branche>`) : le plus long nom de remote qui préfixe
+ * la branche, pour que `a/b/x` revienne au remote `a/b` et non à `a`. null si aucun ne correspond.
+ */
+export function remoteOf(remotes: readonly { name: string }[], branch: string): string | null {
+  let best: string | null = null;
+  for (const r of remotes) if (branch.startsWith(r.name + '/') && (best === null || r.name.length > best.length)) best = r.name;
+  return best;
 }

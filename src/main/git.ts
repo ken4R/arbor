@@ -16,6 +16,7 @@ import type {
   Tag,
   WorkingStatus,
 } from '../shared/types';
+import type { RemoteConfig } from '../shared/types';
 
 export class GitError extends Error {
   constructor(message: string, public readonly stderr: string) {
@@ -40,6 +41,10 @@ const GIT_ERRORS: [RegExp, (m: RegExpMatchArray) => string][] = [
   [/There is no tracking information|has no upstream branch/, () => 'Cette branche ne suit aucune branche distante.'],
   [/You have unstaged changes|cannot (?:rebase|pull with rebase): You have unstaged changes/, () => 'Des modifications non commitées empêchent l\'opération. Commitez-les ou mettez-les de côté (stash).'],
   [/patch does not apply|corrupt patch/, () => 'Le bloc ne s\'applique plus : rafraîchissez.'],
+  // remotes
+  [/remote (\S+) already exists/, (m) => `Le remote « ${m[1]} » existe déjà.`],
+  [/No such remote:? '(.+?)'/, (m) => `Le remote « ${m[1]} » n'existe pas (il a peut-être été supprimé entre-temps).`],
+  [/does not appear to be a git repository/, () => 'L\'URL du remote ne désigne pas un dépôt Git accessible.'],
 ];
 
 /** Traduit les erreurs Git courantes en français ; sinon renvoie la fin du message d'origine. */
@@ -682,10 +687,11 @@ export async function commit(repo: string, message: string, amend: boolean) {
 }
 
 /** Refuse un nom de branche ou de tag invalide (y compris ceux qui commencent par « - »). */
-async function checkRefName(repo: string, kind: 'branch' | 'tag', name: string) {
-  const args = kind === 'branch' ? ['--branch', name] : [`refs/tags/${name}`];
-  const valid = !name.startsWith('-') && (await git(repo, ['check-ref-format', ...args]).then(() => true, () => false));
-  if (!valid) throw new GitError(`« ${name} » n'est pas un nom de ${kind === 'branch' ? 'branche' : 'tag'} valide.`, '');
+async function checkRefName(repo: string, kind: 'branch' | 'tag' | 'remote', name: string) {
+  // Un remote est valide si `refs/remotes/<nom>/x` l'est (même règle que `git remote add`).
+  const args = kind === 'branch' ? ['--branch', name] : kind === 'tag' ? [`refs/tags/${name}`] : [`refs/remotes/${name}/x`];
+  const valid = !!name && !name.startsWith('-') && (await git(repo, ['check-ref-format', ...args]).then(() => true, () => false));
+  if (!valid) throw new GitError(`« ${name} » n'est pas un nom de ${kind === 'branch' ? 'branche' : kind === 'tag' ? 'tag' : 'remote'} valide.`, '');
 }
 
 const SHA_RE = /^[0-9a-f]{4,64}$/i;
@@ -858,4 +864,90 @@ export async function isRepo(path: string): Promise<boolean> {
 
 export async function toplevel(path: string): Promise<string> {
   return (await git(path, ['rev-parse', '--show-toplevel'])).trim();
+}
+
+// --- Remotes ---
+
+/** Erreur de validation d'une URL de remote (vide, prise pour une option, multiligne), ou null si elle convient. */
+export function remoteUrlError(url: string): string | null {
+  const u = url.trim();
+  if (!u) return "L'URL est vide.";
+  if (u.startsWith('-')) return `« ${u} » n'est pas une URL valide.`;
+  if (/[\0\n\r]/.test(u)) return "L'URL ne doit pas contenir de saut de ligne.";
+  return null;
+}
+
+function checkRemoteUrl(url: string): string {
+  const err = remoteUrlError(url);
+  if (err) throw new GitError(err, '');
+  return url.trim();
+}
+
+/** Valeurs d'une clé lue par `git config --null --get-all` (liste vide si la clé est absente). */
+export function parseConfigValues(out: string): string[] {
+  return out.split('\0').filter((v) => v !== '');
+}
+
+async function configValues(repo: string, key: string): Promise<string[]> {
+  // Code 1 : clé absente.
+  return parseConfigValues(await git(repo, ['config', '--null', '--get-all', key], { okCodes: [1] }));
+}
+
+/** URL brutes d'un remote, avant réécriture par `insteadOf` : `remote.<nom>.url` et `remote.<nom>.pushurl`. */
+export async function remoteConfig(repo: string, name: string): Promise<RemoteConfig> {
+  await checkRefName(repo, 'remote', name);
+  const [urls, pushUrls] = await Promise.all([configValues(repo, `remote.${name}.url`), configValues(repo, `remote.${name}.pushurl`)]);
+  return { urls, pushUrls };
+}
+
+/** Ajoute un remote ; `pushUrl` facultative (vide = même URL que le fetch) ; `fetch` récupère ses branches aussitôt. */
+export async function addRemote(repo: string, name: string, url: string, pushUrl: string | null, fetch: boolean) {
+  await checkRefName(repo, 'remote', name);
+  const fetchUrl = checkRemoteUrl(url);
+  const push = pushUrl?.trim() ? checkRemoteUrl(pushUrl) : null;
+  await git(repo, ['remote', 'add', '--', name, fetchUrl]);
+  if (push) await git(repo, ['remote', 'set-url', '--push', '--', name, push]);
+  if (fetch) await fetchRemote(repo, name);
+}
+
+export async function renameRemote(repo: string, oldName: string, newName: string) {
+  await checkRefName(repo, 'remote', oldName);
+  await checkRefName(repo, 'remote', newName);
+  await git(repo, ['remote', 'rename', '--', oldName, newName]);
+}
+
+/** Supprime le remote, ses branches distantes et la configuration de suivi qui le référence. */
+export async function removeRemote(repo: string, name: string) {
+  await checkRefName(repo, 'remote', name);
+  await git(repo, ['remote', 'remove', '--', name]);
+}
+
+/**
+ * Change l'URL de fetch (`push` faux) ou de push d'un remote. Pour le push, `url` null ou vide retire
+ * `remote.<nom>.pushurl` (le push reprend l'URL de fetch). Une seule URL par sens : URL multiples refusées.
+ */
+export async function setRemoteUrl(repo: string, name: string, url: string | null, push: boolean) {
+  await checkRefName(repo, 'remote', name);
+  const key = `remote.${name}.${push ? 'pushurl' : 'url'}`;
+  const current = await configValues(repo, key);
+  if (push && !url?.trim()) {
+    // Code 5 : clé déjà absente (supprimée entre-temps).
+    if (current.length) await git(repo, ['config', '--unset-all', key], { okCodes: [5] });
+    return;
+  }
+  const value = checkRemoteUrl(url ?? '');
+  if (current.length > 1) throw new GitError('Ce remote a plusieurs URL configurées : modification non prise en charge (utilisez git config).', '');
+  await git(repo, ['remote', 'set-url', ...(push ? ['--push'] : []), '--', name, value]);
+}
+
+/** Fetch d'un seul remote ; les branches distantes disparues sont retirées. */
+export async function fetchRemote(repo: string, name: string) {
+  await checkRefName(repo, 'remote', name);
+  await git(repo, ['fetch', '--prune', '--end-of-options', name]);
+}
+
+/** Retire les branches distantes qui n'existent plus sur le remote, sans rien récupérer. */
+export async function pruneRemote(repo: string, name: string) {
+  await checkRefName(repo, 'remote', name);
+  await git(repo, ['remote', 'prune', '--', name]);
 }

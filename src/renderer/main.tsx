@@ -16,6 +16,9 @@ import './commands/prefs';
 // onglets
 import './commands/tabs';
 
+// remotes
+import './commands/remotes';
+
 // Préférences enregistrées lues dès le démarrage (et migration des anciennes clés localStorage).
 void loadPreferences();
 
