@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { DiffTarget, RepoSnapshot } from '../shared/types';
 import { api, onRepoChanged, onWatchLimited } from './api';
 import { layoutGraph } from './graph';
@@ -171,6 +171,9 @@ function RepoView({ tabId, repo, onBusy }: RepoViewProps) {
   const [toast, setToast] = useState<{ kind: 'error' | 'ok'; text: string } | null>(null);
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [prompt, setPrompt] = useState<PromptState | null>(null);
+  // Dialogue spécifique ouvert par `ui.openDialog` ; `id` distingue un dialogue de celui qui l'a remplacé.
+  const [dialog, setDialog] = useState<{ id: number; node: React.ReactNode } | null>(null);
+  const dialogSeq = useRef(0);
   const [draft, setDraft] = useState<CommitDraft>(saved?.draft ?? EMPTY_DRAFT);
   const [fileView, setFileView] = useState<FileViewTarget | null>(saved?.fileView ?? null);
   const closeFileView = useCallback(() => setFileView(null), []);
@@ -318,6 +321,11 @@ function RepoView({ tabId, repo, onBusy }: RepoViewProps) {
         setMenu({ x: e.clientX, y: e.clientY, items });
       },
       ask: (p) => setPrompt(p),
+      openDialog: (render) => {
+        const id = ++dialogSeq.current;
+        const close = () => setDialog((d) => (d?.id === id ? null : d));
+        setDialog({ id, node: render(close) });
+      },
       showDiff: (t) => {
         setFileView(null);
         setDiffTarget(t);
@@ -418,6 +426,7 @@ function RepoView({ tabId, repo, onBusy }: RepoViewProps) {
             <div className="loading">Chargement du dépôt…</div>
           )}
         </div>
+        {dialog && <Fragment key={dialog.id}>{dialog.node}</Fragment>}
         {menu && <ContextMenu menu={menu} onClose={() => setMenu(null)} />}
         {prompt && <PromptDialog prompt={prompt} onClose={() => setPrompt(null)} />}
         {toast && (

@@ -51,6 +51,24 @@ export interface Branch {
   upstream: string | null;
 }
 
+/** Un tag (`refs/tags/*`). */
+export interface Tag {
+  name: string;
+  /** Commit pointé (tag annoté déréférencé) ; null si le tag vise un autre objet (arbre, blob, tag imbriqué). */
+  sha: string | null;
+  annotated: boolean;
+  /** Sujet de l'annotation ; '' pour un tag léger. */
+  subject: string;
+  date: number; // secondes epoch (date du tag annoté, du commit pour un tag léger ; 0 si inconnue)
+}
+
+/** Un remote configuré ; une URL absente vaut null (la première si plusieurs). */
+export interface Remote {
+  name: string;
+  fetchUrl: string | null;
+  pushUrl: string | null;
+}
+
 export interface Stash {
   index: number;
   ref: string;
@@ -96,8 +114,8 @@ export interface RepoSnapshot {
   name: string;
   commits: Commit[];
   branches: Branch[];
-  tags: string[];
-  remotes: string[];
+  tags: Tag[]; // plus récent d'abord
+  remotes: Remote[];
   stashes: Stash[];
   status: WorkingStatus;
   head: string | null;

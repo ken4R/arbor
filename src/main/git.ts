@@ -10,8 +10,10 @@ import type {
   FileStatusCode,
   Ref,
   RepoSnapshot,
+  Remote,
   RepoState,
   Stash,
+  Tag,
   WorkingStatus,
 } from '../shared/types';
 
@@ -362,6 +364,50 @@ export async function branches(repo: string): Promise<Branch[]> {
     .filter((b) => !(b.remote && b.name.endsWith('/HEAD')));
 }
 
+// Champs de `for-each-ref refs/tags` lus par `parseTags` ; chaque enregistrement se termine par TAG_RS
+// (le sujet est déjà ramené sur une ligne par git, le séparateur protège seulement l'analyse).
+const TAG_FIELDS = ['%(refname:lstrip=2)', '%(objecttype)', '%(objectname)', '%(*objectname)', '%(*objecttype)', '%(contents:subject)', '%(creatordate:unix)'];
+const TAG_RS = '\x1e';
+const TAGS_ARGS = ['for-each-ref', '--sort=-creatordate', `--format=${TAG_FIELDS.join(FS)}${TAG_RS}`, 'refs/tags'];
+
+/** Analyse la sortie de `TAGS_ARGS` : sha = commit pointé (déréférencé pour un tag annoté), null sinon. */
+export function parseTags(out: string): Tag[] {
+  const tags: Tag[] = [];
+  for (const rec of out.split(TAG_RS)) {
+    const line = rec.replace(/^\n/, '');
+    if (!line) continue;
+    const [name, type, sha, derefSha, derefType, subject, date] = line.split(FS);
+    const annotated = type === 'tag';
+    tags.push({
+      name,
+      sha: annotated ? (derefType === 'commit' ? derefSha : null) : type === 'commit' ? sha : null,
+      annotated,
+      subject: annotated ? (subject ?? '') : '',
+      date: Number(date) || 0,
+    });
+  }
+  return tags;
+}
+
+/**
+ * Combine `git remote` (tous les noms, y compris un remote sans URL) et `git remote -v` (`nom\turl (fetch|push)`).
+ * L'URL peut contenir des espaces : seul le suffixe final est retiré. Ordre de `git remote` ; première URL retenue.
+ */
+export function parseRemotes(names: string, verbose: string): Remote[] {
+  const remotes = new Map<string, Remote>();
+  for (const name of names.split('\n')) if (name) remotes.set(name, { name, fetchUrl: null, pushUrl: null });
+  for (const line of verbose.split('\n')) {
+    const tab = line.indexOf('\t');
+    if (tab < 0) continue;
+    const r = remotes.get(line.slice(0, tab));
+    const m = /^(.*) \((fetch|push)\)$/.exec(line.slice(tab + 1));
+    if (!r || !m || !m[1]) continue;
+    if (m[2] === 'fetch') r.fetchUrl ??= m[1];
+    else r.pushUrl ??= m[1];
+  }
+  return [...remotes.values()];
+}
+
 export async function stashes(repo: string): Promise<Stash[]> {
   const out = await git(repo, ['stash', 'list', `--format=%gd${FS}%H${FS}%gs`]);
   return out
@@ -379,11 +425,12 @@ export async function headSha(repo: string): Promise<string | null> {
 
 export async function snapshot(repo: string): Promise<RepoSnapshot> {
   const head = await headSha(repo);
-  const [commits, br, tagsOut, remotesOut, st, stashList] = await Promise.all([
+  const [commits, br, tagsOut, remotesOut, remotesVerbose, st, stashList] = await Promise.all([
     log(repo, head !== null),
     branches(repo),
-    git(repo, ['tag', '--list']),
+    git(repo, TAGS_ARGS),
     git(repo, ['remote']),
+    git(repo, ['remote', '-v']),
     status(repo),
     stashes(repo),
   ]);
@@ -392,8 +439,8 @@ export async function snapshot(repo: string): Promise<RepoSnapshot> {
     name: basename(repo),
     commits,
     branches: br,
-    tags: tagsOut.split('\n').filter(Boolean),
-    remotes: remotesOut.split('\n').filter(Boolean),
+    tags: parseTags(tagsOut),
+    remotes: parseRemotes(remotesOut, remotesVerbose),
     stashes: stashList,
     status: st,
     head,

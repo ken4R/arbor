@@ -24,6 +24,8 @@ Règles :
 - Le rendu n'accède jamais au système de fichiers ni à `child_process` : tout passe par `ArborApi`.
 - Toute opération Git déclenchée par l'UI passe par `ui.run(label, fn, succès?)`, qui gère l'indicateur, les erreurs et le rafraîchissement.
 - Pas de `window.prompt/confirm` (non supportés par Electron) : utiliser `ui.ask`.
+- Dialogue spécifique (plusieurs champs) : `ui.openDialog((close) => <MonDialogue …/>)` avec la coquille `components/Dialog.tsx` (porte `data-overlay`). `ui.ask` reste la voie pour une confirmation ou un champ unique.
+- Barre latérale : `Sidebar.tsx` assemble les sections de `components/sidebar/` (`Section.tsx` : en-tête repliable avec `actions` et `onContextMenu`).
 - Les opérations destructrices (reset hard, suppression de branche, annulation de modifications) demandent une confirmation.
 - Toute commande IPC absente de la liste `READ_ONLY` de `main.ts` s'exécute sous `watcher.mute()` : une action d'Arbor ne déclenche jamais de rafraîchissement automatique. N'ajoutez à `READ_ONLY` qu'une commande qui n'écrit rien dans `.git` (attention : `git diff` peut réécrire l'index).
 - Les lectures (`status`) utilisent `--no-optional-locks` ; `diff()` force `--no-color --no-ext-diff --no-textconv --src-prefix=a/ --dst-prefix=b/` pour ne pas dépendre de la configuration de l'utilisateur.

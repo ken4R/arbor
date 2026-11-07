@@ -4,6 +4,9 @@ import { api } from '../api';
 import { branchMenu, checkoutBranch } from '../actions';
 import { useUi } from '../ui';
 import { Icon } from './Icons';
+import { RemotesSection } from './sidebar/RemotesSection';
+import { Section } from './sidebar/Section';
+import { TagsSection } from './sidebar/TagsSection';
 
 export function Sidebar({ snap, onSelectCommit }: { snap: RepoSnapshot; onSelectCommit: (sha: string) => void }) {
   const ui = useUi();
@@ -12,8 +15,6 @@ export function Sidebar({ snap, onSelectCommit }: { snap: RepoSnapshot; onSelect
   const match = (s: string) => s.toLowerCase().includes(filter.toLowerCase());
 
   const local = snap.branches.filter((b) => !b.remote && match(b.name));
-  const remotes = snap.remotes.map((r) => ({ name: r, branches: snap.branches.filter((b) => b.remote && b.name.startsWith(r + '/') && match(b.name)) }));
-  const tags = snap.tags.filter(match);
   const stashes = snap.stashes.filter((s) => match(s.message));
 
   return (
@@ -39,33 +40,8 @@ export function Sidebar({ snap, onSelectCommit }: { snap: RepoSnapshot; onSelect
           </div>
         ))}
       </Section>
-      {remotes.map((r) => (
-        <Section key={r.name} title={r.name} count={r.branches.length} icon={<Icon.cloud />}>
-          {r.branches.map((b) => (
-            <div
-              key={b.name}
-              className="side-item"
-              onClick={() => onSelectCommit(b.sha)}
-              onDoubleClick={() => checkoutBranch(ui, repo, b.name)}
-              onContextMenu={(e) => ui.openMenu(e, branchMenu(ui, snap, b.name, true))}
-            >
-              <span className="side-label">{b.name.slice(r.name.length + 1)}</span>
-            </div>
-          ))}
-        </Section>
-      ))}
-      {snap.remotes.length === 0 && (
-        <Section title="Remotes" count={0} icon={<Icon.cloud />}>
-          <div className="side-empty">Aucun remote</div>
-        </Section>
-      )}
-      <Section title="Tags" count={tags.length} icon={<Icon.tag />} collapsed>
-        {tags.map((t) => (
-          <div key={t} className="side-item" onDoubleClick={() => checkoutBranch(ui, repo, t)}>
-            <span className="side-label">{t}</span>
-          </div>
-        ))}
-      </Section>
+      <RemotesSection snap={snap} match={match} onSelectCommit={onSelectCommit} />
+      <TagsSection snap={snap} match={match} />
       <Section title="Stashs" count={stashes.length} icon={<Icon.stash />}>
         {stashes.map((s) => (
           <div
@@ -98,20 +74,5 @@ export function Sidebar({ snap, onSelectCommit }: { snap: RepoSnapshot; onSelect
         ))}
       </Section>
     </nav>
-  );
-}
-
-function Section(props: { title: string; count: number; icon: React.ReactNode; children: React.ReactNode; collapsed?: boolean }) {
-  const [open, setOpen] = useState(!props.collapsed);
-  return (
-    <section className="side-section">
-      <button className={`side-head${open ? ' open' : ''}`} onClick={() => setOpen(!open)}>
-        <Icon.chevron />
-        {props.icon}
-        <span className="side-title">{props.title}</span>
-        <span className="side-count">{props.count}</span>
-      </button>
-      {open && <div className="side-body">{props.children}</div>}
-    </section>
   );
 }

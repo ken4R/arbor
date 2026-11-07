@@ -129,7 +129,7 @@ export function pushAction(ui: Ui, snap: RepoSnapshot) {
   if (st.upstream) return void ui.run('Push…', () => api.push(repo, false), 'Push terminé');
   ui.ask({
     title: 'Publier la branche',
-    message: `La branche « ${st.branch} » n'a pas encore de branche distante. Elle sera publiée sur ${snap.remotes.includes('origin') ? 'origin' : snap.remotes[0]}.`,
+    message: `La branche « ${st.branch} » n'a pas encore de branche distante. Elle sera publiée sur ${snap.remotes.some((r) => r.name === 'origin') ? 'origin' : snap.remotes[0]?.name}.`,
     confirm: 'Publier',
     onSubmit: () => ui.run('Push…', () => api.push(repo, true), 'Branche publiée'),
   });

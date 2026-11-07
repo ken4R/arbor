@@ -213,17 +213,15 @@ export function buildDynamicCommands(snap: RepoSnapshot | null, recents: readonl
         run: (x) => hasSnap(x) && void checkoutBranch(x.ui, x.snap.path, b.name),
       });
     }
-    // Commit de chaque tag, en un seul passage sur l'historique chargé. Un tag posé sur un commit absent du graphe
-    // (au-delà de la limite de commits chargés, ou hors de l'historique des branches) est écarté : « Aller au tag »
-    // n'aurait rien à sélectionner.
-    const tagSha = new Map<string, string>();
-    for (const cm of snap.commits) for (const r of cm.refs) if (r.type === 'tag' && !tagSha.has(r.name)) tagSha.set(r.name, cm.sha);
+    // Un tag posé sur un commit absent du graphe (au-delà de la limite de commits chargés, ou hors de l'historique
+    // des branches) ou sur un autre objet qu'un commit est écarté : « Aller au tag » n'aurait rien à sélectionner.
+    const loaded = new Set(snap.commits.map((cm) => cm.sha));
     for (const tag of snap.tags) {
-      const sha = tagSha.get(tag);
-      if (!sha) continue;
+      const sha = tag.sha;
+      if (!sha || !loaded.has(sha)) continue;
       out.push({
-        id: `git.tag:${tag}`,
-        title: `Aller au tag ${tag}`,
+        id: `git.tag:${tag.name}`,
+        title: `Aller au tag ${tag.name}`,
         group: GROUP_TAGS,
         keywords: ['étiquette'],
         run: (x) => x.app.selectCommit(sha),

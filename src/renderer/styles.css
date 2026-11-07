@@ -622,6 +622,27 @@ code {
   color: var(--text-faint);
   font-size: 12px;
 }
+/* En-tête de section avec boutons d'action (Section.tsx, `actions`) */
+.side-head-row {
+  display: flex;
+  align-items: center;
+}
+.side-head-row .side-head {
+  flex: 1;
+  min-width: 0;
+}
+.side-head-action {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: var(--radius);
+  color: var(--text-faint);
+}
+.side-head-action:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
 
 /* Graphe */
 .graph {

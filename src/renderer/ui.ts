@@ -11,6 +11,13 @@ export interface Ui {
   run(label: string, fn: () => Promise<unknown>, success?: string, opts?: RunOptions): Promise<boolean>;
   openMenu(e: React.MouseEvent, items: MenuItem[]): void;
   ask(p: PromptState): void;
+  /**
+   * Ouvre un dialogue spécifique (plusieurs champs) : `render(close)` est appelé une fois, son résultat est monté
+   * au-dessus du dépôt jusqu'à `close()` (sans effet si un autre dialogue l'a remplacé entre-temps). Un nouvel appel
+   * remplace le dialogue ouvert. Utiliser la coquille `components/Dialog.tsx` ; `ask` reste la voie pour une
+   * confirmation ou un champ unique (et peut s'ouvrir par-dessus).
+   */
+  openDialog(render: (close: () => void) => React.ReactNode): void;
   showDiff(t: DiffTarget | null): void;
   /** Ouvre l'historique ou le blame d'un fichier (ferme le diff affiché). */
   showFile(v: FileViewTarget | null): void;
