@@ -27,7 +27,12 @@ registerCommands('prefs', (): Command[] => [
       group: 'Préférences',
       keywords: ['apparence', 'couleurs', 'theme', ...t.keywords],
       enabled: () => getPreferences().theme !== t.value,
-      run: () => void updatePreferences({ theme: t.value }).catch(() => {}),
+      // `updatePreferences` remet le thème enregistré en cas d'échec ; le dialogue d'information
+      // n'ayant pas de variante à un seul bouton, l'erreur est consignée dans la console.
+      run: () =>
+        void updatePreferences({ theme: t.value }).catch((e: unknown) => {
+          console.error(`Thème non enregistré : ${e instanceof Error ? e.message : String(e)}`);
+        }),
     }),
   ),
 ]);

@@ -1156,7 +1156,8 @@ code {
   table-layout: fixed;
 }
 .code .no {
-  width: 48px;
+  /* En `ch` : 5 chiffres tiennent quelle que soit la taille du code (préférences). */
+  width: calc(5ch + 8px);
   text-align: right;
   padding-right: 8px;
   color: var(--text-faint);
@@ -1164,7 +1165,7 @@ code {
   vertical-align: top;
 }
 .code .sign {
-  width: 18px;
+  width: calc(1ch + 10px);
   text-align: center;
   user-select: none;
 }
@@ -1691,6 +1692,16 @@ tr.cf-marker {
 :root[data-theme='light'] .seg button.on {
   background: var(--bg-2);
   box-shadow: var(--shadow-sm);
+}
+/* Même ajustement pour le repli clair avant le JS (voir le repli des variables en tête de fichier). */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) .seg {
+    background: var(--bg-3);
+  }
+  :root:not([data-theme]) .seg button.on {
+    background: var(--bg-2);
+    box-shadow: var(--shadow-sm);
+  }
 }
 
 /* ==== Onglets ==== */

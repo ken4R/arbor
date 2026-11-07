@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { DIFF_FONT_SIZE_MAX, DIFF_FONT_SIZE_MIN, normalizePreferences, type DiffMode, type Preferences, type ThemePreference } from '../../shared/prefs';
 import { matchShortcut } from '../commands';
-import { getPreferences, updatePreferences, usePreferences } from '../prefs';
+import { getPreferences, updatePreferences, usePreferences, usePreferencesLoaded } from '../prefs';
 import { Icon } from './Icons';
 
 // Dialogue des préférences : monté une fois hors de l'application (main.tsx), ouvert par `openPreferences()`,
@@ -52,6 +52,9 @@ const FOCUSABLE = 'button:not(:disabled), input:not(:disabled), select:not(:disa
 
 export function PreferencesDialog() {
   const isOpen = useSyncExternalStore(subscribe, () => open);
+  // Formulaire rendu seulement une fois les préférences lues : sinon le champ police, initialisé avec la valeur
+  // par défaut, écraserait la valeur enregistrée à la première frappe.
+  const loaded = usePreferencesLoaded();
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -65,7 +68,7 @@ export function PreferencesDialog() {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
-  return isOpen ? <PreferencesForm /> : null;
+  return isOpen && loaded ? <PreferencesForm /> : null;
 }
 
 function PreferencesForm() {
@@ -229,7 +232,7 @@ function PreferencesForm() {
             </span>
           </label>
           <label className="prefs-row prefs-row-col">
-            <span className="prefs-label">Police du code</span>
+            <span className="prefs-label">Police à chasse fixe</span>
             <input
               className={`prefs-font ${fontInvalid ? 'invalid' : ''}`}
               value={font}
@@ -240,7 +243,7 @@ function PreferencesForm() {
             {fontInvalid ? (
               <span className="prefs-hint prefs-hint-error">Nom de police invalide : lettres, chiffres, espaces et , ' " . _ - seulement.</span>
             ) : (
-              <span className="prefs-hint">Ex. « Fira Code » ; laisser vide pour la police par défaut.</span>
+              <span className="prefs-hint">Tout le texte à chasse fixe (diffs, blame, identifiants…). Ex. « Fira Code » ; laisser vide pour la police par défaut.</span>
             )}
           </label>
           <div className="prefs-sample" aria-hidden="true">

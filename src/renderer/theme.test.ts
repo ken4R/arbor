@@ -58,4 +58,34 @@ describe('styles.css', () => {
     const fallback = block(':root:not([data-theme]) {');
     expect(fallback.replace(/\s+/g, ' ')).toBe(light.replace(/\s+/g, ' '));
   });
+
+  /** Noms des variables CSS déclarées dans un bloc. */
+  const varNames = (body: string) => new Set(Array.from(body.matchAll(/(--[\w-]+)\s*:/g), (m) => m[1]));
+
+  it('le thème clair redéfinit toutes les variables du thème sombre, et rien d’autre', () => {
+    // Variables communes aux deux thèmes (pas des couleurs) : déclarées une seule fois dans `:root`.
+    const shared = new Set(['--mono', '--radius', '--diff-font-size']);
+    const dark = [...varNames(block(':root {'))].filter((v) => !shared.has(v)).sort();
+    const light = [...varNames(block(":root[data-theme='light'] {"))].sort();
+    expect(light).toEqual(dark);
+    expect(dark.length).toBeGreaterThan(20);
+  });
+
+  it('le repli clair ne s’applique que dans `@media (prefers-color-scheme: light)`', () => {
+    const media = '@media (prefers-color-scheme: light) {';
+    const selector = ':root:not([data-theme])';
+    let count = 0;
+    for (let i = css.indexOf(selector); i !== -1; i = css.indexOf(selector, i + 1)) {
+      // Le dernier `@media` avant le sélecteur est la requête claire, et il n'est pas encore refermé.
+      const open = css.lastIndexOf('@media', i);
+      expect(open).toBeGreaterThan(-1);
+      expect(css.slice(open, open + media.length)).toBe(media);
+      let depth = 0;
+      for (const ch of css.slice(open, i)) depth += ch === '{' ? 1 : ch === '}' ? -1 : 0;
+      expect(depth).toBeGreaterThan(0);
+      count++;
+    }
+    // Variables + surcharges `.seg` du thème clair.
+    expect(count).toBeGreaterThanOrEqual(3);
+  });
 });
