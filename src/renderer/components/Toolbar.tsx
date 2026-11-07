@@ -16,7 +16,9 @@ import {
   stashSaveAction,
 } from '../actions';
 import { useUi } from '../ui';
+import { formatShortcut } from '../commands';
 import { Icon, Logo } from './Icons';
+import { openPreferences, PREFERENCES_SHORTCUT } from './PreferencesDialog';
 
 interface Props {
   repo: string;
@@ -81,6 +83,9 @@ export function Toolbar({ repo, snap, busy, onClose, onSwitch, onRefresh, autoRe
         )}
         <button className="icon-btn" title="Rafraîchir" onClick={onRefresh}>
           <Icon.refresh />
+        </button>
+        <button className="icon-btn prefs-btn" title={`Préférences (${formatShortcut(PREFERENCES_SHORTCUT)})`} onClick={openPreferences}>
+          <Icon.gear />
         </button>
       </div>
     </header>

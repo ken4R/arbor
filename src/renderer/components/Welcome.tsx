@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api';
-import { Logo } from './Icons';
+import { formatShortcut } from '../commands';
+import { Icon, Logo } from './Icons';
+import { openPreferences, PREFERENCES_SHORTCUT } from './PreferencesDialog';
 import type { BusyOptions } from '../tabs';
 
 export function Welcome({
@@ -85,6 +87,10 @@ export function Welcome({
             ))}
           </div>
         )}
+        <button className="link-btn welcome-prefs" onClick={openPreferences} title={`Préférences (${formatShortcut(PREFERENCES_SHORTCUT)})`}>
+          <Icon.gear />
+          Préférences
+        </button>
       </div>
     </div>
   );
