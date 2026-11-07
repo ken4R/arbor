@@ -103,3 +103,62 @@ export function commitMenu(ui: Ui, snap: RepoSnapshot, c: Commit): MenuItem[] {
     { label: 'Copier le SHA', onClick: () => navigator.clipboard.writeText(c.sha) },
   ];
 }
+
+// Actions Git de la barre d'outils, réutilisables (palette de commandes, raccourcis). Les prédicats `can*`
+// disent si l'action a un sens pour cet instantané ; l'appelant ajoute ses propres conditions (opération en cours).
+
+export const canFetch = (snap: RepoSnapshot | null) => !!snap && snap.remotes.length > 0;
+export const canPull = (snap: RepoSnapshot | null) => !!snap?.status.upstream;
+export const canPush = (snap: RepoSnapshot | null) => !!snap && snap.remotes.length > 0 && !!snap.status.branch;
+export const canNewBranch = (snap: RepoSnapshot | null) => !!snap?.head;
+export const canStashSave = (snap: RepoSnapshot | null) => !!snap && snap.status.staged.length + snap.status.unstaged.length > 0;
+export const canStashPop = (snap: RepoSnapshot | null) => !!snap?.stashes.length;
+
+export function fetchAction(ui: Ui, snap: RepoSnapshot) {
+  return ui.run('Fetch…', () => api.fetch(snap.path), 'Fetch terminé');
+}
+
+export function pullAction(ui: Ui, snap: RepoSnapshot) {
+  return ui.run('Pull…', () => api.pull(snap.path), 'Pull terminé');
+}
+
+/** Push ; une branche sans branche distante est publiée après confirmation. */
+export function pushAction(ui: Ui, snap: RepoSnapshot) {
+  const repo = snap.path;
+  const st = snap.status;
+  if (st.upstream) return void ui.run('Push…', () => api.push(repo, false), 'Push terminé');
+  ui.ask({
+    title: 'Publier la branche',
+    message: `La branche « ${st.branch} » n'a pas encore de branche distante. Elle sera publiée sur ${snap.remotes.includes('origin') ? 'origin' : snap.remotes[0]}.`,
+    confirm: 'Publier',
+    onSubmit: () => ui.run('Push…', () => api.push(repo, true), 'Branche publiée'),
+  });
+}
+
+/** Nouvelle branche à partir de HEAD (nom demandé). */
+export function newBranchAction(ui: Ui, snap: RepoSnapshot) {
+  ui.ask({
+    title: 'Nouvelle branche',
+    label: 'Nom de la branche',
+    confirm: 'Créer',
+    checkbox: { label: 'Basculer sur la nouvelle branche', initial: true },
+    onSubmit: (name, co) => ui.run('Création de la branche…', () => api.createBranch(snap.path, name, 'HEAD', co)),
+  });
+}
+
+/** Met de côté les modifications (message facultatif demandé). */
+export function stashSaveAction(ui: Ui, snap: RepoSnapshot) {
+  ui.ask({
+    title: 'Mettre de côté les modifications',
+    label: 'Message (facultatif)',
+    optional: true,
+    confirm: 'Stash',
+    onSubmit: (msg) => ui.run('Stash…', () => api.stashSave(snap.path, msg)),
+  });
+}
+
+/** Réapplique et supprime le dernier stash. */
+export function stashPopAction(ui: Ui, snap: RepoSnapshot) {
+  if (!snap.stashes.length) return;
+  return ui.run('Pop…', () => api.stashApply(snap.path, 0, snap.stashes[0].sha, true));
+}

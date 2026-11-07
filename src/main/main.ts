@@ -1,8 +1,12 @@
-import { app, BrowserWindow, dialog, ipcMain } from 'electron';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { app, BrowserWindow, dialog, ipcMain, nativeTheme } from 'electron';
+import { closeSync, existsSync, fsyncSync, openSync, readFileSync, renameSync, rmSync, writeFileSync, writeSync } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
 import * as g from './git';
 import { RepoWatcher } from './watcher';
+import { mergePreferences, normalizePreferences, type Preferences } from '../shared/prefs';
+
+// Données utilisateur isolées (tests d'interface) : à fixer avant `ready`.
+if (process.env.ARBOR_USER_DATA) app.setPath('userData', resolve(process.env.ARBOR_USER_DATA));
 
 let win: BrowserWindow | null = null;
 
@@ -20,6 +24,54 @@ function remember(path: string) {
   const list = [path, ...loadRecent().filter((p) => p !== path)].slice(0, 12);
   writeFileSync(recentFile(), JSON.stringify(list));
 }
+
+// Préférences : `userData/prefs.json`, toujours normalisées à la lecture comme à l'écriture.
+const prefsFile = () => join(app.getPath('userData'), 'prefs.json');
+let prefsCache: Preferences | null = null;
+
+function loadPreferences(): Preferences {
+  if (!prefsCache) {
+    try {
+      prefsCache = normalizePreferences(JSON.parse(readFileSync(prefsFile(), 'utf8')));
+    } catch (e) {
+      prefsCache = normalizePreferences(undefined);
+      if ((e as NodeJS.ErrnoException).code !== 'ENOENT') {
+        // Fichier illisible ou corrompu : on le met de côté au lieu de l'écraser à la prochaine écriture.
+        console.warn('Préférences illisibles, valeurs par défaut utilisées :', e);
+        try {
+          renameSync(prefsFile(), `${prefsFile()}.corrupt`);
+        } catch {
+          // rien à mettre de côté
+        }
+      }
+    }
+  }
+  return prefsCache;
+}
+
+function savePreferences(patch: unknown): Preferences {
+  const next = mergePreferences(loadPreferences(), patch);
+  // Écriture atomique : un arrêt brutal ne laisse jamais un fichier tronqué.
+  const tmp = `${prefsFile()}.${process.pid}.tmp`;
+  try {
+    const fd = openSync(tmp, 'w');
+    try {
+      writeSync(fd, JSON.stringify(next, null, 2));
+      fsyncSync(fd);
+    } finally {
+      closeSync(fd);
+    }
+    renameSync(tmp, prefsFile());
+  } finally {
+    rmSync(tmp, { force: true });
+  }
+  prefsCache = next;
+  nativeTheme.themeSource = next.theme;
+  return next;
+}
+
+// Couleur de fond de la fenêtre avant le premier rendu (doit suivre `--bg` du thème).
+const BACKGROUND = { dark: '#14161c', light: '#f6f7f9' };
 
 // Dépôts que l'utilisateur a ouverts (dialogue, argument ou liste des récents) : le rendu ne peut agir que sur eux.
 const openedRepos = new Set<string>();
@@ -39,7 +91,7 @@ function assertOpened(repo: unknown) {
 }
 
 // Handlers qui ne reçoivent pas de dépôt en premier argument.
-const NO_REPO = new Set(['openRepoDialog', 'initRepoDialog', 'cloneRepo', 'recentRepos', 'initialRepo', 'unwatchRepo']);
+const NO_REPO = new Set(['openRepoDialog', 'initRepoDialog', 'cloneRepo', 'recentRepos', 'initialRepo', 'unwatchRepo', 'getPreferences', 'setPreferences']);
 
 // Handlers en lecture seule, hors sourdine du rafraîchissement automatique. Liste blanche : toute nouvelle
 // commande est mise en sourdine par défaut. Les noms absents de `handlers` (autres branches) sont sans effet.
@@ -56,6 +108,8 @@ const READ_ONLY = new Set([
   'searchCommitsByPath',
   'fileLog',
   'blame',
+  'getPreferences',
+  'setPreferences',
 ]);
 
 const handlers: Record<string, (...args: any[]) => Promise<unknown>> = {
@@ -118,6 +172,8 @@ const handlers: Record<string, (...args: any[]) => Promise<unknown>> = {
   reset: g.reset,
   watchRepo: (repo: string) => watcher.watch(repo),
   unwatchRepo: async () => watcher.stop(),
+  getPreferences: async () => loadPreferences(),
+  setPreferences: async (patch: unknown) => savePreferences(patch),
 };
 
 for (const [name, fn] of Object.entries(handlers)) {
@@ -135,12 +191,13 @@ for (const [name, fn] of Object.entries(handlers)) {
 }
 
 function createWindow() {
+  nativeTheme.themeSource = loadPreferences().theme;
   win = new BrowserWindow({
     width: 1440,
     height: 900,
     minWidth: 960,
     minHeight: 600,
-    backgroundColor: '#14161c',
+    backgroundColor: nativeTheme.shouldUseDarkColors ? BACKGROUND.dark : BACKGROUND.light,
     title: 'Arbor',
     webPreferences: { preload: join(__dirname, 'preload.js'), contextIsolation: true, sandbox: false },
   });
