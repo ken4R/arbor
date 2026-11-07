@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api';
-import { Logo } from './Icons';
+import { formatShortcut } from '../commands';
+import { Icon, Logo } from './Icons';
+import { openPreferences, PREFERENCES_SHORTCUT } from './PreferencesDialog';
 
 export function Welcome({ onOpen, initialError }: { onOpen: (path: string) => void; initialError?: string | null }) {
   const [recent, setRecent] = useState<string[]>([]);
@@ -72,6 +74,10 @@ export function Welcome({ onOpen, initialError }: { onOpen: (path: string) => vo
             ))}
           </div>
         )}
+        <button className="link-btn welcome-prefs" onClick={openPreferences} title={`Préférences (${formatShortcut(PREFERENCES_SHORTCUT)})`}>
+          <Icon.gear />
+          Préférences
+        </button>
       </div>
     </div>
   );
