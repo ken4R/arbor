@@ -312,7 +312,8 @@ function RepoView({ tabId, repo, onBusy }: RepoViewProps) {
     setCommandContext({
       ui: repo ? ui : null,
       repo,
-      snap,
+      // Jamais l'instantané d'un autre dépôt (changement de dépôt en cours) : les actions utilisent `snap.path`.
+      snap: snap && snap.path === repo ? snap : null,
       busy,
       app: {
         openRepo: switchRepo,
@@ -320,6 +321,11 @@ function RepoView({ tabId, repo, onBusy }: RepoViewProps) {
         refresh: () => void refresh(),
         selectCommit: (sha) => {
           setSelection({ kind: 'commit', sha });
+          setDiffTarget(null);
+          setFileView(null);
+        },
+        selectWip: () => {
+          setSelection({ kind: 'wip' });
           setDiffTarget(null);
           setFileView(null);
         },

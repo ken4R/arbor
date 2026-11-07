@@ -15,8 +15,10 @@ if (!repo || !outDir) {
   console.error('Usage : node scripts/ui-check.cjs <dépôt> <dossier-captures> [scénario.cjs] [--keep-user-data[=<dossier>]]');
   process.exit(1);
 }
+// Dossier fixe propre à cette copie du dépôt : deux worktrees lancés en parallèle ne partagent pas leurs données.
+const rootTag = require('node:crypto').createHash('sha1').update(path.resolve(__dirname, '..')).digest('hex').slice(0, 8);
 const userData = keepArg
-  ? path.resolve(keepArg.includes('=') ? keepArg.slice(keepArg.indexOf('=') + 1) : path.join(os.tmpdir(), 'arbor-ui-check-user-data'))
+  ? path.resolve(keepArg.includes('=') ? keepArg.slice(keepArg.indexOf('=') + 1) : path.join(os.tmpdir(), `arbor-ui-check-user-data-${rootTag}`))
   : fs.mkdtempSync(path.join(os.tmpdir(), 'arbor-ui-check-'));
 fs.mkdirSync(userData, { recursive: true });
 console.log('données utilisateur :', userData);
@@ -42,10 +44,13 @@ console.log('données utilisateur :', userData);
     await win.screenshot({ path: file });
     console.log('capture :', file);
   };
-  await shot('00-ouverture');
-  if (scenario) await require(path.resolve(scenario))(win, shot);
-  await app.close();
-  if (!keepArg) fs.rmSync(userData, { recursive: true, force: true });
+  try {
+    await shot('00-ouverture');
+    if (scenario) await require(path.resolve(scenario))(win, shot);
+  } finally {
+    await app.close();
+    if (!keepArg) fs.rmSync(userData, { recursive: true, force: true });
+  }
   if (errors.length) {
     console.error('Erreurs dans le rendu :\n' + errors.join('\n'));
     process.exit(1);
