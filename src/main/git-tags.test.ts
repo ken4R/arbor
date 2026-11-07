@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { checkout, createTag, deleteRemoteTag, deleteTag, parseLsRemoteTags, pushAllTags, pushTag, remoteTags } from './git';
+import { checkout, checkoutTag, createTag, deleteRemoteTag, deleteTag, parseLsRemoteTags, pushAllTags, pushTag, remoteTags, translateGitError } from './git';
 
 const A = 'a'.repeat(40);
 const B = 'b'.repeat(40);
@@ -27,6 +27,13 @@ describe('parseLsRemoteTags', () => {
 
   it('sortie vide : aucun tag', () => {
     expect(parseLsRemoteTags('')).toEqual([]);
+  });
+});
+
+describe('translateGitError (tags)', () => {
+  it('traduit le refus d’un tag déjà présent sur le remote', () => {
+    const raw = "To ../r.git\n ! [rejected]        v1 -> v1 (already exists)\nerror: failed to push some refs to '../r.git'";
+    expect(translateGitError(raw)).toBe('Un tag du même nom existe déjà sur le remote.');
   });
 });
 
@@ -73,12 +80,20 @@ describe('tags sur un vrai dépôt', () => {
 
   it('checkout de refs/tags/<nom> même si une branche porte le même nom', async () => {
     g('branch', 'v1', 'HEAD'); // branche « v1 » sur le dernier commit, tag « v1 » sur le premier
-    await checkout(dir, 'refs/tags/v1');
+    await checkoutTag(dir, 'v1');
     expect(g('rev-parse', 'HEAD')).toBe(g('rev-parse', 'refs/tags/v1^{commit}'));
     expect(g('rev-parse', 'HEAD')).not.toBe(g('rev-parse', 'refs/heads/v1'));
     await checkout(dir, 'main');
     g('branch', '-D', 'v1');
-    await expect(checkout(dir, 'refs/tags/absent')).rejects.toThrow(/n'existe pas/);
+    await expect(checkoutTag(dir, 'absent')).rejects.toThrow(/n'existe pas/);
+  });
+
+  it('checkout garde une branche nommée « refs/tags/x » (nom accepté par Git)', async () => {
+    g('branch', 'refs/tags/x', 'HEAD~1');
+    await checkout(dir, 'refs/tags/x');
+    expect(g('symbolic-ref', 'HEAD')).toBe('refs/heads/refs/tags/x');
+    await checkout(dir, 'main');
+    g('branch', '-D', 'refs/tags/x');
   });
 
   it('pousse un tag, liste les tags distants, supprime en distant puis en local', async () => {
@@ -88,6 +103,8 @@ describe('tags sur un vrai dépôt', () => {
     expect((await remoteTags(dir, 'origin')).map((t) => t.name).sort()).toEqual(['léger', 'v1']);
     await deleteRemoteTag(dir, 'origin', 'v1');
     expect((await remoteTags(dir, 'origin')).map((t) => t.name)).toEqual(['léger']);
+    // Déjà absent du remote : `git push --delete` réussirait sans rien faire, Arbor refuse.
+    await expect(deleteRemoteTag(dir, 'origin', 'v1')).rejects.toThrow("Le tag « v1 » n'existe pas sur origin.");
     await deleteTag(dir, 'v1');
     expect(g('tag', '-l', 'v1')).toBe('');
   });

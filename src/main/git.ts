@@ -42,6 +42,7 @@ const GIT_ERRORS: [RegExp, (m: RegExpMatchArray) => string][] = [
   [/You have unstaged changes|cannot (?:rebase|pull with rebase): You have unstaged changes/, () => 'Des modifications non commitées empêchent l\'opération. Commitez-les ou mettez-les de côté (stash).'],
   [/patch does not apply|corrupt patch/, () => 'Le bloc ne s\'applique plus : rafraîchissez.'],
   [/unable to delete '(?:refs\/tags\/)?(.+?)': remote ref does not exist/, (m) => `Le tag « ${m[1]} » n'existe pas sur le remote.`],
+  [/\[rejected\].*\(already exists\)/, () => 'Un tag du même nom existe déjà sur le remote.'],
 ];
 
 /** Traduit les erreurs Git courantes en français ; sinon renvoie la fin du message d'origine. */
@@ -699,12 +700,6 @@ function assertSha(rev: string) {
 
 export async function checkout(repo: string, ref: string) {
   // `git checkout` ne gère pas `--end-of-options` : chaque cas passe par un nom complet ou un SHA vérifié.
-  // Tag désigné par son nom complet : pas d'ambiguïté avec une branche du même nom.
-  if (ref.startsWith('refs/tags/')) {
-    await requireLocalTag(repo, ref.slice('refs/tags/'.length));
-    await git(repo, ['checkout', '--detach', ref]);
-    return;
-  }
   const br = await branches(repo);
   const target = br.find((b) => b.name === ref);
   if (target?.remote) {
@@ -894,9 +889,16 @@ export async function deleteTag(repo: string, name: string) {
   await git(repo, ['tag', '-d', '--end-of-options', name]);
 }
 
+/** Checkout (HEAD détachée) d'un tag par son nom complet `refs/tags/<nom>` : jamais ambigu avec une branche homonyme. */
+export async function checkoutTag(repo: string, name: string) {
+  await requireLocalTag(repo, name);
+  await git(repo, ['checkout', '--detach', `refs/tags/${name}`]);
+}
+
 export async function deleteRemoteTag(repo: string, remote: string, name: string) {
   await checkRefName(repo, 'tag', name);
-  await requireRemote(repo, remote);
+  // `git push --delete` réussit même si le tag est absent du remote : on vérifie d'abord sa présence.
+  if (!(await remoteTags(repo, remote)).some((t) => t.name === name)) throw new GitError(`Le tag « ${name} » n'existe pas sur ${remote}.`, '');
   await git(repo, ['push', '--delete', '--end-of-options', remote, `refs/tags/${name}`]);
 }
 

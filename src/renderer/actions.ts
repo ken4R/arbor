@@ -168,7 +168,7 @@ export function stashPopAction(ui: Ui, snap: RepoSnapshot) {
 /** Checkout d'un tag par son nom complet (`refs/tags/<nom>`), jamais ambigu avec une branche du même nom. */
 export function checkoutTag(ui: Ui, repo: string, tag: Tag) {
   if (tag.sha === null) return;
-  return ui.run(`Checkout du tag ${tag.name}…`, () => api.checkout(repo, `refs/tags/${tag.name}`));
+  return ui.run(`Checkout du tag ${tag.name}…`, () => api.checkoutTag(repo, tag.name));
 }
 
 /** Menu contextuel d'un tag (barre latérale, badge du graphe). */

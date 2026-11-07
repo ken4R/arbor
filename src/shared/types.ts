@@ -198,6 +198,8 @@ export interface ArborApi {
   /** Enregistre les onglets ouverts (seuls les dépôts ouverts dans Arbor sont retenus). */
   saveSession(repos: string[], active: number): Promise<void>;
   // tags
+  /** Checkout de `refs/tags/<name>` (HEAD détachée). */
+  checkoutTag(repo: string, name: string): Promise<void>;
   deleteTag(repo: string, name: string): Promise<void>;
   /** Supprime `refs/tags/<name>` sur le remote. */
   deleteRemoteTag(repo: string, remote: string, name: string): Promise<void>;

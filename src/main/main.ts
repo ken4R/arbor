@@ -321,6 +321,7 @@ const handlers: Record<string, (...args: any[]) => Promise<unknown>> = {
   restoreSession: async () => restoreSession(),
   saveSession: async (repos: unknown, active: unknown) => saveSession(repos, active),
   // tags
+  checkoutTag: g.checkoutTag,
   deleteTag: g.deleteTag,
   deleteRemoteTag: g.deleteRemoteTag,
   pushTag: g.pushTag,

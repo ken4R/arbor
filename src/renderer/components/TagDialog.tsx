@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { RepoSnapshot, Tag } from '../../shared/types';
 import { api } from '../api';
 import type { Ui } from '../ui';
@@ -58,7 +58,12 @@ function TagDialog({ ui, snap, sha, where, onClose }: { ui: Ui; snap: RepoSnapsh
       target ? 'Création et publication du tag…' : 'Création du tag…',
       async () => {
         await api.createTag(repo, trimmed, sha, msg);
-        if (target) await api.pushTag(repo, target, trimmed);
+        if (!target) return;
+        try {
+          await api.pushTag(repo, target, trimmed);
+        } catch (e) {
+          throw new Error(`Tag créé localement, mais le push a échoué : ${e instanceof Error ? e.message : String(e)}`);
+        }
       },
       target ? `Tag « ${trimmed} » créé et poussé vers ${target}` : `Tag « ${trimmed} » créé`,
     );
@@ -116,8 +121,16 @@ function DeleteTagDialog({ ui, snap, tag, onClose }: { ui: Ui; snap: RepoSnapsho
   const [remote, setRemote] = useState(defaultRemote(snap) ?? '');
   const [check, setCheck] = useState<RemoteCheck>('loading');
   const [alsoRemote, setAlsoRemote] = useState(false);
+  // La case a été changée par l'utilisateur pour ce remote : le résultat de ls-remote ne l'écrase pas.
+  const touched = useRef(false);
 
-  // Présence du tag sur le remote choisi : la case est pré-cochée s'il y est.
+  const changeRemote = (r: string) => {
+    touched.current = false;
+    setAlsoRemote(false);
+    setRemote(r);
+  };
+
+  // Présence du tag sur le remote choisi : la case est pré-cochée s'il y est (sauf choix de l'utilisateur).
   useEffect(() => {
     if (!remote) return;
     let live = true;
@@ -127,7 +140,7 @@ function DeleteTagDialog({ ui, snap, tag, onClose }: { ui: Ui; snap: RepoSnapsho
         if (!live) return;
         const present = list.some((t) => t.name === tag.name);
         setCheck(present ? 'present' : 'absent');
-        setAlsoRemote(present);
+        if (!touched.current) setAlsoRemote(present);
       },
       () => live && setCheck('error'),
     );
@@ -166,10 +179,17 @@ function DeleteTagDialog({ ui, snap, tag, onClose }: { ui: Ui; snap: RepoSnapsho
       {remotes.length > 0 && (
         <div className="tag-push">
           <label className="check">
-            <input type="checkbox" checked={alsoRemote} onChange={(e) => setAlsoRemote(e.target.checked)} />
+            <input
+              type="checkbox"
+              checked={alsoRemote}
+              onChange={(e) => {
+                touched.current = true;
+                setAlsoRemote(e.target.checked);
+              }}
+            />
             {remotes.length === 1 ? `Supprimer aussi sur ${remote}` : 'Supprimer aussi sur'}
           </label>
-          <RemoteSelect remotes={remotes} value={remote} onChange={setRemote} />
+          <RemoteSelect remotes={remotes} value={remote} onChange={changeRemote} />
           <span className={`tag-remote-note tag-remote-${check}`}>({note})</span>
         </div>
       )}
