@@ -45,7 +45,7 @@ export function Toolbar({ repo, snap, busy, onClose, onSwitch, onRefresh, autoRe
     ui.openMenu(e, [
       ...recent.filter((p) => p !== repo).map((p) => ({ label: p.split(/[\\/]/).pop()!, onClick: () => onSwitch(p) })),
       ...(recent.length > 1 ? (['separator'] as const) : []),
-      { label: 'Ouvrir un autre dépôt…', onClick: () => ui.run('Ouverture…', async () => { const p = await api.openRepoDialog(); if (p) onSwitch(p); }) },
+      { label: 'Ouvrir un autre dépôt…', onClick: () => ui.run('Ouverture…', async () => { const p = await api.openRepoDialog(); if (p) onSwitch(p); }, undefined, { allowOpen: true }) },
       { label: 'Fermer le dépôt', onClick: onClose },
     ]);
 

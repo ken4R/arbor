@@ -7,11 +7,11 @@ import {
   displacedTab,
   fromSession,
   hasDraft,
-  OPENING_LABEL,
   openInTabs,
   popClosed,
   pushClosed,
   staleTabs,
+  tabTitles,
   toSession,
   touchRecency,
   type ClosedTab,
@@ -171,10 +171,10 @@ describe('ouverture depuis un onglet d’origine', () => {
 });
 
 describe('ouverture pendant une opération', () => {
-  it('n’est permise que sans opération ou pendant « Ouverture… »', () => {
-    expect(canOpenWhileBusy(null)).toBe(true);
-    expect(canOpenWhileBusy(OPENING_LABEL)).toBe(true);
-    expect(canOpenWhileBusy('Push…')).toBe(false);
+  it('n’est permise que sans opération ou pendant une opération qui ouvre un dépôt', () => {
+    expect(canOpenWhileBusy(null, false)).toBe(true);
+    expect(canOpenWhileBusy('Clonage…', true)).toBe(true);
+    expect(canOpenWhileBusy('Push…', false)).toBe(false);
   });
 
   it('repère l’onglet non vide dont le dépôt serait remplacé', () => {
@@ -214,5 +214,17 @@ describe('onglets fermés', () => {
     expect(hasDraft({ draft: { summary: '  ', description: '', amend: true } })).toBe(false);
     expect(hasDraft({ draft: { summary: '', description: 'texte', amend: false } })).toBe(true);
     expect(hasDraft(entry('/a', 'x').state)).toBe(true);
+  });
+});
+
+describe('tabTitles', () => {
+  it('affiche le nom du dossier, ou « Nouvel onglet »', () => {
+    expect(tabTitles(['/home/u/arbor', null, 'C:\\dev\\site\\'])).toEqual(['arbor', 'Nouvel onglet', 'site']);
+  });
+
+  it('ajoute les dossiers parents nécessaires pour distinguer les homonymes', () => {
+    expect(tabTitles(['/a/projet', '/b/projet', '/c/autre'])).toEqual(['a/projet', 'b/projet', 'autre']);
+    expect(tabTitles(['/a/x/projet', '/b/x/projet'])).toEqual(['a/x/projet', 'b/x/projet']);
+    expect(tabTitles(['/projet', '/a/projet'])).toEqual(['projet', 'a/projet']);
   });
 });

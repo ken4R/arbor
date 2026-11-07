@@ -37,8 +37,11 @@ export interface ClosedTab {
 /** Nombre d'onglets dont l'instantané reste en mémoire (les moins récents sont libérés). */
 export const SNAP_CACHE_LIMIT = 8;
 
-/** Libellé de l'opération d'ouverture d'un dépôt : la seule pendant laquelle on peut encore ouvrir un dépôt. */
-export const OPENING_LABEL = 'Ouverture…';
+/** Options d'une opération en cours signalée à la coquille. */
+export interface BusyOptions {
+  /** L'opération se termine par l'ouverture d'un dépôt (dialogue, clonage, initialisation) : elle reste permise. */
+  allowOpen?: boolean;
+}
 
 // ---------------------------------------------------------------------------------------------------------------
 // Fonctions pures
@@ -82,9 +85,30 @@ export function displacedTab(m: TabsModel, path: string, mode: 'current' | 'new'
   return mode === 'current' && origin && origin.repo !== null ? origin : null;
 }
 
-/** Ouvrir un dépôt est refusé pendant une opération, sauf celle qui ouvre justement un dépôt (« Ouverture… »). */
-export function canOpenWhileBusy(busy: string | null): boolean {
-  return !busy || busy === OPENING_LABEL;
+/** Ouvrir un dépôt est refusé pendant une opération, sauf celle qui ouvre justement un dépôt (`allowOpen`). */
+export function canOpenWhileBusy(busy: string | null, allowOpen: boolean): boolean {
+  return !busy || allowOpen;
+}
+
+const repoSegments = (p: string) => p.split(/[\\/]/).filter(Boolean);
+
+/**
+ * Titres des onglets : le nom du dossier du dépôt, précédé d'autant de dossiers parents qu'il faut pour distinguer
+ * les dépôts de même nom (`a/projet`, `b/projet`). `null` (onglet vide) donne « Nouvel onglet ».
+ */
+export function tabTitles(repos: (string | null)[]): string[] {
+  const segs = repos.map((r) => (r ? repoSegments(r) : []));
+  const depth = segs.map(() => 1);
+  const title = (i: number) => segs[i].slice(-depth[i]).join('/');
+  for (let changed = true; changed; ) {
+    // Homonymes repérés pour tous les onglets avant d'allonger leurs titres ensemble.
+    const grow = repos.map(
+      (r, i) => !!r && depth[i] < segs[i].length && repos.some((o, j) => j !== i && !!o && o !== r && title(j) === title(i)),
+    );
+    grow.forEach((g, i) => g && depth[i]++);
+    changed = grow.some(Boolean);
+  }
+  return repos.map((r, i) => (r ? title(i) || r : 'Nouvel onglet'));
 }
 
 /** Ajoute un onglet vide après l'onglet actif et l'active. */
@@ -168,6 +192,10 @@ let recency: number[] = [1];
 let closed: ClosedTab[] = [];
 /** Libellé de l'opération en cours dans l'onglet actif : changer ou fermer d'onglet est alors bloqué. */
 let busy: string | null = null;
+/** L'opération en cours ouvre un dépôt (voir `BusyOptions`). */
+let busyAllowsOpen = false;
+/** Session restaurée (ou restauration abandonnée) : les raccourcis des onglets sont actifs. */
+let restored = false;
 /** Onglet dont la fermeture attend la confirmation de son `RepoView` (brouillon non vide). */
 let pendingClose: number | null = null;
 const states = new Map<number, TabState>();
@@ -224,19 +252,30 @@ export function useTabsBusy(): string | null {
 }
 
 /** Signalé par `RepoView` ou `Welcome` : une opération est en cours (ou terminée avec `null`). */
-export function setTabsBusy(label: string | null) {
-  if (busy === label) return;
+export function setTabsBusy(label: string | null, opts: BusyOptions = {}) {
+  const allowOpen = !!label && !!opts.allowOpen;
+  if (busy === label && busyAllowsOpen === allowOpen) return;
   busy = label;
+  busyAllowsOpen = allowOpen;
   emit();
+}
+
+/** Marque la fin de la restauration de la session au démarrage (les raccourcis des onglets deviennent actifs). */
+export function markTabsRestored() {
+  restored = true;
+}
+
+export function isTabsRestored(): boolean {
+  return restored;
 }
 
 /**
  * Ouvre (ou active) un dépôt depuis l'onglet `fromId` (par défaut l'actif ; rien s'il a été fermé entre-temps).
- * Refusé pendant une opération, sauf « Ouverture… », qui se termine justement par cette ouverture.
+ * Refusé pendant une opération, sauf si elle a été signalée avec `allowOpen` (elle se termine par cette ouverture).
  * Le dépôt remplacé en mode `current` peut être rouvert. Renvoie `false` si rien n'a été ouvert.
  */
 export function openRepoTab(path: string, mode: 'current' | 'new', fromId?: number): boolean {
-  if (!canOpenWhileBusy(busy)) return false;
+  if (!canOpenWhileBusy(busy, busyAllowsOpen)) return false;
   const next = openInTabs(model, path, mode, nextId, fromId);
   if (next === model) return false;
   rememberClosed(displacedTab(model, path, mode, fromId));
@@ -279,8 +318,12 @@ export function requestCloseTab(id: number = model.activeId) {
   else emit();
 }
 
+export function getPendingClose(): number | null {
+  return pendingClose;
+}
+
 export function usePendingClose(): number | null {
-  return useSyncExternalStore(subscribe, () => pendingClose);
+  return useSyncExternalStore(subscribe, getPendingClose);
 }
 
 export function clearPendingClose() {
@@ -326,4 +369,18 @@ export function getTabState(id: number): TabState | undefined {
 
 export function saveTabState(id: number, s: TabState) {
   if (model.tabs.some((t) => t.id === id)) states.set(id, s);
+}
+
+/** Réservé aux tests : remet le magasin dans son état initial (un onglet vide, rien d'autre). */
+export function resetTabsStore() {
+  model = { tabs: [{ id: 1, repo: null }], activeId: 1 };
+  nextId = 2;
+  recency = [1];
+  closed = [];
+  busy = null;
+  busyAllowsOpen = false;
+  restored = false;
+  pendingClose = null;
+  states.clear();
+  emit();
 }

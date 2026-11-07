@@ -1454,7 +1454,16 @@ tr.cf-marker {
   background: var(--bg-3);
   border-bottom: 1px solid var(--border);
   overflow-x: auto;
-  scrollbar-width: none;
+  overflow-y: hidden;
+}
+/* Barre de défilement fine, mais visible : elle signale les onglets hors de vue. */
+.tabbar::-webkit-scrollbar {
+  height: 4px;
+}
+.tabbar::-webkit-scrollbar-thumb {
+  background: var(--text-faint);
+  border: 0;
+  border-radius: 2px;
 }
 .tab {
   display: flex;
@@ -1508,6 +1517,11 @@ tr.cf-marker {
   height: 12px;
 }
 .tab-new {
+  /* Toujours accessible quand les onglets débordent. */
+  position: sticky;
+  right: 0;
+  flex-shrink: 0;
+  background: var(--bg-3);
   width: 28px;
   font-size: 16px;
   color: var(--text-dim);

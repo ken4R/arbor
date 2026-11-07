@@ -1,9 +1,9 @@
 import { matchShortcut, registerCommands, runCommand, type Command } from '../commands';
-import { canReopenClosed, requestCloseTab, cycleTabs, getTabsBusy, getTabsModel, newTab, reopenClosedTab } from '../tabs';
+import { canReopenClosed, requestCloseTab, cycleTabs, getTabsBusy, getTabsModel, isTabsRestored, newTab, reopenClosedTab } from '../tabs';
 
-// Commandes des onglets. Changer ou fermer d'onglet est indisponible pendant une opération.
+// Commandes des onglets. Indisponibles pendant une opération et tant que la session n'est pas restaurée.
 
-const idle = () => !getTabsBusy();
+const idle = () => isTabsRestored() && !getTabsBusy();
 
 /** Raccourcis réservés aux onglets. */
 const SHORTCUTS = { new: 'Mod+T', close: 'Mod+W', next: 'Ctrl+Tab', previous: 'Ctrl+Shift+Tab' } as const;
@@ -48,10 +48,11 @@ registerCommands('tabs', () => {
 /**
  * Raccourcis clavier des onglets, à l'écoute sur la fenêtre. Ignorés quand une surcouche (`[data-overlay]` :
  * dialogue, menu, palette…) est ouverte. La touche est toujours consommée, même si la commande est indisponible
- * (Ctrl+Tab ne doit pas déplacer le focus, Ctrl+W ne doit rien fermer d'autre).
+ * (Ctrl+Tab ne doit pas déplacer le focus, Ctrl+W ne doit rien fermer d'autre). Ignorés tant que la session n'est
+ * pas restaurée : un onglet ouvert ou fermé à ce moment serait écrasé par la restauration.
  */
 export function onTabShortcut(e: KeyboardEvent) {
-  if (document.querySelector('[data-overlay]')) return;
+  if (!isTabsRestored() || document.querySelector('[data-overlay]')) return;
   const name = (Object.keys(SHORTCUTS) as (keyof typeof SHORTCUTS)[]).find((k) => matchShortcut(e, SHORTCUTS[k]));
   if (!name) return;
   e.preventDefault();

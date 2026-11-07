@@ -1,9 +1,11 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, type MenuItemConstructorOptions } from 'electron';
 import { closeSync, existsSync, fsyncSync, openSync, readFileSync, renameSync, rmSync, writeFileSync, writeSync } from 'node:fs';
+import { access, realpath } from 'node:fs/promises';
 import { basename, join, resolve } from 'node:path';
 import * as g from './git';
 import { RepoWatcher } from './watcher';
 import { mergePreferences, normalizePreferences, type Preferences } from '../shared/prefs';
+import { MISSING_LIMIT, normalizeSession, type SessionData } from '../shared/session';
 
 // Données utilisateur isolées (tests d'interface) : à fixer avant `ready`.
 if (process.env.ARBOR_USER_DATA) app.setPath('userData', resolve(process.env.ARBOR_USER_DATA));
@@ -94,48 +96,93 @@ function assertOpened(repo: unknown) {
   }
 }
 
-// Session des onglets : `userData/session.json` = { repos: chemins des onglets, active: index de l'onglet actif }.
+// Session des onglets : `userData/session.json` = { repos, active, missing } (voir `shared/session.ts`).
 const sessionFile = () => join(app.getPath('userData'), 'session.json');
 
-/** Rouvre un dépôt de la session sans le remettre en tête des récents ; `null` s'il n'existe plus. */
-async function reopenRepo(path: string): Promise<string | null> {
+/** Délai maximal de vérification d'un dépôt à la restauration (montage réseau figé). */
+const REOPEN_TIMEOUT_MS = 3000;
+
+/**
+ * Dépôts de la session indisponibles à la restauration, réinjectés à chaque sauvegarde (tant qu'ils ne sont pas
+ * rouverts) ; `null` tant que la session n'a été ni restaurée ni relue.
+ */
+let missingRepos: string[] | null = null;
+
+function readSession(): SessionData {
   try {
-    if (!existsSync(path) || !(await g.isRepo(path))) return null;
-    const top = await g.toplevel(path);
-    openedRepos.add(top);
-    return top;
+    return normalizeSession(JSON.parse(readFileSync(sessionFile(), 'utf8')));
   } catch {
-    return null;
+    return normalizeSession(undefined);
+  }
+}
+
+type Reopened = { kind: 'ok'; top: string } | { kind: 'missing' | 'gone' };
+
+/**
+ * Vérifie un dépôt de la session sans le remettre en tête des récents : `ok` avec son chemin ; `missing` s'il est
+ * inaccessible (dossier absent, délai dépassé) ; `gone` s'il n'est plus un dépôt à cet endroit (`.git` supprimé :
+ * `git` remonterait alors jusqu'à un dépôt parent, par exemple le dossier personnel).
+ */
+async function reopenRepo(path: string): Promise<Reopened> {
+  let timedOut = false;
+  const check = async (): Promise<Reopened> => {
+    try {
+      await access(path);
+    } catch {
+      return { kind: 'missing' };
+    }
+    try {
+      if (!(await g.isRepo(path))) return { kind: 'gone' };
+      const top = await g.toplevel(path);
+      if ((await realpath(top)) !== (await realpath(path))) return { kind: 'gone' };
+      // Réponse arrivée après le délai : le dépôt reste indisponible pour cette session.
+      if (timedOut) return { kind: 'missing' };
+      openedRepos.add(top);
+      return { kind: 'ok', top };
+    } catch {
+      return { kind: 'gone' };
+    }
+  };
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<Reopened>((done) => {
+    timer = setTimeout(() => {
+      timedOut = true;
+      done({ kind: 'missing' });
+    }, REOPEN_TIMEOUT_MS);
+  });
+  try {
+    return await Promise.race([check(), timeout]);
+  } finally {
+    clearTimeout(timer);
   }
 }
 
 async function restoreSession(): Promise<{ repos: string[]; active: number }> {
-  let data: { repos?: unknown; active?: unknown };
-  try {
-    data = JSON.parse(readFileSync(sessionFile(), 'utf8'));
-  } catch {
-    return { repos: [], active: 0 };
-  }
-  const saved = Array.isArray(data?.repos) ? data.repos.filter((p): p is string => typeof p === 'string') : [];
-  const activeIndex = typeof data?.active === 'number' ? data.active : 0;
-  // Vérifications en parallèle, ordre conservé.
-  const tops = await Promise.all(saved.map(reopenRepo));
+  const saved = readSession();
+  // Dépôts indisponibles la dernière fois en fin de liste : leur onglet revient s'ils sont de nouveau accessibles.
+  const candidates = [...saved.repos, ...saved.missing];
+  const results = await Promise.all(candidates.map(reopenRepo)); // en parallèle, ordre conservé
   const repos: string[] = [];
+  const missing: string[] = [];
   let active = 0;
-  tops.forEach((top, i) => {
-    if (!top) return; // dépôt supprimé ou déplacé entre deux sessions : onglet écarté
-    if (!repos.includes(top)) repos.push(top);
-    if (i === activeIndex) active = repos.indexOf(top);
+  results.forEach((r, i) => {
+    if (r.kind === 'missing') missing.push(candidates[i]);
+    if (r.kind !== 'ok') return; // `gone` : onglet écarté
+    if (!repos.includes(r.top)) repos.push(r.top);
+    if (i === saved.active && i < saved.repos.length) active = repos.indexOf(r.top);
   });
+  missingRepos = missing.slice(0, MISSING_LIMIT);
   return { repos, active };
 }
 
-/** N'enregistre que des dépôts ouverts dans Arbor (mêmes règles que `assertOpened`). */
+/** N'enregistre que des dépôts ouverts dans Arbor (mêmes règles que `assertOpened`), plus les dépôts indisponibles. */
 function saveSession(repos: unknown, active: unknown) {
   const recent = loadRecent();
-  const list = Array.isArray(repos) ? repos.filter((p): p is string => typeof p === 'string' && (openedRepos.has(p) || recent.includes(p))) : [];
-  const i = typeof active === 'number' && Array.isArray(repos) ? list.indexOf(repos[active]) : -1;
-  writeFileAtomic(sessionFile(), JSON.stringify({ repos: list, active: Math.max(0, i) }));
+  const s = normalizeSession({ repos, active }, (p) => openedRepos.has(p) || recent.includes(p));
+  if (missingRepos === null) missingRepos = readSession().missing; // restauration désactivée : on les garde
+  missingRepos = missingRepos.filter((p) => !s.repos.includes(p));
+  const data: SessionData = { ...s, missing: missingRepos };
+  writeFileAtomic(sessionFile(), JSON.stringify(data));
 }
 
 /**
@@ -145,6 +192,8 @@ function saveSession(repos: unknown, active: unknown) {
 function installMenu() {
   const template: MenuItemConstructorOptions[] = [];
   if (process.platform === 'darwin') template.push({ role: 'appMenu' });
+  // Hors macOS, « Quitter » (Ctrl+Q) : le menu de l'application n'existe pas.
+  else template.push({ label: 'Fichier', submenu: [{ role: 'quit', label: 'Quitter' }] });
   template.push({
     label: 'Édition',
     submenu: [

@@ -31,10 +31,15 @@ import {
   useTabsBusy,
   useTabsModel,
   getTabsModel,
+  markTabsRestored,
+  type BusyOptions,
 } from './tabs';
 import { TabBar } from './components/TabBar';
 
 export type Selection = { kind: 'wip' } | { kind: 'commit'; sha: string };
+
+/** Délai de regroupement des enregistrements de la session des onglets. */
+const SESSION_SAVE_DELAY_MS = 500;
 
 /**
  * Coquille de l'application : onglets, écran d'accueil d'un onglet vide, démarrage.
@@ -67,6 +72,7 @@ export function App() {
         const t = activeTab(getTabsModel());
         setOpenError({ text: (e as Error).message, tabId: t && !t.repo ? t.id : null });
       } finally {
+        markTabsRestored();
         setReady(true);
       }
     })();
@@ -79,12 +85,26 @@ export function App() {
     return () => clearTimeout(t);
   }, [errorToast]);
 
-  // Session enregistrée à chaque changement d'onglets (après la restauration, pour ne pas l'écraser).
-  const session = useMemo(() => toSession(model), [model]);
-  const sessionKey = JSON.stringify(session);
+  // Session enregistrée après la restauration (pour ne pas l'écraser), regroupée (Ctrl+Tab répété, ouvertures en
+  // série) et seulement si elle a changé depuis le dernier enregistrement.
+  const sessionKey = useMemo(() => JSON.stringify(toSession(model)), [model]);
+  const savedKey = useRef<string | null>(null);
   useEffect(() => {
-    if (ready) api.saveSession(session.repos, session.active).catch(() => {});
-  }, [ready, sessionKey]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (!ready) return;
+    const save = () => {
+      if (savedKey.current === sessionKey) return;
+      savedKey.current = sessionKey;
+      const s = JSON.parse(sessionKey) as ReturnType<typeof toSession>;
+      api.saveSession(s.repos, s.active).catch(() => {});
+    };
+    const t = setTimeout(save, SESSION_SAVE_DELAY_MS);
+    // Fermeture de la fenêtre pendant le délai : dernier enregistrement, au mieux.
+    window.addEventListener('pagehide', save);
+    return () => {
+      clearTimeout(t);
+      window.removeEventListener('pagehide', save);
+    };
+  }, [ready, sessionKey]);
 
   // Onglet vide : le registre de commandes voit « aucun dépôt ».
   const emptyTab = !tab?.repo;
@@ -128,6 +148,7 @@ const SHELL_HOOKS: AppHooks = {
   closeRepo: () => requestCloseTab(),
   refresh: () => {},
   selectCommit: () => {},
+  selectWip: () => {},
   showDiff: () => {},
 };
 
@@ -135,7 +156,7 @@ interface RepoViewProps {
   tabId: number;
   repo: string;
   /** Opération en cours (ou `null`) : la coquille bloque alors le changement et la fermeture d'onglet. */
-  onBusy: (label: string | null) => void;
+  onBusy: (label: string | null, opts?: BusyOptions) => void;
 }
 
 /** Un dépôt, affiché dans l'onglet actif. Son état d'affichage est relu puis enregistré dans `tabs.ts`. */
@@ -145,6 +166,8 @@ function RepoView({ tabId, repo, onBusy }: RepoViewProps) {
   const [selection, setSelection] = useState<Selection>(saved?.selection ?? { kind: 'wip' });
   const [diffTarget, setDiffTarget] = useState<DiffTarget | null>(saved?.diffTarget ?? null);
   const [busy, setBusy] = useState<string | null>(null);
+  // L'opération en cours se termine par l'ouverture d'un dépôt (`ui.run(…, { allowOpen: true })`).
+  const [busyAllowsOpen, setBusyAllowsOpen] = useState(false);
   const [toast, setToast] = useState<{ kind: 'error' | 'ok'; text: string } | null>(null);
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [prompt, setPrompt] = useState<PromptState | null>(null);
@@ -152,7 +175,7 @@ function RepoView({ tabId, repo, onBusy }: RepoViewProps) {
   const [fileView, setFileView] = useState<FileViewTarget | null>(saved?.fileView ?? null);
   const closeFileView = useCallback(() => setFileView(null), []);
   // Autre dépôt dans cet onglet (barre d'outils) ou fermeture de l'onglet.
-  // Refusé pendant une opération (sauf « Ouverture… ») : l'onglet et le message de résultat seraient perdus.
+  // Refusé pendant une opération (sauf `allowOpen`) : l'onglet et le message de résultat seraient perdus.
   const switchRepo = useCallback(
     (path: string) => {
       if (!openRepoTab(path, 'current', tabId)) setToast({ kind: 'error', text: 'Une opération est en cours : attendez sa fin pour changer de dépôt.' });
@@ -215,7 +238,7 @@ function RepoView({ tabId, repo, onBusy }: RepoViewProps) {
   }, [tabId, selection, diffTarget, fileView, draft, snap]);
 
   // L'opération en cours est remontée à la coquille (et oubliée au démontage).
-  useEffect(() => onBusy(busy), [busy, onBusy]);
+  useEffect(() => onBusy(busy, { allowOpen: busyAllowsOpen }), [busy, busyAllowsOpen, onBusy]);
   useEffect(() => () => onBusy(null), [onBusy]);
 
   useEffect(() => {
@@ -272,8 +295,9 @@ function RepoView({ tabId, repo, onBusy }: RepoViewProps) {
 
   const ui: Ui = useMemo(
     () => ({
-      async run(label, fn, success) {
+      async run(label, fn, success, opts) {
         setBusy(label);
+        setBusyAllowsOpen(!!opts?.allowOpen);
         setToast(null);
         try {
           await fn();
@@ -284,6 +308,7 @@ function RepoView({ tabId, repo, onBusy }: RepoViewProps) {
           return false;
         } finally {
           setBusy(null);
+          setBusyAllowsOpen(false);
           await refresh();
         }
       },
