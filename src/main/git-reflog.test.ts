@@ -227,6 +227,22 @@ describe('reflog et annulation sur un vrai dépôt', () => {
     g('checkout', '-q', 'x');
   });
 
+  it('conflits non résolus sans opération (stash pop) : rien à annuler, erreur de reset traduite', async () => {
+    const parent = g('rev-parse', 'HEAD');
+    writeFileSync(join(dir, 'a.txt'), 'stash\n');
+    g('stash', 'push', '-q');
+    commitFile('a.txt', 'commit\n', 'modifie a');
+    expect(() => g('stash', 'pop', '-q')).toThrow();
+    expect(g('status', '--porcelain')).toBe('UU a.txt');
+    const info = await undoInfo(dir);
+    expect(info.plan).toBeNull();
+    expect(info.reason).toMatch(/conflits ne sont pas résolus/);
+    await expect(reset(dir, parent, 'keep')).rejects.toThrow(/conflits ne sont pas résolus/);
+    await expect(reset(dir, parent, 'soft')).rejects.toThrow(/conflits ne sont pas résolus/);
+    g('reset', '-q', '--hard', parent);
+    g('stash', 'drop', '-q');
+  });
+
   it('reset refuse un mode inconnu', async () => {
     await expect(reset(dir, g('rev-parse', 'HEAD'), 'merge' as 'keep')).rejects.toThrow(/Mode de reset inconnu/);
   });

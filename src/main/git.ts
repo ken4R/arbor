@@ -61,6 +61,8 @@ const GIT_ERRORS: [RegExp, (m: RegExpMatchArray) => string][] = [
   [/\[rejected\].*\(already exists\)/, () => 'Un tag du même nom existe déjà sur le remote.'],
   // reflog (reset --keep)
   [/Entry '(.+?)' not uptodate\. Cannot merge/, (m) => `« ${m[1]} » a des modifications locales que ce retour en arrière écraserait : commitez-les ou mettez-les de côté (stash) avant.`],
+  // Index avec des conflits sans fusion en cours (ex. stash pop) : `reset --soft` et `--keep` refusent.
+  [/Cannot do a (?:soft|keep) reset in the middle of a merge/, () => 'Des conflits ne sont pas résolus : résolvez-les (ou annulez-les) avant de revenir en arrière.'],
   [/Untracked working tree file '(.+?)' would be overwritten/, (m) => `Le fichier non suivi « ${m[1]} » serait écrasé : déplacez-le, ajoutez-le ou mettez-le de côté (stash) avant.`],
 ];
 
@@ -1644,6 +1646,7 @@ export async function undoInfo(repo: string): Promise<UndoInfo> {
   const [st, head] = await Promise.all([status(repo), headSha(repo)]);
   const base = { branch: st.branch, head };
   if (st.state !== 'clean') return { ...base, plan: null, reason: 'Une opération est en cours : terminez-la ou abandonnez-la d\'abord.' };
+  if (st.conflicted.length) return { ...base, plan: null, reason: 'Des conflits ne sont pas résolus : résolvez-les (ou annulez-les) avant de revenir en arrière.' };
   const entries = st.branch && head ? parseReflog(await git(repo, reflogArgs(`refs/heads/${st.branch}`, 0, 2)), st.branch) : [];
   return { ...base, ...undoPlan(entries, head, st.branch) };
 }
