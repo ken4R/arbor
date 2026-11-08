@@ -2102,6 +2102,7 @@ tr.cf-marker {
   display: block;
   width: 100%;
   resize: none;
+  field-sizing: content; /* hauteur selon le contenu */
   overflow: hidden;
   margin: 0;
   padding: 0 12px 0 calc(5ch + 16px);
@@ -2126,4 +2127,22 @@ tr.cf-marker {
   padding: 10px 12px;
   font-size: 12px;
   color: var(--text-dim);
+}
+.mg-seg-merged {
+  background: var(--merge-both-bg);
+}
+.mg-warn {
+  max-width: 640px;
+  margin: 24px auto;
+  padding: 16px;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--warn-bg-faint);
+  border: 1px solid var(--warn-border);
+  border-radius: var(--radius);
+}
+.mg-warn-actions {
+  display: flex;
+  gap: 8px;
+  margin: 12px 0 8px;
 }

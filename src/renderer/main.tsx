@@ -16,6 +16,9 @@ import './commands/prefs';
 // onglets
 import './commands/tabs';
 
+// éditeur de fusion
+import './commands/conflicts';
+
 // Préférences enregistrées lues dès le démarrage (et migration des anciennes clés localStorage).
 void loadPreferences();
 

@@ -1,10 +1,10 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { composeResult, merge3, splitLines } from '../shared/merge3';
-import { conflictVersions, parseUnmerged, resolveDeletion, saveResolution } from './git';
+import { composeResult } from '../shared/merge3';
+import { conflictVersions, parseFilterAttr, parseUnmerged, resolveDeletion, saveResolution } from './git';
 
 const SHA = (c: string) => c.repeat(40);
 
@@ -105,11 +105,10 @@ describe('conflits sur un vrai dépôt', () => {
     setup('w.txt', 'un\r\ndeux\r\ntrois\r\n', 'un\r\nDEUX-m\r\ntrois\r\n', 'un\r\nDEUX-t\r\ntrois\r\nquatre\r\n');
     tryG('merge', 'autre');
     const v = await conflictVersions(dir, 'w.txt');
-    const mine = splitLines(v.mine!);
-    expect(mine.eol).toBe('\r\n');
-    const blocks = merge3(splitLines(v.base!).lines, mine.lines, splitLines(v.theirs!).lines);
-    const conflictAt = blocks.findIndex((b) => b.kind === 'conflict');
-    const text = composeResult(blocks, new Map([[conflictAt, 'mine' as const]]), mine.eol, mine.finalNewline);
+    const m = v.merge!;
+    expect(m.eol).toBe('\r\n');
+    const conflictAt = m.blocks.findIndex((b) => b.kind === 'conflict');
+    const text = composeResult(m.blocks, new Map([[conflictAt, 'mine' as const]]), m.eol, m.finalNewline);
     expect(text).toBe('un\r\nDEUX-m\r\ntrois\r\nquatre\r\n');
     await saveResolution(dir, 'w.txt', text, v.workingHash, true);
     expect(readFileSync(join(dir, 'w.txt'), 'utf8')).toBe('un\r\nDEUX-m\r\ntrois\r\nquatre\r\n');
@@ -148,5 +147,90 @@ describe('conflits sur un vrai dépôt', () => {
     tryG('merge', 'autre');
     const v = await conflictVersions(dir, 'é [x] *.bin');
     expect(v).toMatchObject({ binary: true, base: '', mine: '', theirs: '' });
+    expect(v.merge).toBeNull();
+  });
+
+  it('blocs calculés par Git (exemple de la relecture) et fichier encore intact', async () => {
+    const T = (s: string) => s.split(' ').join('\n') + '\n';
+    setup('f.txt', T('c e d c e b c e c b'), T('c e d c c c e c'), T('c e c e b c e c c b'));
+    tryG('merge', 'autre');
+    const v = await conflictVersions(dir, 'f.txt');
+    expect(v.merge!.blocks.filter((b) => b.kind === 'conflict')).toHaveLength(1);
+    expect(v.workingMatches).toBe(true);
+  });
+
+  it('résolution partielle enregistrée puis rechargée (Arbor relancé) : fichier signalé comme modifié', async () => {
+    setup('f.txt', 'a\nb\nc\nd\ne\n', 'a\nB-m\nc\nD-m\ne\n', 'a\nB-t\nc\nD-t\ne\n');
+    tryG('merge', 'autre');
+    const v = await conflictVersions(dir, 'f.txt');
+    expect(v.workingMatches).toBe(true);
+    const blocks = v.merge!.blocks;
+    const first = blocks.findIndex((b) => b.kind === 'conflict');
+    await saveResolution(dir, 'f.txt', composeResult(blocks, new Map([[first, 'mine' as const]]), v.merge!.eol, v.merge!.finalNewline), v.workingHash, false);
+    expect((await conflictVersions(dir, 'f.txt')).workingMatches).toBe(false);
+  });
+
+  it('style de conflit de la configuration (zdiff3) reconnu comme intact', async () => {
+    setup('f.txt', 'a\nb\nc\n', 'a\nB-m\nc\n', 'a\nB-t\nc\n');
+    g('config', 'merge.conflictStyle', 'diff3');
+    tryG('merge', 'autre');
+    expect((await conflictVersions(dir, 'f.txt')).workingMatches).toBe(true);
+  });
+
+  it('rebase : fichier intact reconnu (côtés inversés)', async () => {
+    setup('f.txt', 'a\nb\nc\nd\n', 'a\nB-main\nc\nd\n', 'x\nb\nc\nB-autre\n');
+    tryG('rebase', 'autre');
+    const v = await conflictVersions(dir, 'f.txt');
+    expect(v.workingMatches).toBe(true);
+  });
+
+  it('git am : pas d’inversion des côtés (ma version = étage 2)', async () => {
+    setup('f.txt', 'a\nb\nc\n', 'a\nB-main\nc\n', 'a\nB-autre\nc\n');
+    const patch = g('format-patch', '-1', '--stdout', 'autre');
+    writeFileSync(join(dir, '..', `${dir.split('/').pop()}.patch`), patch);
+    tryG('am', '-3', join(dir, '..', `${dir.split('/').pop()}.patch`));
+    rmSync(join(dir, '..', `${dir.split('/').pop()}.patch`));
+    expect(existsSync(join(dir, '.git', 'rebase-apply', 'applying'))).toBe(true);
+    const v = await conflictVersions(dir, 'f.txt');
+    expect(v.mine).toBe('a\nB-main\nc\n');
+    expect(v.theirs).toBe('a\nB-autre\nc\n');
+  });
+
+  it('écriture atomique, bit exécutable selon le mode de l’étage', async () => {
+    setup('run.sh', 'a\n', 'm\n', 't\n');
+    g('checkout', '-q', 'autre');
+    chmodSync(join(dir, 'run.sh'), 0o755);
+    g('add', 'run.sh');
+    g('commit', '-qm', 'exécutable');
+    g('checkout', '-q', 'main');
+    chmodSync(join(dir, 'run.sh'), 0o755);
+    g('add', 'run.sh');
+    g('commit', '-qm', 'exécutable ici aussi');
+    tryG('merge', 'autre');
+    const v = await conflictVersions(dir, 'run.sh');
+    chmodSync(join(dir, 'run.sh'), 0o644); // le mode vient de l'étage, pas du fichier
+    await saveResolution(dir, 'run.sh', 'résolu\n', v.workingHash, true);
+    expect(statSync(join(dir, 'run.sh')).mode & 0o111).not.toBe(0);
+    expect(readdirSync(dir).filter((f) => f.includes('.arbor-'))).toEqual([]);
+  });
+
+  it('filtres : autocrlf appliqué aux étages, filtre de contenu = repli', async () => {
+    setup('w.txt', 'un\ndeux\n', 'un\nDEUX-m\n', 'un\nDEUX-t\n');
+    tryG('merge', 'autre');
+    g('config', 'core.autocrlf', 'true');
+    const v = await conflictVersions(dir, 'w.txt');
+    expect(v.mine).toBe('un\r\nDEUX-m\r\n');
+    expect(v.merge!.eol).toBe('\r\n');
+    writeFileSync(join(dir, '.gitattributes'), 'w.txt filter=lfs\n');
+    expect(await conflictVersions(dir, 'w.txt')).toMatchObject({ unsupported: 'filter', merge: null });
+  });
+});
+
+describe('parseFilterAttr', () => {
+  it('valeur ou absence de filtre', () => {
+    expect(parseFilterAttr('a.bin\0filter\0lfs\0')).toBe('lfs');
+    expect(parseFilterAttr('a.txt\0filter\0unspecified\0')).toBeNull();
+    expect(parseFilterAttr('a.txt\0filter\0unset\0')).toBeNull();
+    expect(parseFilterAttr('')).toBeNull();
   });
 });

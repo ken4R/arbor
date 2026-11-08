@@ -1,6 +1,20 @@
 import { describe, expect, it } from 'vitest';
 import fixtures from './merge3.fixtures.json';
-import { blockSide, composeResult, diffLines, isMarkerLine, merge3, resolveBlock, splitLines, type Choice, type MergeBlock } from './merge3';
+import {
+  blockSide,
+  blocksFromMergeOutput,
+  composeResult,
+  diffLines,
+  isMarkerLine,
+  markerSize,
+  merge3,
+  normalizeConflictText,
+  parseMergeOutput,
+  resolveBlock,
+  splitLines,
+  type Choice,
+  type MergeBlock,
+} from './merge3';
 
 const L = (n: number) => Array.from({ length: n }, (_, i) => `ligne ${i + 1}`);
 const set = (lines: string[], at: Record<number, string[]>) => lines.flatMap((l, i) => at[i + 1] ?? [l]);
@@ -160,14 +174,88 @@ describe('isMarkerLine', () => {
   });
 });
 
-// Oracle : `merge3.fixtures.json` a été généré une fois par `git merge-file -p --diff3 -L "ma version" -L base
-// -L "leur version" mine base theirs` (git 2.43) ; le test ne lance pas git.
-describe('merge3 contre git merge-file --diff3', () => {
-  for (const f of fixtures as { name: string; base: string; mine: string; theirs: string; expected: string }[]) {
+// `merge3.fixtures.json` a été généré une fois par `git merge-file -p --diff3 -L "ma version" -L base -L "leur version"
+// mine base theirs` (git 2.43) : cas écrits à la main, l'exemple de la relecture et des cas aléatoires sur un
+// alphabet de 5 lettres (lignes répétées). Le test ne lance pas git : il vérifie l'analyse de la sortie de Git.
+type Fixture = { name: string; base: string; mine: string; theirs: string; expected: string };
+const finals = (f: Fixture) => ({ base: splitLines(f.base).finalNewline, mine: splitLines(f.mine).finalNewline, theirs: splitLines(f.theirs).finalNewline });
+const versions = (f: Fixture) => [f.base, f.mine, f.theirs].map((t) => splitLines(t).lines);
+
+describe('blocs tirés de git merge-file --diff3', () => {
+  for (const f of fixtures as Fixture[]) {
     it(f.name, () => {
-      const mine = splitLines(f.mine);
-      const blocks = merge3(splitLines(f.base).lines, mine.lines, splitLines(f.theirs).lines);
-      expect(composeResult(blocks, new Map(), mine.eol, mine.finalNewline)).toBe(f.expected);
+      const [base, mine, theirs] = versions(f);
+      const chunks = parseMergeOutput(splitLines(f.expected).lines);
+      expect(chunks).not.toBeNull();
+      const blocks = blocksFromMergeOutput(chunks!, base, mine, theirs);
+      expect(blocks).not.toBeNull();
+      // Sans choix : exactement le texte de Git ; chaque version se retrouve entière.
+      expect(composeResult(blocks!, new Map(), splitLines(f.mine).eol, finals(f))).toBe(f.expected);
+      expect(blocks!.flatMap((b) => blockSide(b, 'base'))).toEqual(base);
+      expect(blocks!.flatMap((b) => blockSide(b, 'mine'))).toEqual(mine);
+      expect(blocks!.flatMap((b) => blockSide(b, 'theirs'))).toEqual(theirs);
+      expect(blocks!.filter((b) => b.kind === 'conflict').length).toBe((f.expected.match(/^<{7} /gm) ?? []).length);
     });
   }
+
+  it('l’exemple de la relecture a bien un conflit, que merge3 seul ne voit pas', () => {
+    const f = (fixtures as Fixture[]).find((x) => x.name.startsWith('relecture'))!;
+    const [base, mine, theirs] = versions(f);
+    expect(merge3(base, mine, theirs).some((b) => b.kind === 'conflict')).toBe(false);
+    const blocks = blocksFromMergeOutput(parseMergeOutput(splitLines(f.expected).lines)!, base, mine, theirs)!;
+    expect(blocks.filter((b) => b.kind === 'conflict')).toHaveLength(1);
+  });
+
+  it('sortie incohérente avec les versions : null', () => {
+    expect(blocksFromMergeOutput([{ mine: ['absent'], base: [], theirs: [] }], ['a'], ['a'], ['a'])).toBeNull();
+  });
+});
+
+describe('parseMergeOutput', () => {
+  it('texte et conflit diff3', () => {
+    expect(parseMergeOutput(['a', '<<<<<<< m', 'x', '||||||| b', 'o', '=======', 'y', '>>>>>>> t', 'z'])).toEqual([
+      { text: ['a'] },
+      { mine: ['x'], base: ['o'], theirs: ['y'] },
+      { text: ['z'] },
+    ]);
+  });
+  it('taille de marqueur : les séries plus courtes sont du contenu', () => {
+    const out = ['<<<<<<<<<< m', '=======', '||||||||||', '>>>>>>>', '==========', 'y', '>>>>>>>>>> t'];
+    expect(parseMergeOutput(out, 10)).toEqual([{ mine: ['======='], base: ['>>>>>>>'], theirs: ['y'] }]);
+  });
+  it('sortie mal formée', () => {
+    expect(parseMergeOutput(['<<<<<<< m', 'x'])).toBeNull();
+    expect(parseMergeOutput(['=======', 'x'])).toBeNull();
+    expect(parseMergeOutput(['<<<<<<< m', '<<<<<<< m', '=======', '>>>>>>> t'])).toBeNull();
+  });
+  it('markerSize dépasse la plus longue série du contenu', () => {
+    expect(markerSize(['a\nb\n'])).toBe(7);
+    expect(markerSize(['a\n=======\n', '<<<<<<<<<< x\n'])).toBe(11);
+  });
+});
+
+describe('saut de ligne final', () => {
+  const blocks: MergeBlock[] = [{ kind: 'same', lines: ['a'] }, { kind: 'conflict', base: ['b'], mine: ['M'], theirs: ['T'] }];
+  const f = { base: false, mine: false, theirs: true }; // seule leur version a un saut final
+  it('gardé quand on choisit leur version', () => {
+    expect(composeResult(blocks, new Map([[1, 'theirs']]), '\n', f)).toBe('a\nT\n');
+    expect(composeResult(blocks, new Map([[1, 'mine-theirs']]), '\n', f)).toBe('a\nM\nT\n');
+    expect(composeResult(blocks, new Map([[1, 'mine']]), '\n', f)).toBe('a\nM');
+    expect(composeResult(blocks, new Map([[1, 'base']]), '\n', f)).toBe('a\nb');
+  });
+  it('sans conflit : le côté qui l’a changé l’emporte', () => {
+    const same: MergeBlock[] = [{ kind: 'same', lines: ['a'] }];
+    expect(composeResult(same, new Map(), '\n', { base: false, mine: false, theirs: true })).toBe('a\n');
+    expect(composeResult(same, new Map(), '\n', { base: true, mine: false, theirs: true })).toBe('a');
+    expect(composeResult([{ kind: 'theirs', base: ['b'], lines: ['T'] }], new Map(), '\n', f)).toBe('T\n');
+  });
+});
+
+describe('normalizeConflictText', () => {
+  it('retire les étiquettes, garde les fins de ligne', () => {
+    expect(normalizeConflictText('a\r\n<<<<<<< HEAD\r\nx\r\n||||||| parent de abc\r\n=======\r\n>>>>>>> 1234 (sujet)\r\n')).toBe(
+      'a\r\n<<<<<<<\r\nx\r\n|||||||\r\n=======\r\n>>>>>>>\r\n',
+    );
+    expect(normalizeConflictText('<<<<<<<< pas un marqueur\n')).toBe('<<<<<<<< pas un marqueur\n');
+  });
 });

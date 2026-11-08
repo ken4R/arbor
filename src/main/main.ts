@@ -252,7 +252,6 @@ const READ_ONLY = new Set([
   'setPreferences',
   'restoreSession',
   'saveSession',
-  'conflictVersions',
 ]);
 
 const handlers: Record<string, (...args: any[]) => Promise<unknown>> = {

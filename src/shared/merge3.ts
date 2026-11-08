@@ -1,8 +1,8 @@
-// Fusion à trois voies, ligne par ligne, sans dépendance (utilisée par l'éditeur de fusion).
-// Les trois versions sont découpées en lignes sans leur fin de ligne ; les changements de chaque côté sont calculés
-// par rapport à la base (Myers O(ND), variante en espace linéaire) puis regroupés : deux changements qui se
-// chevauchent ou se touchent forment un conflit, sauf s'ils donnent exactement le même texte (comme xdiff
-// en niveau « eager », celui de `git merge-file --diff3`).
+// Fusion à trois voies ligne par ligne, sans dépendance, pour l'éditeur de fusion.
+// La fusion qui fait foi est celle de Git (`git merge-file -p --diff3`, lancé par le processus principal) :
+// `parseMergeOutput` lit sa sortie et `blocksFromMergeOutput` en tire les blocs de l'éditeur. Le diff (Myers O(ND),
+// espace linéaire, coût bornable) et `merge3` ne servent qu'à situer les conflits dans chaque version et à étiqueter
+// les zones sans conflit (changement de mon côté, du leur, des deux).
 
 /** Découpe un texte en lignes. Fin de ligne majoritaire (CRLF ou LF) ; un fichier mixte est normalisé à la recomposition. */
 export function splitLines(text: string): { lines: string[]; eol: '\n' | '\r\n'; finalNewline: boolean } {
@@ -43,6 +43,32 @@ function intern(a: string[], b: string[]): [Int32Array, Int32Array] {
  * `a[aStart..aEnd)` est remplacé par `b[bStart..bEnd)`. Deux blocs sont toujours séparés par au moins une ligne commune.
  */
 export function diffLines(a: string[], b: string[]): LineHunk[] {
+  return withBudget(Infinity, () => diffCore(a, b))!;
+}
+
+/** Comme `diffLines`, mais renvoie null au-delà de `budget` étapes de recherche (coût borné). */
+export function diffLinesBounded(a: string[], b: string[], budget: number): LineHunk[] | null {
+  return withBudget(budget, () => diffCore(a, b));
+}
+
+class BudgetExceeded extends Error {}
+let budgetLeft = Infinity;
+
+/** Exécute `fn` avec un budget d'étapes de Myers ; null s'il est dépassé. */
+function withBudget<T>(budget: number, fn: () => T): T | null {
+  const saved = budgetLeft;
+  budgetLeft = budget;
+  try {
+    return fn();
+  } catch (e) {
+    if (e instanceof BudgetExceeded) return null;
+    throw e;
+  } finally {
+    budgetLeft = saved;
+  }
+}
+
+function diffCore(a: string[], b: string[]): LineHunk[] {
   const [x, y] = intern(a, b);
   const keepA = new Uint8Array(x.length);
   const keepB = new Uint8Array(y.length);
@@ -106,6 +132,8 @@ function bisect(a: Int32Array, aLo: number, aHi: number, b: Int32Array, bLo: num
   let k2start = 0;
   let k2end = 0;
   for (let d = 0; d < maxD; d++) {
+    budgetLeft -= 2 * d + 2;
+    if (budgetLeft < 0) throw new BudgetExceeded();
     for (let k1 = -d + k1start; k1 <= d - k1end; k1 += 2) {
       const k1o = offset + k1;
       let x1 = k1 === -d || (k1 !== d && v1[k1o - 1] < v1[k1o + 1]) ? v1[k1o + 1] : v1[k1o - 1] + 1;
@@ -150,6 +178,8 @@ export type MergeBlock =
   | { kind: 'same'; lines: string[] }
   /** Changement d'un seul côté (`mine` / `theirs`) ou identique des deux côtés (`both`) : `lines` = nouveau texte. */
   | { kind: 'mine' | 'theirs' | 'both'; base: string[]; lines: string[] }
+  /** Zone sans conflit où Git a combiné des changements des deux côtés sans qu'on sache les séparer : `lines` = texte de Git. */
+  | { kind: 'merged'; base: string[]; mine: string[]; theirs: string[]; lines: string[] }
   | { kind: 'conflict'; base: string[]; mine: string[]; theirs: string[] };
 
 const sameLines = (x: string[], y: string[]) => x.length === y.length && x.every((l, i) => l === y[i]);
@@ -166,11 +196,18 @@ function sideText(base: string[], side: string[], hunks: LineHunk[], from: numbe
   return out;
 }
 
-/** Fusion à trois voies : suite de blocs qui couvre la base dans l'ordre. */
+/**
+ * Fusion à trois voies maison : suite de blocs qui couvre la base dans l'ordre. Elle ne fait pas foi (l'éditeur
+ * part de `git merge-file`, voir `blocksFromMergeOutput`) : elle ne sert qu'à étiqueter les zones sans conflit.
+ */
 export function merge3(base: string[], mine: string[], theirs: string[]): MergeBlock[] {
+  return withBudget(Infinity, () => merge3Core(base, mine, theirs))!;
+}
+
+function merge3Core(base: string[], mine: string[], theirs: string[]): MergeBlock[] {
   const all = [
-    ...diffLines(base, mine).map((h) => ({ ...h, side: 0 })),
-    ...diffLines(base, theirs).map((h) => ({ ...h, side: 1 })),
+    ...diffCore(base, mine).map((h) => ({ ...h, side: 0 })),
+    ...diffCore(base, theirs).map((h) => ({ ...h, side: 1 })),
   ].sort((p, q) => p.aStart - q.aStart || p.aEnd - q.aEnd || p.side - q.side);
 
   const blocks: MergeBlock[] = [];
@@ -206,21 +243,22 @@ export type Choice = 'mine' | 'theirs' | 'mine-theirs' | 'theirs-mine' | 'base' 
 /** Lignes d'un bloc vues d'un côté (`base`, `mine`, `theirs`). */
 export function blockSide(b: MergeBlock, side: 'base' | 'mine' | 'theirs'): string[] {
   if (b.kind === 'same') return b.lines;
-  if (b.kind === 'conflict') return b[side];
+  if (b.kind === 'conflict' || b.kind === 'merged') return b[side];
   if (side === 'base') return b.base;
   if (b.kind === 'both') return b.lines;
   return b.kind === side ? b.lines : b.base;
 }
 
-/** Choix appliqué d'office à un bloc sans choix explicite ; null = conflit non résolu. */
+/** Choix appliqué d'office à un bloc sans choix explicite ; null = conflit non résolu (ou texte de Git pour `merged`). */
 export function defaultChoice(b: MergeBlock): Choice | null {
-  if (b.kind === 'conflict') return null;
+  if (b.kind === 'conflict' || b.kind === 'merged') return null;
   if (b.kind === 'theirs') return 'theirs';
   return 'mine'; // same, mine, both
 }
 
 /** Lignes du résultat pour un bloc et un choix ; null = conflit non résolu (pas de choix). */
 export function resolveBlock(b: MergeBlock, choice: Choice | undefined): string[] | null {
+  if (choice === undefined && b.kind === 'merged') return b.lines;
   const c = choice ?? defaultChoice(b);
   if (c === null) return null;
   if (typeof c === 'object') return c.custom;
@@ -235,14 +273,189 @@ export const MARKERS = { mine: '<<<<<<< ma version', base: '||||||| base', sep: 
 /** Une ligne ressemble-t-elle à un marqueur de conflit (`<<<<<<<`, `|||||||`, `=======`, `>>>>>>>`) ? */
 export const isMarkerLine = (l: string) => /^(<{7}|>{7}|\|{7}|={7})( |$)/.test(l);
 
-/** Texte final : blocs résolus selon `choices` (index du bloc), conflits restants écrits avec des marqueurs. */
-export function composeResult(blocks: MergeBlock[], choices: Map<number, Choice>, eol: '\n' | '\r\n', finalNewline: boolean): string {
+/** Saut de ligne final de chaque version. */
+export interface FinalNewlines {
+  base: boolean;
+  mine: boolean;
+  theirs: boolean;
+}
+
+/** Fusion à trois voies du saut de ligne final : le côté qui l'a changé l'emporte. */
+const mergedNewline = (f: FinalNewlines) => (f.mine === f.base ? f.theirs : f.mine);
+
+/** Saut de ligne final quand le texte se termine par ce bloc résolu ainsi. */
+function newlineAfter(b: MergeBlock, choice: Choice | undefined, f: FinalNewlines): boolean {
+  const c = choice ?? (b.kind === 'mine' ? 'mine' : b.kind === 'theirs' ? 'theirs' : null);
+  if (c === 'mine' || c === 'theirs-mine') return f.mine;
+  if (c === 'theirs' || c === 'mine-theirs') return f.theirs;
+  if (c === 'base') return f.base;
+  return mergedNewline(f); // same, both, merged, texte libre
+}
+
+/**
+ * Texte final : blocs résolus selon `choices` (index du bloc), conflits restants écrits avec des marqueurs.
+ * `finalNewline` : booléen imposé, ou saut final de chaque version (celui du côté qui fournit la fin du texte).
+ */
+export function composeResult(blocks: MergeBlock[], choices: Map<number, Choice>, eol: '\n' | '\r\n', finalNewline: boolean | FinalNewlines): string {
   const out: string[] = [];
+  let newline = typeof finalNewline === 'boolean' ? finalNewline : mergedNewline(finalNewline);
   blocks.forEach((b, i) => {
     const lines = resolveBlock(b, choices.get(i));
-    if (lines) out.push(...lines);
-    else if (b.kind === 'conflict') out.push(MARKERS.mine, ...b.mine, MARKERS.base, ...b.base, MARKERS.sep, ...b.theirs, MARKERS.theirs);
+    if (lines) {
+      out.push(...lines);
+      if (lines.length && typeof finalNewline !== 'boolean') newline = newlineAfter(b, choices.get(i), finalNewline);
+    } else if (b.kind === 'conflict') {
+      out.push(MARKERS.mine, ...b.mine, MARKERS.base, ...b.base, MARKERS.sep, ...b.theirs, MARKERS.theirs);
+      if (typeof finalNewline !== 'boolean') newline = true; // comme Git après un marqueur
+    }
   });
   if (!out.length) return '';
-  return out.join(eol) + (finalNewline ? eol : '');
+  return out.join(eol) + (newline ? eol : '');
+}
+
+// --- Sortie de `git merge-file -p --diff3` ---
+
+/** Morceau de la sortie de Git : texte fusionné sans conflit, ou conflit (style diff3). */
+export type MergeChunk = { text: string[] } | { mine: string[]; base: string[]; theirs: string[] };
+
+/** Taille de marqueur sûre : plus longue que toute série de `<`, `|`, `=`, `>` en début de ligne des versions (7 au moins). */
+export function markerSize(texts: string[]): number {
+  let max = 6;
+  for (const t of texts) for (const m of t.matchAll(/^(?:<+|\|+|=+|>+)/gm)) max = Math.max(max, m[0].length);
+  return max + 1;
+}
+
+/**
+ * Analyse la sortie de `git merge-file -p --diff3 --marker-size=<size>` (lignes sans fin de ligne). Avec une taille de
+ * marqueur plus longue que toute série du contenu, une ligne de marqueur est sans ambiguïté. null si la sortie est mal formée.
+ */
+export function parseMergeOutput(lines: string[], size = 7): MergeChunk[] | null {
+  const marker = (ch: string) => new RegExp(`^\\${ch}{${size}}(?: |$)`);
+  const open = marker('<');
+  const baseSep = marker('|');
+  const sep = new RegExp(`^={${size}}$`);
+  const close = marker('>');
+  const chunks: MergeChunk[] = [];
+  let text: string[] = [];
+  let cur: { mine: string[]; base: string[]; theirs: string[] } | null = null;
+  let part: 'mine' | 'base' | 'theirs' = 'mine';
+  for (const l of lines) {
+    if (!cur) {
+      if (open.test(l)) {
+        if (text.length) chunks.push({ text });
+        text = [];
+        cur = { mine: [], base: [], theirs: [] };
+        part = 'mine';
+      } else if (baseSep.test(l) || sep.test(l) || close.test(l)) return null;
+      else text.push(l);
+    } else if (part === 'mine' && baseSep.test(l)) part = 'base';
+    else if (part !== 'theirs' && sep.test(l)) part = 'theirs';
+    else if (part === 'theirs' && close.test(l)) {
+      chunks.push(cur);
+      cur = null;
+    } else if (open.test(l) || baseSep.test(l) || sep.test(l) || close.test(l)) return null;
+    else cur[part].push(l);
+  }
+  if (cur) return null;
+  if (text.length) chunks.push({ text });
+  return chunks;
+}
+
+const isConflictChunk = (c: MergeChunk): c is { mine: string[]; base: string[]; theirs: string[] } => !('text' in c);
+
+/** Coût maximal (étapes de Myers) d'un étiquetage ; au-delà, la zone reste un bloc `merged`. */
+const LABEL_BUDGET = 2_000_000;
+
+/**
+ * Position de chaque conflit dans une version : on reconstruit la version « résolue de ce côté » (texte de Git +
+ * sections de ce côté), on l'aligne sur la vraie version et on vérifie le contenu. Repli : première occurrence en ordre.
+ * null si une section est introuvable (sortie incohérente avec les versions).
+ */
+function locateSections(side: string[], chunks: MergeChunk[], pick: 'mine' | 'base' | 'theirs'): number[] | null {
+  const resolved: string[] = [];
+  const sections: { at: number; lines: string[] }[] = [];
+  for (const c of chunks) {
+    if (isConflictChunk(c)) {
+      sections.push({ at: resolved.length, lines: c[pick] });
+      resolved.push(...c[pick]);
+    } else resolved.push(...c.text);
+  }
+  const hunks = withBudget(LABEL_BUDGET, () => diffCore(side, resolved));
+  const fits = (s: number, lines: string[], min: number) => s >= min && s + lines.length <= side.length && sameLines(side.slice(s, s + lines.length), lines);
+  const out: number[] = [];
+  let min = 0;
+  for (const sec of sections) {
+    const candidates: number[] = [];
+    if (hunks) {
+      // Décalage dû aux blocs entièrement avant la section ; un bloc vide côté `resolved` pile à cette position est ambigu.
+      let before = 0;
+      let ambiguous = 0;
+      for (const h of hunks) {
+        const delta = h.aEnd - h.aStart - (h.bEnd - h.bStart);
+        if (h.bEnd < sec.at || (h.bEnd === sec.at && h.bStart < h.bEnd)) before += delta;
+        else if (h.bStart === sec.at && h.bEnd === sec.at) ambiguous += delta;
+        else if (h.bStart < sec.at && sec.at < h.bEnd) candidates.push(h.aStart + (sec.at - h.bStart));
+      }
+      candidates.unshift(sec.at + before, sec.at + before + ambiguous);
+    }
+    let pos = candidates.find((s) => fits(s, sec.lines, min));
+    if (pos === undefined) {
+      for (let s = min; s + sec.lines.length <= side.length; s++) {
+        if (fits(s, sec.lines, min)) {
+          pos = s;
+          break;
+        }
+      }
+    }
+    if (pos === undefined) return null;
+    out.push(pos);
+    min = pos + sec.lines.length;
+  }
+  return out;
+}
+
+/**
+ * Blocs de l'éditeur à partir de la sortie de Git : les conflits viennent de Git tels quels ; chaque zone sans conflit
+ * est étiquetée finement (`mine` / `theirs` / `both` / `same`) par `merge3` quand celui-ci retrouve exactement le texte
+ * de Git sans conflit, sinon elle reste un bloc `merged` (texte de Git, versions de chaque côté pour l'affichage).
+ * Les blocs redonnent exactement chaque version (`blockSide`) et, sans choix, le texte de Git.
+ * null si la sortie est incohérente avec les versions.
+ */
+export function blocksFromMergeOutput(chunks: MergeChunk[], base: string[], mine: string[], theirs: string[]): MergeBlock[] | null {
+  const pos = { base: locateSections(base, chunks, 'base'), mine: locateSections(mine, chunks, 'mine'), theirs: locateSections(theirs, chunks, 'theirs') };
+  if (!pos.base || !pos.mine || !pos.theirs) return null;
+  const conflicts = chunks.filter(isConflictChunk);
+  const blocks: MergeBlock[] = [];
+  const cursor = { base: 0, mine: 0, theirs: 0 };
+  const versions = { base, mine, theirs };
+  const pushText = (text: string[], k: number) => {
+    // Zone de chaque version entre le conflit précédent et le conflit k (ou la fin).
+    const [b, m, t] = (['base', 'mine', 'theirs'] as const).map((s) => versions[s].slice(cursor[s], k < conflicts.length ? pos[s]![k] : versions[s].length));
+    if (!text.length && !b.length && !m.length && !t.length) return;
+    if (sameLines(text, b) && sameLines(b, m) && sameLines(b, t)) return void blocks.push({ kind: 'same', lines: text });
+    const sub = withBudget(LABEL_BUDGET, () => merge3Core(b, m, t));
+    if (sub && sub.every((x) => x.kind !== 'conflict') && sameLines(sub.flatMap((x) => resolveBlock(x, undefined) ?? []), text)) {
+      blocks.push(...sub);
+    } else blocks.push({ kind: 'merged', base: b, mine: m, theirs: t, lines: text });
+  };
+  let k = 0;
+  let pendingText: string[] = [];
+  for (const c of chunks) {
+    if (!isConflictChunk(c)) {
+      pendingText = c.text;
+      continue;
+    }
+    pushText(pendingText, k);
+    pendingText = [];
+    blocks.push({ kind: 'conflict', base: c.base, mine: c.mine, theirs: c.theirs });
+    for (const s of ['base', 'mine', 'theirs'] as const) cursor[s] = pos[s]![k] + c[s].length;
+    k++;
+  }
+  pushText(pendingText, k);
+  return blocks;
+}
+
+/** Texte d'un fichier en conflit sans les étiquettes des marqueurs (`<<<<<<< HEAD` → `<<<<<<<`), pour comparer deux sorties. */
+export function normalizeConflictText(text: string): string {
+  return text.replace(/^(<{7}|\|{7}|>{7})(?: [^\r\n]*)?(?=\r?$)/gm, '$1');
 }
