@@ -1,3 +1,4 @@
+import type { FinalNewlines, MergeBlock } from './merge3';
 import type { Preferences } from './prefs';
 
 export interface Commit {
@@ -197,6 +198,14 @@ export interface ArborApi {
   restoreSession(): Promise<{ repos: string[]; active: number }>;
   /** Enregistre les onglets ouverts (seuls les dépôts ouverts dans Arbor sont retenus). */
   saveSession(repos: string[], active: number): Promise<void>;
+  /** Trois versions d'un fichier en conflit (éditeur de fusion), « ma version » selon l'opération (inversée en rebase). */
+  conflictVersions(repo: string, path: string): Promise<ConflictVersions>;
+  /** Écrit le résultat si le fichier a encore l'empreinte `expectedHash`, l'indexe si `markResolved` ; renvoie la nouvelle empreinte. */
+  saveResolution(repo: string, path: string, content: string, expectedHash: string | null, markResolved: boolean): Promise<string>;
+  /** Conflit suppression/modification : garde le fichier de l'arbre de travail (`git add`) ou le supprime (`git rm`). */
+  resolveDeletion(repo: string, path: string, keep: boolean): Promise<void>;
+  /** Identité actuelle des étages d'un fichier en conflit (comparée à `ConflictVersions.stages`) ; null s'il n'est plus en conflit. */
+  conflictStages(repo: string, path: string): Promise<string | null>;
   // remotes
   /** URL brutes d'un remote telles qu'écrites dans la configuration (avant `insteadOf`), pour les éditer. */
   remoteConfig(repo: string, name: string): Promise<RemoteConfig>;
@@ -219,6 +228,34 @@ export interface ArborApi {
   pushAllTags(repo: string, remote: string): Promise<void>;
   /** Tags du remote (`git ls-remote`, accès réseau). */
   remoteTags(repo: string, remote: string): Promise<RemoteTag[]>;
+}
+
+/** Versions d'un fichier en conflit pour l'éditeur de fusion ; null = absent de ce côté (supprimé, ou pas de base). */
+export interface ConflictVersions {
+  base: string | null;
+  mine: string | null;
+  theirs: string | null;
+  /** SHA-1 du fichier de l'arbre de travail au chargement (null s'il est absent), vérifié à l'enregistrement. */
+  workingHash: string | null;
+  /** Binaire ou non UTF-8 : contenus vidés, repli sur la vue simple. */
+  binary: boolean;
+  /** Plus de 1 Mo, 20 000 lignes ou 2 000 blocs : contenus vidés, repli sur la vue simple. */
+  tooLarge: boolean;
+  /** Sous-module, lien symbolique ou filtre de contenu (`filter`, LFS…) : repli sur la vue simple. */
+  unsupported?: 'submodule' | 'symlink' | 'filter' | 'mixed-eol';
+  /** Fusion calculée par `git merge-file --diff3` (ma version d'abord) ; null hors fusion de texte ou sortie illisible. */
+  merge: MergeModel | null;
+  /** Le fichier de l'arbre de travail est encore celui écrit par Git (aucune résolution commencée ailleurs). */
+  workingMatches: boolean;
+  /** Identité des étages (voir `conflictStages`) : change quand l'opération passe à une autre étape. */
+  stages: string;
+}
+
+/** Blocs de l'éditeur de fusion, tirés de la sortie de Git (voir `shared/merge3.ts`). */
+export interface MergeModel {
+  blocks: MergeBlock[];
+  eol: '\n' | '\r\n';
+  finalNewline: FinalNewlines;
 }
 
 /** Valeurs brutes de `remote.<nom>.url` et `remote.<nom>.pushurl` (plusieurs possibles, souvent zéro ou une). */

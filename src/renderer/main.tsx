@@ -16,6 +16,8 @@ import './commands/prefs';
 // onglets
 import './commands/tabs';
 
+// éditeur de fusion
+import './commands/conflicts';
 // remotes
 import './commands/remotes';
 // tags

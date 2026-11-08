@@ -252,6 +252,7 @@ const READ_ONLY = new Set([
   'setPreferences',
   'restoreSession',
   'saveSession',
+  'conflictStages', // ls-files --no-optional-locks : n'écrit rien
   // remotes
   'remoteConfig',
   // tags
@@ -322,6 +323,10 @@ const handlers: Record<string, (...args: any[]) => Promise<unknown>> = {
   setPreferences: async (patch: unknown) => savePreferences(patch),
   restoreSession: async () => restoreSession(),
   saveSession: async (repos: unknown, active: unknown) => saveSession(repos, active),
+  conflictVersions: g.conflictVersions,
+  saveResolution: g.saveResolution,
+  resolveDeletion: g.resolveDeletion,
+  conflictStages: g.conflictStages,
   // remotes
   remoteConfig: g.remoteConfig,
   addRemote: g.addRemote,

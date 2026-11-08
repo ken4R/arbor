@@ -51,6 +51,10 @@
   --conflict-ours-bg: rgba(90, 166, 232, 0.14);
   --conflict-theirs-bg: rgba(143, 127, 240, 0.16);
   --stripe: rgba(255, 255, 255, 0.02);
+  /* Éditeur de fusion */
+  --merge-base-bg: rgba(160, 170, 190, 0.08);
+  --merge-both-bg: rgba(63, 182, 168, 0.14);
+  --merge-resolved-bg: rgba(79, 191, 115, 0.1);
   /* Code des diffs et du blame */
   --diff-font-size: 12px;
   color-scheme: dark;
@@ -109,6 +113,10 @@
   --conflict-ours-bg: rgba(42, 120, 200, 0.12);
   --conflict-theirs-bg: rgba(106, 88, 216, 0.13);
   --stripe: rgba(20, 30, 50, 0.03);
+  /* Éditeur de fusion */
+  --merge-base-bg: rgba(60, 70, 90, 0.06);
+  --merge-both-bg: rgba(15, 125, 115, 0.12);
+  --merge-resolved-bg: rgba(29, 127, 61, 0.08);
   color-scheme: light;
 }
 
@@ -167,6 +175,10 @@
     --conflict-ours-bg: rgba(42, 120, 200, 0.12);
     --conflict-theirs-bg: rgba(106, 88, 216, 0.13);
     --stripe: rgba(20, 30, 50, 0.03);
+    /* Éditeur de fusion */
+    --merge-base-bg: rgba(60, 70, 90, 0.06);
+    --merge-both-bg: rgba(15, 125, 115, 0.12);
+    --merge-resolved-bg: rgba(29, 127, 61, 0.08);
     color-scheme: light;
   }
 }
@@ -1917,6 +1929,232 @@ tr.cf-marker {
 .tab-new:disabled,
 .tab-close:disabled {
   opacity: 0.4;
+}
+
+/* Éditeur de fusion à trois panneaux */
+.merge-editor .diff-head {
+  flex-wrap: wrap;
+}
+.mg-nav {
+  display: flex;
+  gap: 2px;
+}
+.mg-ok {
+  color: var(--add);
+}
+.mg-panes {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.mg-top,
+.mg-bottom {
+  position: relative;
+  flex: 1 1 50%;
+  min-height: 0;
+  overflow: auto;
+  overflow-anchor: none; /* défilement piloté par la synchronisation */
+}
+.mg-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  font-family: var(--mono);
+  font-size: var(--diff-font-size);
+  line-height: 20px;
+}
+.mg-colhead {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 4px 12px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-dim);
+  background: var(--bg-2);
+  border-bottom: 1px solid var(--border);
+  border-right: 1px solid var(--border);
+}
+.mg-ours-head {
+  box-shadow: inset 0 -2px 0 var(--blue);
+}
+.mg-theirs-head {
+  box-shadow: inset 0 -2px 0 var(--purple);
+}
+.mg-cell {
+  min-width: 0;
+  border-right: 1px solid var(--border);
+}
+.mg-ours {
+  background: var(--conflict-ours-bg);
+}
+.mg-theirs {
+  background: var(--conflict-theirs-bg);
+}
+.mg-base {
+  background: var(--merge-base-bg);
+}
+.mg-both {
+  background: var(--merge-both-bg);
+}
+.mg-conflict-cell {
+  cursor: pointer;
+  border-top: 1px solid var(--warn-border);
+  border-bottom: 1px solid var(--warn-border);
+}
+.mg-cell.mg-current,
+.mg-seg.mg-current {
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+.mg-line {
+  display: flex;
+}
+.mg-no {
+  flex: none;
+  width: calc(5ch + 8px);
+  padding-right: 8px;
+  text-align: right;
+  color: var(--text-faint);
+  user-select: none;
+}
+.mg-txt {
+  flex: 1;
+  min-width: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  padding-right: 8px;
+}
+.mg-fold {
+  display: block;
+  width: 100%;
+  padding: 0 12px;
+  text-align: left;
+  font: inherit;
+  color: var(--text-faint);
+  background: var(--stripe);
+}
+.mg-fold:hover {
+  color: var(--text);
+}
+.mg-result-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  background: var(--bg-2);
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+.mg-hint {
+  font-weight: 400;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+.mg-seg {
+  border-bottom: 1px solid var(--border);
+}
+.mg-seg-mine {
+  background: var(--conflict-ours-bg);
+}
+.mg-seg-theirs {
+  background: var(--conflict-theirs-bg);
+}
+.mg-seg-both {
+  background: var(--merge-both-bg);
+}
+.mg-seg-resolved {
+  background: var(--merge-resolved-bg);
+}
+.mg-seg-open {
+  background: var(--warn-bg-faint);
+  box-shadow: inset 3px 0 0 var(--danger);
+}
+.mg-seg-open.mg-current {
+  box-shadow: inset 3px 0 0 var(--accent), inset 0 0 0 1px var(--danger);
+}
+.mg-seg-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+}
+.mg-seg-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-dim);
+  margin-right: 6px;
+}
+.mg-seg-open .mg-seg-label {
+  color: var(--danger);
+}
+.mg-choice {
+  padding: 2px 8px;
+  font-size: 11px;
+}
+.mg-choice.on {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.mg-text {
+  display: block;
+  width: 100%;
+  resize: none;
+  field-sizing: content; /* hauteur selon le contenu */
+  overflow: hidden;
+  margin: 0;
+  padding: 0 12px 0 calc(5ch + 16px);
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: var(--diff-font-size);
+  line-height: 20px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.mg-text:focus {
+  background: var(--stripe);
+}
+.mg-text::placeholder {
+  color: var(--text-faint);
+  font-style: italic;
+}
+.mg-deletion-msg {
+  padding: 10px 12px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.mg-seg-merged {
+  background: var(--merge-both-bg);
+}
+.mg-warn {
+  max-width: 640px;
+  margin: 24px auto;
+  padding: 16px;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--warn-bg-faint);
+  border: 1px solid var(--warn-border);
+  border-radius: var(--radius);
+}
+.mg-warn-actions {
+  display: flex;
+  gap: 8px;
+  margin: 12px 0 8px;
+}
+.mg-stale {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 12px;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--warn-bg);
+  border-bottom: 1px solid var(--warn-border);
 }
 
 /* Tags (TagsSection.tsx, TagDialog.tsx) */
