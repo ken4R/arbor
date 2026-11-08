@@ -1954,6 +1954,7 @@ tr.cf-marker {
   flex: 1 1 50%;
   min-height: 0;
   overflow: auto;
+  overflow-anchor: none; /* défilement piloté par la synchronisation */
 }
 .mg-grid {
   display: grid;

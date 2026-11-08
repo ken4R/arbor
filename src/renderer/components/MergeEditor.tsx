@@ -268,7 +268,7 @@ export function MergeEditor({ repo, path, onClose, fallback }: { repo: string; p
   keys.current = { requestClose, goConflict, choose, current, conflicts, model };
   useEffect(() => {
     let overlayOpen = false;
-    const onCapture = (e: KeyboardEvent) => {
+    const onCapture = () => {
       overlayOpen = !!document.querySelector('[data-overlay]');
     };
     const onKey = (e: KeyboardEvent) => {
@@ -474,8 +474,12 @@ function SegmentText({ value, width, placeholder, onFocus, onChange }: { value: 
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
+    // La mesure passe par une hauteur nulle : le défilement du panneau est rétabli (sinon il serait ramené plus haut).
+    const pane = el.closest('.mg-bottom');
+    const scroll = pane?.scrollTop ?? 0;
     el.style.height = '0';
     el.style.height = `${el.scrollHeight}px`;
+    if (pane) pane.scrollTop = scroll;
   }, [value, width]);
   return (
     <textarea
