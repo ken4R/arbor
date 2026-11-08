@@ -57,6 +57,13 @@
   --merge-resolved-bg: rgba(79, 191, 115, 0.1);
   /* Code des diffs et du blame */
   --diff-font-size: 12px;
+  /* Rebase interactif */
+  --rebase-drop-target: #3fb6a8;
+  --rebase-squash-bg: rgba(143, 127, 240, 0.1);
+  --rebase-edit-bg: rgba(224, 166, 58, 0.1);
+  --rebase-drop-bg: rgba(224, 96, 126, 0.08);
+  --rebase-published: #5aa6e8;
+  --rebase-published-bg: rgba(90, 166, 232, 0.14);
   color-scheme: dark;
 }
 
@@ -113,6 +120,13 @@
   --conflict-ours-bg: rgba(42, 120, 200, 0.12);
   --conflict-theirs-bg: rgba(106, 88, 216, 0.13);
   --stripe: rgba(20, 30, 50, 0.03);
+  /* Rebase interactif */
+  --rebase-drop-target: #0f7d73;
+  --rebase-squash-bg: rgba(106, 88, 216, 0.08);
+  --rebase-edit-bg: rgba(214, 142, 20, 0.1);
+  --rebase-drop-bg: rgba(214, 64, 96, 0.07);
+  --rebase-published: #2a78c8;
+  --rebase-published-bg: rgba(42, 120, 200, 0.12);
   /* Éditeur de fusion */
   --merge-base-bg: rgba(60, 70, 90, 0.06);
   --merge-both-bg: rgba(15, 125, 115, 0.12);
@@ -175,6 +189,13 @@
     --conflict-ours-bg: rgba(42, 120, 200, 0.12);
     --conflict-theirs-bg: rgba(106, 88, 216, 0.13);
     --stripe: rgba(20, 30, 50, 0.03);
+    /* Rebase interactif */
+    --rebase-drop-target: #0f7d73;
+    --rebase-squash-bg: rgba(106, 88, 216, 0.08);
+    --rebase-edit-bg: rgba(214, 142, 20, 0.1);
+    --rebase-drop-bg: rgba(214, 64, 96, 0.07);
+    --rebase-published: #2a78c8;
+    --rebase-published-bg: rgba(42, 120, 200, 0.12);
     /* Éditeur de fusion */
     --merge-base-bg: rgba(60, 70, 90, 0.06);
     --merge-both-bg: rgba(15, 125, 115, 0.12);
@@ -1929,6 +1950,157 @@ tr.cf-marker {
 .tab-new:disabled,
 .tab-close:disabled {
   opacity: 0.4;
+}
+
+/* Rebase interactif : planificateur et bandeau */
+.dialog.rebase-dialog {
+  width: 760px;
+  max-height: calc(100vh - 48px);
+}
+.rebase-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  max-height: 52vh;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+}
+.rebase-item {
+  border-top: 2px solid transparent;
+  border-bottom: 1px solid var(--border);
+}
+.rebase-item.drop-before {
+  border-top-color: var(--rebase-drop-target);
+}
+.rebase-item.drop-after {
+  border-bottom: 2px solid var(--rebase-drop-target);
+}
+.rebase-item.dragging {
+  opacity: 0.5;
+}
+.rebase-item.action-squash,
+.rebase-item.action-fixup {
+  background: var(--rebase-squash-bg);
+}
+.rebase-item.action-edit {
+  background: var(--rebase-edit-bg);
+}
+.rebase-item.action-drop {
+  background: var(--rebase-drop-bg);
+}
+.rebase-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  outline: none;
+  cursor: grab;
+}
+.rebase-row:focus {
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+.rebase-grip {
+  color: var(--text-faint);
+  display: grid;
+  place-items: center;
+}
+.rebase-action {
+  font: inherit;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--bg-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 3px 4px;
+  width: 230px;
+  flex: none;
+}
+.rebase-action:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+.rebase-sha {
+  color: var(--text-dim);
+  flex: none;
+}
+.rebase-subject {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rebase-item.action-drop .rebase-subject {
+  text-decoration: line-through;
+  color: var(--text-faint);
+}
+.rebase-item.merged .rebase-subject {
+  color: var(--text-dim);
+}
+.rebase-published {
+  flex: none;
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  color: var(--rebase-published);
+  background: var(--rebase-published-bg);
+}
+.rebase-message {
+  padding: 0 8px 8px 48px;
+}
+.rebase-message textarea {
+  font-family: var(--mono);
+  font-size: 12px;
+  resize: vertical;
+}
+.rebase-help {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.rebase-summary {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+}
+.rebase-warning {
+  margin: 0;
+  font-size: 12px;
+  padding: 6px 8px;
+  border-radius: var(--radius);
+  background: var(--warn-bg-soft);
+  border: 1px solid var(--warn-border);
+}
+.rebase-error {
+  margin: 0;
+  font-size: 12px;
+  color: var(--danger);
+  white-space: pre-wrap;
+}
+.op-step {
+  color: var(--text-dim);
+  font-weight: 400;
+}
+.op-stopped code,
+.op-remaining code {
+  color: var(--text-dim);
+}
+.op-remaining summary {
+  cursor: pointer;
+  color: var(--text-dim);
+}
+.op-remaining ul {
+  margin: 4px 0 0;
+  padding-left: 16px;
+  max-height: 140px;
+  overflow-y: auto;
+}
+.op-remaining-action {
+  font-family: var(--mono);
+  color: var(--text-dim);
 }
 
 /* Éditeur de fusion à trois panneaux */

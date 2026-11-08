@@ -16,6 +16,8 @@ import './commands/prefs';
 // onglets
 import './commands/tabs';
 
+// rebase interactif
+import './commands/rebase';
 // éditeur de fusion
 import './commands/conflicts';
 // remotes

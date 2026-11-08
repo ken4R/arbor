@@ -252,6 +252,8 @@ const READ_ONLY = new Set([
   'setPreferences',
   'restoreSession',
   'saveSession',
+  // rebase interactif
+  'rebasePlan',
   'conflictStages', // ls-files --no-optional-locks : n'écrit rien
   // remotes
   'remoteConfig',
@@ -323,6 +325,11 @@ const handlers: Record<string, (...args: any[]) => Promise<unknown>> = {
   setPreferences: async (patch: unknown) => savePreferences(patch),
   restoreSession: async () => restoreSession(),
   saveSession: async (repos: unknown, active: unknown) => saveSession(repos, active),
+  // rebase interactif
+  rebasePlan: (repo: string, base: unknown, ancestorOnly: unknown) => g.rebasePlan(repo, String(base), ancestorOnly === true),
+  rebaseInteractive: (repo: string, upstream: unknown, expectedHead: unknown, steps: unknown) =>
+    g.rebaseInteractive(repo, String(upstream), String(expectedHead), Array.isArray(steps) ? steps : []),
+  skipOp: g.skipOp,
   conflictVersions: g.conflictVersions,
   saveResolution: g.saveResolution,
   resolveDeletion: g.resolveDeletion,

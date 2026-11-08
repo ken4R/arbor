@@ -6,6 +6,7 @@ import { api } from './api';
 import type { MenuItem } from './components/ContextMenu';
 import { openDeleteTagDialog, openTagDialog, pushTagAction } from './components/TagDialog';
 import type { Ui } from './ui';
+import { openRebaseDialog } from './components/RebaseDialog';
 
 export function checkoutBranch(ui: Ui, repo: string, name: string) {
   return ui.run(`Checkout de ${name}…`, () => api.checkout(repo, name));
@@ -27,6 +28,11 @@ export function branchMenu(ui: Ui, snap: RepoSnapshot, name: string, remote: boo
       label: `Rebaser « ${current ?? 'HEAD'} » sur « ${name} »`,
       disabled: isCurrent || !current,
       onClick: () => ui.run('Rebase…', () => api.rebase(repo, name), 'Rebase terminé'),
+    },
+    {
+      label: `Rebase interactif de « ${current ?? 'HEAD'} » sur « ${name} »…`,
+      disabled: isCurrent || !snap.head || snap.status.state !== 'clean',
+      onClick: () => openRebaseDialog(ui, snap, name, `« ${name} »`),
     },
     'separator',
     {
@@ -98,6 +104,11 @@ export function commitMenu(ui: Ui, snap: RepoSnapshot, c: Commit): MenuItem[] {
     'separator',
     { label: 'Cherry-pick dans la branche courante', disabled: c.sha === snap.head, onClick: () => ui.run('Cherry-pick…', () => api.cherryPick(repo, c.sha)) },
     { label: 'Annuler ce commit (revert)', onClick: () => ui.run('Revert…', () => api.revert(repo, c.sha)) },
+    {
+      label: 'Rebase interactif à partir d’ici…',
+      disabled: c.sha === snap.head || !snap.head || snap.status.state !== 'clean',
+      onClick: () => openRebaseDialog(ui, snap, c.sha, short, true),
+    },
     'separator',
     { label: 'Reset soft vers ce commit', onClick: () => reset('soft') },
     { label: 'Reset mixed vers ce commit', onClick: () => reset('mixed') },

@@ -1,5 +1,6 @@
 import type { FinalNewlines, MergeBlock } from './merge3';
 import type { Preferences } from './prefs';
+import type { RebaseProgress, RebaseStep } from './rebase';
 
 export interface Commit {
   sha: string;
@@ -40,6 +41,8 @@ export interface WorkingStatus {
   unstaged: FileChange[];
   conflicted: FileChange[];
   state: RepoState;
+  /** Progression d'un rebase en cours (état `rebasing`), sinon null ou absent. */
+  rebase?: RebaseProgress | null;
 }
 
 export type RepoState = 'clean' | 'merging' | 'rebasing' | 'cherry-picking' | 'reverting';
@@ -198,6 +201,15 @@ export interface ArborApi {
   restoreSession(): Promise<{ repos: string[]; active: number }>;
   /** Enregistre les onglets ouverts (seuls les dépôts ouverts dans Arbor sont retenus). */
   saveSession(repos: string[], active: number): Promise<void>;
+  /** Commits réécrits par un rebase interactif sur `base` ; `ancestorOnly` : `base` doit être un ancêtre de HEAD. */
+  rebasePlan(repo: string, base: string, ancestorOnly: boolean): Promise<RebasePlan>;
+  /**
+   * Lance `git rebase -i` sur `upstream` ; `steps` dans l'ordre de Git (plus ancien d'abord). HEAD doit valoir
+   * `expectedHead` et les commits ceux du plan. « stopped » : arrêt sur un « edit » (un conflit lève une erreur).
+   */
+  rebaseInteractive(repo: string, upstream: string, expectedHead: string, steps: RebaseStep[]): Promise<'done' | 'stopped'>;
+  /** Passe l'étape en cours d'un rebase, d'un cherry-pick ou d'un revert. */
+  skipOp(repo: string): Promise<void>;
   /** Trois versions d'un fichier en conflit (éditeur de fusion), « ma version » selon l'opération (inversée en rebase). */
   conflictVersions(repo: string, path: string): Promise<ConflictVersions>;
   /** Écrit le résultat si le fichier a encore l'empreinte `expectedHash`, l'indexe si `markResolved` ; renvoie la nouvelle empreinte. */
@@ -228,6 +240,22 @@ export interface ArborApi {
   pushAllTags(repo: string, remote: string): Promise<void>;
   /** Tags du remote (`git ls-remote`, accès réseau). */
   remoteTags(repo: string, remote: string): Promise<RemoteTag[]>;
+}
+
+/** Commits qu'un rebase interactif peut réécrire (`upstream..HEAD`, sans fusion), plus ancien d'abord. */
+export interface RebasePlan {
+  /** SHA de la base. */
+  upstream: string;
+  /** Commit sur lequel les commits sont rejoués (= `upstream`). */
+  onto: string;
+  /** HEAD au moment du plan, revérifié au lancement. */
+  head: string;
+  /** Branche réécrite, null en HEAD détachée. */
+  branch: string | null;
+  /** `published` : déjà présent sur la branche distante suivie. */
+  commits: (Commit & { published: boolean })[];
+  /** Fichiers indexés ou modifiés (hors non suivis) : le rebase est refusé. */
+  dirty: boolean;
 }
 
 /** Versions d'un fichier en conflit pour l'éditeur de fusion ; null = absent de ce côté (supprimé, ou pas de base). */
