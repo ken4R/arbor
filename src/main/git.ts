@@ -15,6 +15,7 @@ import type {
   Stash,
   Tag,
   WorkingStatus,
+  RemoteTag,
 } from '../shared/types';
 
 export class GitError extends Error {
@@ -40,6 +41,8 @@ const GIT_ERRORS: [RegExp, (m: RegExpMatchArray) => string][] = [
   [/There is no tracking information|has no upstream branch/, () => 'Cette branche ne suit aucune branche distante.'],
   [/You have unstaged changes|cannot (?:rebase|pull with rebase): You have unstaged changes/, () => 'Des modifications non commitées empêchent l\'opération. Commitez-les ou mettez-les de côté (stash).'],
   [/patch does not apply|corrupt patch/, () => 'Le bloc ne s\'applique plus : rafraîchissez.'],
+  [/unable to delete '(?:refs\/tags\/)?(.+?)': remote ref does not exist/, (m) => `Le tag « ${m[1]} » n'existe pas sur le remote.`],
+  [/\[rejected\].*\(already exists\)/, () => 'Un tag du même nom existe déjà sur le remote.'],
 ];
 
 /** Traduit les erreurs Git courantes en français ; sinon renvoie la fin du message d'origine. */
@@ -829,9 +832,15 @@ export async function stashDrop(repo: string, index: number, sha: string) {
   await git(repo, ['stash', 'drop', await stashRef(repo, index, sha)]);
 }
 
-export async function createTag(repo: string, name: string, sha: string) {
+/** Tag léger (`message` null) ou annoté (message sur l'entrée standard, nettoyé des espaces superflus). */
+export async function createTag(repo: string, name: string, sha: string, message: string | null) {
   await checkRefName(repo, 'tag', name);
-  await git(repo, ['tag', '--end-of-options', name, sha]);
+  if (message === null) {
+    await git(repo, ['tag', '--end-of-options', name, sha]);
+    return;
+  }
+  if (!message.trim()) throw new GitError("Un tag annoté a besoin d'un message.", '');
+  await git(repo, ['tag', '-a', '-F', '-', '--cleanup=whitespace', '--end-of-options', name, sha], { input: message });
 }
 
 export async function cherryPick(repo: string, sha: string) {
@@ -858,4 +867,72 @@ export async function isRepo(path: string): Promise<boolean> {
 
 export async function toplevel(path: string): Promise<string> {
   return (await git(path, ['rev-parse', '--show-toplevel'])).trim();
+}
+
+// Tags : suppression, publication, liste distante.
+
+/** Refuse un tag absent du dépôt local (nom vérifié par `check-ref-format`). */
+async function requireLocalTag(repo: string, name: string) {
+  await checkRefName(repo, 'tag', name);
+  const sha = (await git(repo, ['rev-parse', '--verify', '-q', `refs/tags/${name}`], { okCodes: [1] })).trim();
+  if (!sha) throw new GitError(`Le tag « ${name} » n'existe pas (ou plus) : rafraîchissez.`, '');
+}
+
+/** Refuse un remote qui n'est pas configuré (une URL passée à la place d'un nom, par exemple). */
+async function requireRemote(repo: string, remote: string) {
+  const names = (await git(repo, ['remote'])).split('\n').filter(Boolean);
+  if (!names.includes(remote)) throw new GitError(`Le remote « ${remote} » n'existe pas.`, '');
+}
+
+export async function deleteTag(repo: string, name: string) {
+  await requireLocalTag(repo, name);
+  await git(repo, ['tag', '-d', '--end-of-options', name]);
+}
+
+/** Checkout (HEAD détachée) d'un tag par son nom complet `refs/tags/<nom>` : jamais ambigu avec une branche homonyme. */
+export async function checkoutTag(repo: string, name: string) {
+  await requireLocalTag(repo, name);
+  await git(repo, ['checkout', '--detach', `refs/tags/${name}`]);
+}
+
+export async function deleteRemoteTag(repo: string, remote: string, name: string) {
+  await checkRefName(repo, 'tag', name);
+  // `git push --delete` réussit même si le tag est absent du remote : on vérifie d'abord sa présence.
+  if (!(await remoteTags(repo, remote)).some((t) => t.name === name)) throw new GitError(`Le tag « ${name} » n'existe pas sur ${remote}.`, '');
+  await git(repo, ['push', '--delete', '--end-of-options', remote, `refs/tags/${name}`]);
+}
+
+export async function pushTag(repo: string, remote: string, name: string) {
+  await requireLocalTag(repo, name);
+  await requireRemote(repo, remote);
+  await git(repo, ['push', '--end-of-options', remote, `refs/tags/${name}`]);
+}
+
+export async function pushAllTags(repo: string, remote: string) {
+  await requireRemote(repo, remote);
+  await git(repo, ['push', '--tags', '--end-of-options', remote]);
+}
+
+/**
+ * Analyse `git ls-remote --tags --refs` (`<sha>\trefs/tags/<nom>`) : noms et objets pointés, dans l'ordre reçu.
+ * Les entrées déréférencées (`^{}`) et les lignes inattendues sont ignorées.
+ */
+export function parseLsRemoteTags(out: string): RemoteTag[] {
+  const tags: RemoteTag[] = [];
+  for (const line of out.split('\n')) {
+    const tab = line.indexOf('\t');
+    if (tab < 0) continue;
+    const sha = line.slice(0, tab).trim();
+    const ref = line.slice(tab + 1).replace(/\r$/, '');
+    if (!SHA_RE.test(sha) || !ref.startsWith('refs/tags/') || ref.endsWith('^{}')) continue;
+    const name = ref.slice('refs/tags/'.length);
+    if (name) tags.push({ name, sha });
+  }
+  return tags;
+}
+
+/** Tags présents sur un remote (accès réseau, à la demande). */
+export async function remoteTags(repo: string, remote: string): Promise<RemoteTag[]> {
+  await requireRemote(repo, remote);
+  return parseLsRemoteTags(await git(repo, ['ls-remote', '--tags', '--refs', '--end-of-options', remote]));
 }

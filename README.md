@@ -35,6 +35,7 @@ npm test               # tests unitaires
 - **Thème clair et préférences** (Ctrl/Cmd+, ou engrenage) : thème clair, sombre ou celui du système, taille du code des diffs, police à chasse fixe (code, diffs, blame, identifiants de commit), mode de diff par défaut, rafraîchissement automatique, réouverture des onglets ; enregistrées immédiatement et conservées au redémarrage, sans flash sombre au lancement.
 - **Palette de commandes** (Ctrl/Cmd+Maj+P ou Ctrl/Cmd+K) : recherche floue, insensible aux accents, sur les commandes (fetch, pull, push, commit, stash, nouvelle branche, continuer/abandonner…), les branches et tags, les dépôts récents et les fichiers modifiés ; préfixes `>` commandes, `@` branches, `#` fichiers ; seules les commandes possibles dans l'état du dépôt sont proposées.
 - **Onglets multi-dépôts** : un onglet par dépôt (Ctrl/Cmd+T, Ctrl/Cmd+W, Ctrl+Tab / Ctrl+Maj+Tab, clic du milieu), chaque onglet garde sa sélection, son diff et son brouillon de commit ; seul l'onglet actif est surveillé ; onglets rouverts au redémarrage (préférence « restaurer les onglets »), dépôts supprimés écartés, dépôts momentanément inaccessibles (disque externe, partage réseau) gardés et rouverts au lancement suivant ; dépôts de même nom distingués par leur dossier parent.
+- **Tags** : création légère ou annotée (message multiligne) sur n'importe quel commit, avec publication immédiate facultative ; section de la barre latérale (clic = sélection du commit, double-clic = checkout de `refs/tags/<nom>`, « + » = tag sur HEAD, infobulle du message) ; menu du tag dans la barre latérale et sur les badges du graphe (checkout, pousser vers un remote, supprimer en local et sur le remote si le tag y est présent, copier le nom) ; palette : « Créer un tag… », « Pousser tous les tags vers <remote> ».
 
 ![Résolution de conflits](docs/conflits.png)
 
@@ -51,6 +52,6 @@ Le rendu n'a aucun accès direct au système : toutes les commandes passent par 
 ## Feuille de route
 
 1. Onglets : conserver aussi l'état propre aux composants (défilement du graphe, recherche, panneaux repliés), aujourd'hui remis à zéro à chaque activation.
-2. Rebase interactif (glisser-déposer), éditeur de fusion à trois panneaux, gestion des remotes et des tags, annulation via le reflog.
+2. Rebase interactif (glisser-déposer), éditeur de fusion à trois panneaux, gestion des remotes, annulation via le reflog.
 3. Authentification GitHub/GitLab, pull requests, identifiants SSH/HTTPS.
 4. Performances sur gros dépôts, tests de bout en bout en CI, paquets d'installation (electron-builder).

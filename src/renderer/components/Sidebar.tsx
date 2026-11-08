@@ -41,7 +41,7 @@ export function Sidebar({ snap, onSelectCommit }: { snap: RepoSnapshot; onSelect
         ))}
       </Section>
       <RemotesSection snap={snap} match={match} onSelectCommit={onSelectCommit} />
-      <TagsSection snap={snap} match={match} />
+      <TagsSection snap={snap} match={match} onSelectCommit={onSelectCommit} />
       <Section title="Stashs" count={stashes.length} icon={<Icon.stash />}>
         {stashes.map((s) => (
           <div

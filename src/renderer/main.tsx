@@ -16,6 +16,9 @@ import './commands/prefs';
 // onglets
 import './commands/tabs';
 
+// tags
+import './commands/tags';
+
 // Préférences enregistrées lues dès le démarrage (et migration des anciennes clés localStorage).
 void loadPreferences();
 
