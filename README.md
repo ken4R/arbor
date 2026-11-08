@@ -53,6 +53,6 @@ Le rendu n'a aucun accès direct au système : toutes les commandes passent par 
 ## Feuille de route
 
 1. Onglets : conserver aussi l'état propre aux composants (défilement du graphe, recherche, panneaux repliés), aujourd'hui remis à zéro à chaque activation.
-2. Rebase interactif (glisser-déposer), éditeur de fusion à trois panneaux, gestion des remotes, annulation via le reflog.
+2. Rebase interactif (glisser-déposer), éditeur de fusion à trois panneaux, annulation via le reflog.
 3. Authentification GitHub/GitLab, pull requests, identifiants SSH/HTTPS.
 4. Performances sur gros dépôts, tests de bout en bout en CI, paquets d'installation (electron-builder).
