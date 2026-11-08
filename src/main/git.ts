@@ -26,6 +26,7 @@ import type { RebasePlan } from '../shared/types';
 import { REBASE_MIN_GIT, buildTodo, gitVersionAtLeast, parseGitVersion, progressFromFiles, todoWithoutOrphanedGroup, validateSteps, type RebaseProgress, type RebaseStep } from '../shared/rebase';
 import { blocksFromMergeOutput, markerSize, normalizeConflictText, parseMergeOutput, splitLines } from '../shared/merge3';
 import type { RemoteConfig } from '../shared/types';
+import type { ReflogEntry, ReflogKind, UndoInfo, UndoPlan } from '../shared/types';
 
 export class GitError extends Error {
   constructor(message: string, public readonly stderr: string) {
@@ -58,6 +59,9 @@ const GIT_ERRORS: [RegExp, (m: RegExpMatchArray) => string][] = [
   [/does not appear to be a git repository/, () => 'L\'URL du remote ne désigne pas un dépôt Git accessible.'],
   [/unable to delete '(?:refs\/tags\/)?(.+?)': remote ref does not exist/, (m) => `Le tag « ${m[1]} » n'existe pas sur le remote.`],
   [/\[rejected\].*\(already exists\)/, () => 'Un tag du même nom existe déjà sur le remote.'],
+  // reflog (reset --keep)
+  [/Entry '(.+?)' not uptodate\. Cannot merge/, (m) => `« ${m[1]} » a des modifications locales que ce retour en arrière écraserait : commitez-les ou mettez-les de côté (stash) avant.`],
+  [/Untracked working tree file '(.+?)' would be overwritten/, (m) => `Le fichier non suivi « ${m[1]} » serait écrasé : déplacez-le, ajoutez-le ou mettez-le de côté (stash) avant.`],
 ];
 
 /** Traduit les erreurs Git courantes en français ; sinon renvoie la fin du message d'origine. */
@@ -893,8 +897,9 @@ export async function revert(repo: string, sha: string) {
   await git(repo, ['revert', '--no-edit', '--end-of-options', sha]);
 }
 
-export async function reset(repo: string, sha: string, mode: 'soft' | 'mixed' | 'hard') {
+export async function reset(repo: string, sha: string, mode: 'soft' | 'mixed' | 'hard' | 'keep') {
   assertSha(sha);
+  if (!['soft', 'mixed', 'hard', 'keep'].includes(mode)) throw new GitError(`Mode de reset inconnu : ${mode}.`, '');
   await git(repo, ['reset', `--${mode}`, sha, '--']);
 }
 
@@ -1541,4 +1546,110 @@ export function parseLsRemoteTags(out: string): RemoteTag[] {
 export async function remoteTags(repo: string, remote: string): Promise<RemoteTag[]> {
   await requireRemote(repo, remote);
   return parseLsRemoteTags(await git(repo, ['ls-remote', '--tags', '--refs', '--end-of-options', remote]));
+}
+
+// Reflog : liste des états successifs d'une référence et annulation de la dernière opération de la branche.
+
+/** Entrées du reflog par page (dialogue du reflog). */
+export const REFLOG_PAGE = 200;
+/** Avec `--date=unix`, `%gd` vaut `ref@{<date de l'opération>}` : la position est recalculée à partir de `--skip`. */
+const REFLOG_FORMAT = ['%H', '%gd', '%gs'].join(FS);
+
+function reflogArgs(fullRef: string, skip: number, limit: number): string[] {
+  return ['log', '-g', '-z', '--date=unix', `--format=${REFLOG_FORMAT}`, `--max-count=${limit}`, `--skip=${skip}`, fullRef, '--'];
+}
+
+/** Nature d'une opération d'après le message du reflog (`%gs`), y compris les formes d'anciennes versions de Git. */
+export function classifyReflog(subject: string): ReflogKind {
+  const s = subject.trimStart();
+  if (/^commit \(amend\)/.test(s)) return 'amend';
+  if (/^commit \(merge\)/.test(s)) return 'merge';
+  if (/^commit \(cherry-pick\)/.test(s)) return 'cherry-pick';
+  if (/^commit( \(initial\))?:/.test(s)) return 'commit';
+  if (/^merge\b/.test(s)) return 'merge';
+  if (/^pull\b/.test(s)) return 'pull';
+  if (/^rebase\b/.test(s)) return 'rebase';
+  if (/^reset:/.test(s)) return 'reset';
+  if (/^cherry-pick\b/.test(s)) return 'cherry-pick';
+  if (/^revert\b/.test(s)) return 'revert';
+  if (/^checkout:/.test(s)) return 'checkout';
+  return 'other';
+}
+
+/** Analyse la sortie de `reflogArgs` (enregistrements séparés par NUL) ; `skip` = position de la première entrée. */
+export function parseReflog(out: string, ref: string, skip = 0): ReflogEntry[] {
+  return out
+    .split('\0')
+    .map((rec) => rec.replace(/^\n/, ''))
+    .filter(Boolean)
+    .map((rec) => {
+      const [sha = '', gd = '', ...rest] = rec.split(FS);
+      return { sha, gd, subject: rest.join(FS) };
+    })
+    .filter((r) => SHA_RE.test(r.sha))
+    .map((r, i) => ({
+      index: skip + i,
+      selector: `${ref}@{${skip + i}}`,
+      sha: r.sha,
+      subject: r.subject,
+      kind: classifyReflog(r.subject),
+      date: Number(r.gd.match(/@\{(\d+)\}$/)?.[1] ?? 0),
+    }));
+}
+
+const UNDO_LABEL_MAX = 60;
+
+/** Message du reflog raccourci pour une confirmation. */
+export function undoLabel(subject: string): string {
+  const s = subject.trim();
+  return s.length > UNDO_LABEL_MAX ? `${s.slice(0, UNDO_LABEL_MAX - 1).trimEnd()}…` : s;
+}
+
+/**
+ * Annulation de la dernière opération de `branch` à partir des deux premières entrées de son reflog : la branche
+ * revient à l'entrée 1, par `reset --soft` après un commit ou un amend (changements gardés indexés), `--keep` sinon.
+ * L'entrée 0 doit être HEAD (sinon la branche a bougé sans reflog). `reason` explique un refus.
+ */
+export function undoPlan(entries: { sha: string; subject: string }[], head: string | null, branch: string | null): { plan: UndoPlan | null; reason: string | null } {
+  const no = (reason: string) => ({ plan: null, reason });
+  if (!branch) return no('HEAD détachée : seule la dernière opération d\'une branche extraite peut être annulée.');
+  if (!head) return no('Dépôt vide : rien à annuler.');
+  const [last, previous] = entries;
+  if (!last) return no(`Le reflog de « ${branch} » est vide : rien à annuler.`);
+  if (last.sha !== head) return no(`Le reflog de « ${branch} » ne correspond pas à HEAD (branche déplacée sans reflog) : annulation impossible.`);
+  const label = undoLabel(last.subject);
+  if (!previous) return no(`« ${label} » est le premier état de la branche : rien à annuler.`);
+  const kind = classifyReflog(last.subject);
+  if (kind === 'checkout' || kind === 'other') return no(`« ${label} » ne s'annule pas automatiquement : choisissez un état dans le reflog.`);
+  if (previous.sha === head) return no(`« ${label} » n'a pas déplacé la branche : rien à annuler.`);
+  return { plan: { kind, label, target: previous.sha, mode: kind === 'commit' || kind === 'amend' ? 'soft' : 'keep' }, reason: null };
+}
+
+/** Page du reflog de « HEAD » ou d'une branche locale ; vide si la référence n'existe pas (encore). */
+export async function reflog(repo: string, ref: string, skip: number): Promise<ReflogEntry[]> {
+  const from = Number.isInteger(skip) && skip > 0 ? skip : 0;
+  let full = 'HEAD';
+  if (ref !== 'HEAD') {
+    await checkRefName(repo, 'branch', ref);
+    full = `refs/heads/${ref}`;
+  }
+  if (!(await git(repo, ['rev-parse', '--verify', '-q', full], { okCodes: [1] })).trim()) return [];
+  return parseReflog(await git(repo, reflogArgs(full, from, REFLOG_PAGE)), ref, from);
+}
+
+export async function undoInfo(repo: string): Promise<UndoInfo> {
+  const [st, head] = await Promise.all([status(repo), headSha(repo)]);
+  const base = { branch: st.branch, head };
+  if (st.state !== 'clean') return { ...base, plan: null, reason: 'Une opération est en cours : terminez-la ou abandonnez-la d\'abord.' };
+  const entries = st.branch && head ? parseReflog(await git(repo, reflogArgs(`refs/heads/${st.branch}`, 0, 2)), st.branch) : [];
+  return { ...base, ...undoPlan(entries, head, st.branch) };
+}
+
+/** Annule la dernière opération de la branche extraite, si elle est toujours celle affichée (HEAD et cible). */
+export async function undoLast(repo: string, expectedHead: string, expectedTarget: string) {
+  const info = await undoInfo(repo);
+  if (!info.plan) throw new GitError(info.reason ?? 'Rien à annuler.', '');
+  if (info.head !== expectedHead || info.plan.target !== expectedTarget)
+    throw new GitError('La branche a changé depuis l\'affichage : relancez Annuler pour voir la dernière opération.', '');
+  await reset(repo, info.plan.target, info.plan.mode);
 }

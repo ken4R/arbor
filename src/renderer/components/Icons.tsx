@@ -81,3 +81,12 @@ export function IconTagAdd() {
     </svg>
   );
 }
+
+/** Annuler la dernière opération (barre d'outils) : flèche qui revient en arrière. */
+export function IconReflogUndo() {
+  return (
+    <svg {...s}>
+      <path d="M5.5 3 2.5 6l3 3M2.5 6h7a4 4 0 0 1 0 8H7" />
+    </svg>
+  );
+}

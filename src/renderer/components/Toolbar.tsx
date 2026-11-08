@@ -19,6 +19,8 @@ import { useUi } from '../ui';
 import { formatShortcut } from '../commands';
 import { Icon, Logo } from './Icons';
 import { openPreferences, PREFERENCES_SHORTCUT } from './PreferencesDialog';
+import { IconReflogUndo } from './Icons';
+import { canUndo, undoLastAction } from './ReflogDialog';
 
 interface Props {
   repo: string;
@@ -68,6 +70,14 @@ export function Toolbar({ repo, snap, busy, onClose, onSwitch, onRefresh, autoRe
         <ToolButton label="Branche" icon={<Icon.branch />} disabled={!canNewBranch(current) || !!busy} onClick={() => current && newBranchAction(ui, current)} />
         <ToolButton label="Stash" icon={<Icon.stash />} disabled={!canStashSave(current) || !!busy} onClick={() => current && stashSaveAction(ui, current)} />
         <ToolButton label="Pop" icon={<Icon.pop />} disabled={!canStashPop(current) || !!busy} onClick={() => current && stashPopAction(ui, current)} />
+        <span className="toolbar-sep" />
+        <ToolButton
+          label="Annuler"
+          title="Annuler la dernière opération de la branche (commit, amend, fusion, rebase, pull, reset…) grâce au reflog"
+          icon={<IconReflogUndo />}
+          disabled={!canUndo(current) || !!busy}
+          onClick={() => canUndo(current) && void undoLastAction(ui, current)}
+        />
       </div>
       <div className="toolbar-right">
         {busy && <span className="busy"><span className="spinner" />{busy}</span>}
@@ -92,9 +102,9 @@ export function Toolbar({ repo, snap, busy, onClose, onSwitch, onRefresh, autoRe
   );
 }
 
-function ToolButton(props: { label: string; icon: React.ReactNode; onClick: () => void; disabled?: boolean; badge?: number }) {
+function ToolButton(props: { label: string; icon: React.ReactNode; onClick: () => void; disabled?: boolean; badge?: number; title?: string }) {
   return (
-    <button className="tool-btn" onClick={props.onClick} disabled={props.disabled}>
+    <button className="tool-btn" onClick={props.onClick} disabled={props.disabled} title={props.title}>
       <span className="tool-icon">
         {props.icon}
         {!!props.badge && <span className="tool-badge">{props.badge}</span>}
