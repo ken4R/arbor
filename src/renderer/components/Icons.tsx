@@ -60,3 +60,8 @@ export function Logo({ size = 22 }: { size?: number }) {
     </svg>
   );
 }
+
+/** Poignée de glisser-déposer d'une ligne du rebase interactif. */
+export const IconRebaseGrip = () => (
+  <svg {...s} width={12} height={12}><path d="M6 3.5h.01M10 3.5h.01M6 8h.01M10 8h.01M6 12.5h.01M10 12.5h.01" strokeWidth={2.2} /></svg>
+);

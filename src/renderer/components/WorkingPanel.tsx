@@ -3,13 +3,7 @@ import { api } from '../api';
 import { useUi } from '../ui';
 import { FileList } from './FileList';
 import { fileViewItems } from './FileView';
-
-const STATE_LABEL = {
-  merging: 'Fusion en cours',
-  rebasing: 'Rebase en cours',
-  'cherry-picking': 'Cherry-pick en cours',
-  reverting: 'Revert en cours',
-} as const;
+import { OperationBanner } from './OperationBanner';
 
 /** Message de commit en cours, conservé par App quand on consulte un autre commit. */
 export interface CommitDraft {
@@ -57,31 +51,7 @@ export function WorkingPanel({ repo, snap, activeDiff, draft, onDraft }: Props) 
 
   return (
     <div className="panel working">
-      {st.state !== 'clean' && (
-        <div className="op-banner">
-          <strong>{STATE_LABEL[st.state]}</strong>
-          <span>{st.conflicted.length ? `${st.conflicted.length} conflit(s) à résoudre` : 'Plus de conflits : vous pouvez continuer.'}</span>
-          <div className="op-actions">
-            <button
-              className="btn btn-sm"
-              onClick={() =>
-                ui.ask({
-                  title: 'Abandonner l\'opération en cours',
-                  message: 'Le dépôt revient à son état d\'avant l\'opération. Les conflits déjà résolus seront perdus.',
-                  confirm: 'Abandonner',
-                  danger: true,
-                  onSubmit: () => ui.run('Abandon…', () => api.abort(repo)),
-                })
-              }
-            >
-              Abandonner
-            </button>
-            <button className="btn btn-sm btn-primary" disabled={st.conflicted.length > 0} onClick={() => ui.run('Continuer…', () => api.continueOp(repo))}>
-              Continuer
-            </button>
-          </div>
-        </div>
-      )}
+      <OperationBanner repo={repo} snap={snap} />
 
       {st.conflicted.length > 0 && (
         <PanelSection title="Conflits" count={st.conflicted.length}>

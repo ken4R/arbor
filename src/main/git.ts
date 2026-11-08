@@ -16,6 +16,9 @@ import type {
   Tag,
   WorkingStatus,
 } from '../shared/types';
+import { mkdir, rm, writeFile } from 'node:fs/promises';
+import type { RebasePlan } from '../shared/types';
+import { REBASE_MIN_GIT, buildTodo, gitVersionAtLeast, parseGitVersion, progressFromFiles, validateSteps, type RebaseProgress, type RebaseStep } from '../shared/rebase';
 
 export class GitError extends Error {
   constructor(message: string, public readonly stderr: string) {
@@ -56,6 +59,8 @@ interface RunOptions {
   okCodes?: number[];
   /** Texte écrit sur l'entrée standard (patch pour `git apply -`). */
   input?: string;
+  /** Variables d'environnement ajoutées après les valeurs par défaut (rebase interactif). */
+  env?: Record<string, string>;
 }
 
 export function git(repo: string, args: string[], opts: RunOptions = {}): Promise<string> {
@@ -63,7 +68,7 @@ export function git(repo: string, args: string[], opts: RunOptions = {}): Promis
     const child = execFile(
       'git',
       args,
-      { cwd: repo, maxBuffer: 256 * 1024 * 1024, env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_EDITOR: 'true', LC_ALL: 'C' } },
+      { cwd: repo, maxBuffer: 256 * 1024 * 1024, env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_EDITOR: 'true', LC_ALL: 'C', ...opts.env } },
       (err, stdout, stderr) => {
         const code = err ? (typeof err.code === 'number' ? err.code : 1) : 0;
         if (err && !(opts.okCodes ?? []).includes(code)) {
@@ -207,7 +212,12 @@ export async function status(repo: string): Promise<WorkingStatus> {
     git(repo, ['--no-optional-locks', 'status', '--porcelain=v1', '-z', '-b', '--untracked-files=all']),
     repoState(repo),
   ]);
-  return { ...parseStatus(out), state };
+  const parsed = parseStatus(out);
+  if (state !== 'rebasing') {
+    await cleanupRebaseScratch(repo);
+    return { ...parsed, state };
+  }
+  return { ...parsed, state, rebase: await rebaseProgress(repo, parsed.conflicted.length) };
 }
 
 // Surveillance du dépôt (rafraîchissement automatique). `status` ci-dessus passe `--no-optional-locks` :
@@ -858,4 +868,166 @@ export async function isRepo(path: string): Promise<boolean> {
 
 export async function toplevel(path: string): Promise<string> {
   return (await git(path, ['rev-parse', '--show-toplevel'])).trim();
+}
+
+// Rebase interactif. `GIT_SEQUENCE_EDITOR` est la seule commande que Git exécute via un shell : chaîne constante,
+// la liste d'instructions et les messages passent par des fichiers de `<gitDir>/arbor-rebase/`.
+
+const REBASE_SEQUENCE_EDITOR = 'cp "$ARBOR_REBASE_TODO"';
+/** Au-delà, le planificateur refuse (liste illisible, rebase très long). */
+export const REBASE_MAX_COMMITS = 500;
+
+/** Dépôts où Arbor a lancé un rebase interactif (dossier `arbor-rebase/` à supprimer à la fin). */
+const rebaseScratch = new Set<string>();
+/** Rebase en cours de lancement : le dossier ne doit pas être supprimé par un `status` concurrent. */
+const rebaseStarting = new Set<string>();
+
+async function rebaseScratchDir(repo: string): Promise<string> {
+  return join((await gitDirs(repo)).gitDir, 'arbor-rebase');
+}
+
+/** Supprime `<gitDir>/arbor-rebase/` une fois le rebase lancé par Arbor terminé ou abandonné. */
+async function cleanupRebaseScratch(repo: string) {
+  if (!rebaseScratch.has(repo) || rebaseStarting.has(repo)) return;
+  rebaseScratch.delete(repo);
+  await rm(await rebaseScratchDir(repo), { recursive: true, force: true }).catch(() => {});
+}
+
+async function assertRebaseGit(repo: string) {
+  const v = parseGitVersion(await git(repo, ['version']));
+  if (v && !gitVersionAtLeast(v, REBASE_MIN_GIT))
+    throw new GitError(`Le rebase interactif demande Git ${REBASE_MIN_GIT.join('.')} ou plus récent (version installée : ${v.join('.')}).`, '');
+}
+
+export async function rebasePlan(repo: string, base: string, ancestorOnly: boolean): Promise<RebasePlan> {
+  await assertRebaseGit(repo);
+  const head = await headSha(repo);
+  if (!head) throw new GitError('Dépôt vide : aucun commit à réécrire.', '');
+  const st = await status(repo);
+  if (st.state !== 'clean') throw new GitError('Une opération est déjà en cours : terminez-la ou abandonnez-la d\'abord.', '');
+  const upstream = (
+    await git(repo, ['rev-parse', '--verify', '-q', '--end-of-options', `${base}^{commit}`], { okCodes: [1] }).catch(() => '')
+  ).trim();
+  if (!upstream) throw new GitError(`« ${base} » ne désigne aucun commit.`, '');
+  if (ancestorOnly) {
+    const anc = await git(repo, ['merge-base', '--is-ancestor', upstream, head]).then(() => true, () => false);
+    if (!anc) throw new GitError(`Le commit ${upstream.slice(0, 7)} n'est pas un ancêtre de HEAD.`, '');
+  }
+  const range = `${upstream}..${head}`;
+  const merges = Number((await git(repo, ['rev-list', '--count', '--merges', range])).trim());
+  if (merges > 0) throw new GitError('La plage contient des fusions : rebase interactif non pris en charge.', '');
+  const count = Number((await git(repo, ['rev-list', '--count', range])).trim());
+  if (count === 0) throw new GitError('Aucun commit à réécrire entre cette base et HEAD.', '');
+  if (count > REBASE_MAX_COMMITS) throw new GitError(`${count} commits à réécrire : le rebase interactif est limité à ${REBASE_MAX_COMMITS}.`, '');
+  const commits = parseLog(await git(repo, ['log', '-z', '--reverse', '--no-merges', `--format=${LOG_FORMAT}`, range, '--']));
+  // Publiés : présents sur la branche distante suivie (aucun s'il n'y en a pas).
+  const hasUpstream = (await git(repo, ['rev-parse', '--verify', '-q', '@{u}'], { okCodes: [1, 128] }).catch(() => '')).trim() !== '';
+  const unpublished = hasUpstream ? new Set((await git(repo, ['rev-list', range, '--not', '@{u}'])).split(/\s+/).filter(Boolean)) : null;
+  return {
+    upstream,
+    onto: upstream,
+    head,
+    branch: st.branch,
+    commits: commits.map((c) => ({ ...c, published: unpublished ? !unpublished.has(c.sha) : false })),
+    dirty: st.staged.length > 0 || st.unstaged.some((f) => f.status !== '?'),
+  };
+}
+
+export async function rebaseInteractive(repo: string, upstream: string, expectedHead: string, steps: RebaseStep[]): Promise<'done' | 'stopped'> {
+  assertSha(upstream);
+  const plan = await rebasePlan(repo, upstream, false);
+  if (plan.head !== expectedHead) throw new GitError('HEAD a changé depuis l\'ouverture du rebase interactif : rouvrez-le.', '');
+  const expected = new Set(plan.commits.map((c) => c.sha));
+  if (steps.length !== expected.size || !steps.every((s) => expected.has(s.sha)))
+    throw new GitError('Les commits à réécrire ont changé : rouvrez le rebase interactif.', '');
+  if (plan.dirty) throw new GitError('Des modifications locales sont en cours : commitez-les ou mettez-les de côté (stash) avant le rebase.', '');
+  // Seuls les champs attendus, et les sujets relus dans le dépôt (pas ceux du rendu).
+  const subjects = new Map(plan.commits.map((c) => [c.sha, c.subject]));
+  const clean: RebaseStep[] = steps.map((s) => ({
+    sha: s.sha,
+    action: s.action,
+    ...(typeof s.message === 'string' ? { message: s.message } : {}),
+    subject: subjects.get(s.sha),
+  }));
+  const invalid = validateSteps(clean);
+  if (invalid) throw new GitError(invalid, '');
+  const { todo, messages } = buildTodo(clean);
+
+  const dir = await rebaseScratchDir(repo);
+  rebaseStarting.add(repo);
+  rebaseScratch.add(repo);
+  try {
+    await rm(dir, { recursive: true, force: true });
+    await mkdir(dir, { recursive: true });
+    const todoFile = join(dir, 'todo');
+    await writeFile(todoFile, todo);
+    await Promise.all(messages.map((m, i) => writeFile(join(dir, `msg-${i}`), m)));
+    try {
+      await git(
+        repo,
+        [
+          '-c', 'rebase.updateRefs=false',
+          '-c', 'rebase.missingCommitsCheck=ignore',
+          '-c', 'rebase.abbreviateCommands=false',
+          'rebase', '-i', '--reapply-cherry-picks', '--no-autosquash', '--end-of-options', upstream,
+        ],
+        { env: { GIT_SEQUENCE_EDITOR: REBASE_SEQUENCE_EDITOR, ARBOR_REBASE_TODO: todoFile } },
+      );
+    } catch (e) {
+      if (e instanceof GitError && /execution failed|Execution failed/.test(e.stderr) && !/CONFLICT|could not apply/.test(e.stderr))
+        throw new GitError('Un message n\'a pas pu être appliqué (hook commit-msg ?) : corrigez avec « Modifier le dernier commit » puis Continuer.', e.stderr);
+      throw e;
+    }
+  } finally {
+    rebaseStarting.delete(repo);
+    if ((await repoState(repo).catch(() => 'clean')) !== 'rebasing') await cleanupRebaseScratch(repo);
+  }
+  return (await repoState(repo)) === 'rebasing' ? 'stopped' : 'done';
+}
+
+export async function skipOp(repo: string) {
+  const state = await repoState(repo);
+  if (state === 'rebasing') await git(repo, ['rebase', '--skip']);
+  else if (state === 'cherry-picking') await git(repo, ['cherry-pick', '--skip']);
+  else if (state === 'reverting') await git(repo, ['revert', '--skip']);
+  else if (state === 'merging') throw new GitError('Une fusion ne peut pas être passée : continuez-la ou abandonnez-la.', '');
+}
+
+const readOptional = (file: string) => fsReadFile(file, 'utf8').catch(() => null);
+
+/** Progression du rebase en cours (`rebase-merge/` ou, pour l'ancien moteur, `rebase-apply/`). */
+export async function rebaseProgress(repo: string, conflicted: number): Promise<RebaseProgress | null> {
+  const dir = await gitDir(repo);
+  const merge = join(dir, 'rebase-merge');
+  if (existsSync(merge)) {
+    const [done, todo, stopped, headName, onto] = await Promise.all(
+      ['done', 'git-rebase-todo', 'stopped-sha', 'head-name', 'onto'].map((f) => readOptional(join(merge, f))),
+    );
+    const p = progressFromFiles({ done: done ?? '', todo: todo ?? '', amend: existsSync(join(merge, 'amend')), stoppedSha: stopped?.trim() || null }, conflicted);
+    // Sujets absents des fichiers (liste écrite par un autre outil, SHA abrégés) : relus dans le dépôt.
+    if (p.stopped && !p.stopped.subject) {
+      p.stopped.subject = (await git(repo, ['log', '-1', '--format=%s', '--end-of-options', p.stopped.sha], { okCodes: [128] }).catch(() => '')).trim();
+    }
+    const name = headName?.trim() ?? '';
+    return {
+      ...p,
+      interactive: existsSync(join(merge, 'interactive')),
+      headName: name.startsWith('refs/heads/') ? name.slice('refs/heads/'.length) : null,
+      onto: onto?.trim() ?? '',
+    };
+  }
+  const apply = join(dir, 'rebase-apply');
+  if (!existsSync(apply)) return null;
+  const [next, last, headName, onto] = await Promise.all(['next', 'last', 'head-name', 'onto'].map((f) => readOptional(join(apply, f))));
+  const name = headName?.trim() ?? '';
+  return {
+    interactive: false,
+    step: Number(next?.trim()) || 0,
+    total: Number(last?.trim()) || 0,
+    headName: name.startsWith('refs/heads/') ? name.slice('refs/heads/'.length) : null,
+    onto: onto?.trim() ?? '',
+    stopped: null,
+    reason: conflicted > 0 ? 'conflict' : 'other',
+    remaining: [],
+  };
 }

@@ -16,6 +16,9 @@ import './commands/prefs';
 // onglets
 import './commands/tabs';
 
+// rebase interactif
+import './commands/rebase';
+
 // Préférences enregistrées lues dès le démarrage (et migration des anciennes clés localStorage).
 void loadPreferences();
 
