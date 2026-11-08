@@ -6,6 +6,7 @@ import { useUi } from '../ui';
 import { updatePreferences, usePreferences } from '../prefs';
 import type { DiffMode } from '../../shared/prefs';
 import { Icon } from './Icons';
+import { MergeEditor } from './MergeEditor';
 
 type Mode = DiffMode;
 
@@ -14,7 +15,12 @@ type Mode = DiffMode;
  * (après une indexation, un rafraîchissement…). La sélection de lignes est gardée si le diff n'a pas changé.
  */
 export function DiffView({ repo, target, onClose, reloadKey }: { repo: string; target: DiffTarget; onClose: () => void; reloadKey?: unknown }) {
-  if (target.kind === 'working' && target.conflict) return <ConflictView repo={repo} path={target.path} onClose={onClose} />;
+  if (target.kind === 'working' && target.conflict) {
+    // Éditeur de fusion à trois panneaux ; vue simple en repli (binaire, trop gros, sous-module, lien symbolique).
+    // `reloadKey` n'est pas transmis : un changement extérieur est détecté à l'enregistrement.
+    const fallback = <ConflictView repo={repo} path={target.path} onClose={onClose} />;
+    return <MergeEditor key={`${repo}\0${target.path}`} repo={repo} path={target.path} onClose={onClose} fallback={fallback} />;
+  }
   return <PatchView repo={repo} target={target} onClose={onClose} reloadKey={reloadKey} />;
 }
 
@@ -279,7 +285,7 @@ function Side({ line, no }: { line: DiffLine | null; no?: number }) {
 type Region = 'ours' | 'theirs' | 'marker' | null;
 
 /** Affiche le fichier en conflit avec les deux versions mises en évidence. */
-function ConflictView({ repo, path, onClose }: { repo: string; path: string; onClose: () => void }) {
+export function ConflictView({ repo, path, onClose }: { repo: string; path: string; onClose: () => void }) {
   const ui = useUi();
   const [lines, setLines] = useState<{ text: string; region: Region }[] | null>(null);
   const [error, setError] = useState<string | null>(null);

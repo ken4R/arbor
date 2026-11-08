@@ -252,6 +252,7 @@ const READ_ONLY = new Set([
   'setPreferences',
   'restoreSession',
   'saveSession',
+  'conflictVersions',
 ]);
 
 const handlers: Record<string, (...args: any[]) => Promise<unknown>> = {
@@ -318,6 +319,9 @@ const handlers: Record<string, (...args: any[]) => Promise<unknown>> = {
   setPreferences: async (patch: unknown) => savePreferences(patch),
   restoreSession: async () => restoreSession(),
   saveSession: async (repos: unknown, active: unknown) => saveSession(repos, active),
+  conflictVersions: g.conflictVersions,
+  saveResolution: g.saveResolution,
+  resolveDeletion: g.resolveDeletion,
 };
 
 for (const [name, fn] of Object.entries(handlers)) {

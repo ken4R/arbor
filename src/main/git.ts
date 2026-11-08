@@ -628,12 +628,26 @@ export async function diff(repo: string, t: DiffTarget): Promise<string> {
   return git(repo, ['diff', '-M', ...DIFF_OUTPUT, ...(t.staged ? ['--cached'] : []), '--', ...diffPaths(t)]);
 }
 
-export async function readFile(repo: string, path: string): Promise<string> {
-  // Comparaison sur les chemins réels : un lien symbolique ne doit pas permettre de sortir du dépôt.
+/**
+ * Chemin absolu réel d'un fichier du dépôt. Comparaison sur les chemins réels : un lien symbolique ne doit pas
+ * permettre de sortir du dépôt. Un fichier absent est résolu par son dossier parent (écriture d'un nouveau fichier).
+ */
+export async function safeRepoPath(repo: string, path: string): Promise<string> {
   const root = await realpath(repo);
-  const full = await realpath(resolvePath(root, path));
+  const target = resolvePath(root, path);
+  let full: string;
+  try {
+    full = await realpath(target);
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
+    full = join(await realpath(dirname(target)), basename(target));
+  }
   if (!full.startsWith(root + sep)) throw new GitError('Chemin en dehors du dépôt.', '');
-  return fsReadFile(full, 'utf8');
+  return full;
+}
+
+export async function readFile(repo: string, path: string): Promise<string> {
+  return fsReadFile(await safeRepoPath(repo, path), 'utf8');
 }
 
 export async function stage(repo: string, paths: string[]) {
@@ -858,4 +872,117 @@ export async function isRepo(path: string): Promise<boolean> {
 
 export async function toplevel(path: string): Promise<string> {
   return (await git(path, ['rev-parse', '--show-toplevel'])).trim();
+}
+
+// Éditeur de fusion à trois panneaux : versions d'un fichier en conflit (étages de l'index) et enregistrement du résultat.
+import { createHash } from 'node:crypto';
+import { lstat, writeFile as fsWriteFile } from 'node:fs/promises';
+import { dirname } from 'node:path'; // utilisé par `safeRepoPath`
+import type { ConflictVersions } from '../shared/types';
+
+export interface UnmergedEntry {
+  mode: string;
+  sha: string;
+  stage: 1 | 2 | 3; // 1 = base, 2 = « ours », 3 = « theirs »
+  path: string;
+}
+
+/** Analyse `git ls-files -u -z` : `mode SP sha SP étage TAB chemin NUL`. */
+export function parseUnmerged(out: string): UnmergedEntry[] {
+  return out
+    .split('\0')
+    .filter(Boolean)
+    .flatMap((rec) => {
+      const tab = rec.indexOf('\t');
+      if (tab < 0) return [];
+      const [mode, sha, stage] = rec.slice(0, tab).split(' ');
+      const n = Number(stage);
+      if ((n !== 1 && n !== 2 && n !== 3) || !mode || !sha) return [];
+      return [{ mode, sha, stage: n as 1 | 2 | 3, path: rec.slice(tab + 1) }];
+    });
+}
+
+/** Au-delà, l'éditeur de fusion se replie sur la vue simple des conflits. */
+const MERGE_MAX_BYTES = 1024 * 1024;
+const MERGE_MAX_LINES = 20000;
+
+const sha1 = (data: string | Buffer) => createHash('sha1').update(data).digest('hex');
+
+/** Empreinte SHA-1 du contenu d'un fichier ; null s'il n'existe pas. */
+async function fileHash(full: string): Promise<string | null> {
+  try {
+    return sha1(await fsReadFile(full));
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw e;
+  }
+}
+
+async function unmergedEntries(repo: string, path: string): Promise<UnmergedEntry[]> {
+  const out = await git(repo, ['--literal-pathspecs', '--no-optional-locks', 'ls-files', '-u', '-z', '--', path]);
+  return parseUnmerged(out).filter((e) => e.path === path);
+}
+
+const notInConflict = (path: string) => new GitError(`« ${path} » n'est plus en conflit : rouvrez-le depuis la liste des conflits.`, '');
+
+/**
+ * Trois versions d'un fichier en conflit, du point de vue de l'utilisateur : pendant un rebase, « ma version »
+ * est l'étage 3 (voir `gitSide`). Une version absente (fichier supprimé de ce côté) vaut null ; le contenu est vidé
+ * pour un fichier binaire, trop gros, un sous-module ou un lien symbolique (repli sur la vue simple).
+ */
+export async function conflictVersions(repo: string, path: string): Promise<ConflictVersions> {
+  const [entries, state] = await Promise.all([unmergedEntries(repo, path), repoState(repo)]);
+  if (!entries.length) throw notInConflict(path);
+  const mineStage = gitSide(state, 'mine') === 'ours' ? 2 : 3;
+  const byStage = new Map(entries.map((e) => [e.stage, e]));
+  const modes = entries.map((e) => e.mode);
+  const unsupported = modes.includes('160000') ? 'submodule' : modes.includes('120000') ? 'symlink' : undefined;
+  const read = (e: UnmergedEntry | undefined): Promise<string | null> =>
+    !e ? Promise.resolve(null) : unsupported ? Promise.resolve('') : git(repo, ['cat-file', 'blob', e.sha]);
+  const [base, mine, theirs, workingHash] = await Promise.all([
+    read(byStage.get(1)),
+    read(byStage.get(mineStage)),
+    read(byStage.get(mineStage === 2 ? 3 : 2)),
+    safeRepoPath(repo, path).then(fileHash),
+  ]);
+  const texts = [base, mine, theirs].filter((t): t is string => t !== null);
+  // Binaire : octet nul dans les 8 premiers ko (heuristique de git) ; contenu non UTF-8 traité de même (U+FFFD).
+  const binary = texts.some((t) => t.slice(0, 8000).includes('\0') || t.includes('�'));
+  const tooLarge = !binary && texts.some((t) => Buffer.byteLength(t) > MERGE_MAX_BYTES || t.split('\n').length > MERGE_MAX_LINES);
+  const blank = (t: string | null) => (t === null ? null : binary || tooLarge ? '' : t);
+  return { base: blank(base), mine: blank(mine), theirs: blank(theirs), workingHash, binary, tooLarge, ...(unsupported ? { unsupported } : {}) };
+}
+
+/**
+ * Écrit le résultat d'une fusion dans l'arbre de travail si le fichier n'a pas changé depuis le chargement
+ * (`expectedHash` = `workingHash` de `conflictVersions`, ou valeur renvoyée par l'enregistrement précédent),
+ * puis l'indexe si `markResolved`. Renvoie la nouvelle empreinte.
+ */
+export async function saveResolution(repo: string, path: string, content: string, expectedHash: string | null, markResolved: boolean): Promise<string> {
+  if (!(await unmergedEntries(repo, path)).length) throw notInConflict(path);
+  const full = await safeRepoPath(repo, path);
+  const link = await lstat(resolvePath(await realpath(repo), path)).then((s) => s.isSymbolicLink(), () => false);
+  if (link) throw new GitError(`« ${path} » est un lien symbolique : enregistrement refusé.`, '');
+  if ((await fileHash(full)) !== expectedHash) {
+    throw new GitError(`« ${path} » a été modifié hors de l'éditeur de fusion depuis son ouverture. Rechargez l'éditeur pour repartir de l'état actuel.`, '');
+  }
+  await fsWriteFile(full, content, 'utf8');
+  if (markResolved) await git(repo, ['--literal-pathspecs', 'add', '--', path]);
+  return sha1(content);
+}
+
+/** Conflit suppression/modification : garde le fichier tel qu'il est dans l'arbre de travail, ou le supprime. */
+export async function resolveDeletion(repo: string, path: string, keep: boolean) {
+  const entries = await unmergedEntries(repo, path);
+  if (!entries.length) throw notInConflict(path);
+  const stages = new Set(entries.map((e) => e.stage));
+  if (stages.has(2) && stages.has(3)) throw new GitError(`« ${path} » n'a été supprimé d'aucun côté.`, '');
+  if (keep) {
+    if ((await fileHash(await safeRepoPath(repo, path))) === null) {
+      throw new GitError(`« ${path} » n'existe plus dans l'arbre de travail : impossible de le garder.`, '');
+    }
+    await git(repo, ['--literal-pathspecs', 'add', '--', path]);
+  } else {
+    await git(repo, ['--literal-pathspecs', 'rm', '-q', '--', path]);
+  }
 }

@@ -196,4 +196,24 @@ export interface ArborApi {
   restoreSession(): Promise<{ repos: string[]; active: number }>;
   /** Enregistre les onglets ouverts (seuls les dépôts ouverts dans Arbor sont retenus). */
   saveSession(repos: string[], active: number): Promise<void>;
+  /** Trois versions d'un fichier en conflit (éditeur de fusion), « ma version » selon l'opération (inversée en rebase). */
+  conflictVersions(repo: string, path: string): Promise<ConflictVersions>;
+  /** Écrit le résultat si le fichier a encore l'empreinte `expectedHash`, l'indexe si `markResolved` ; renvoie la nouvelle empreinte. */
+  saveResolution(repo: string, path: string, content: string, expectedHash: string | null, markResolved: boolean): Promise<string>;
+  /** Conflit suppression/modification : garde le fichier de l'arbre de travail (`git add`) ou le supprime (`git rm`). */
+  resolveDeletion(repo: string, path: string, keep: boolean): Promise<void>;
+}
+
+/** Versions d'un fichier en conflit pour l'éditeur de fusion ; null = absent de ce côté (supprimé, ou pas de base). */
+export interface ConflictVersions {
+  base: string | null;
+  mine: string | null;
+  theirs: string | null;
+  /** SHA-1 du fichier de l'arbre de travail au chargement (null s'il est absent), vérifié à l'enregistrement. */
+  workingHash: string | null;
+  /** Binaire ou non UTF-8 : contenus vidés, repli sur la vue simple. */
+  binary: boolean;
+  /** Plus de 1 Mo ou 20 000 lignes : contenus vidés, repli sur la vue simple. */
+  tooLarge: boolean;
+  unsupported?: 'submodule' | 'symlink';
 }
