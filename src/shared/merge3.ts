@@ -457,5 +457,5 @@ export function blocksFromMergeOutput(chunks: MergeChunk[], base: string[], mine
 
 /** Texte d'un fichier en conflit sans les étiquettes des marqueurs (`<<<<<<< HEAD` → `<<<<<<<`), pour comparer deux sorties. */
 export function normalizeConflictText(text: string): string {
-  return text.replace(/^(<{7}|\|{7}|>{7})(?: [^\r\n]*)?(?=\r?$)/gm, '$1');
+  return text.replace(/^(<{7,}|\|{7,}|>{7,})(?: [^\r\n]*)?(?=\r?$)/gm, '$1');
 }

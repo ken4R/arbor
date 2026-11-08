@@ -114,6 +114,24 @@ describe('conflits sur un vrai dépôt', () => {
     expect(readFileSync(join(dir, 'w.txt'), 'utf8')).toBe('un\r\nDEUX-m\r\ntrois\r\nquatre\r\n');
   });
 
+  it('fins de ligne mixtes : repli sur la vue simple (pas de normalisation silencieuse)', async () => {
+    setup('m.txt', 'a\nb\r\nc\nd\ne\n', 'a\nb\r\nc\nd mine\ne\n', 'a\nb\r\nc\nd leur\ne\n');
+    tryG('merge', 'autre');
+    const v = await conflictVersions(dir, 'm.txt');
+    expect(v.unsupported).toBe('mixed-eol');
+    expect(v.merge).toBeNull();
+  });
+
+  it('conflict-marker-size=9 : fichier écrit par Git reconnu comme intact', async () => {
+    setup('k.txt', 'a\nb\nc\n', 'a\nB-m\nc\n', 'a\nB-t\nc\n');
+    write('.gitattributes', '*.txt conflict-marker-size=9\n');
+    commitAll('attr');
+    tryG('merge', 'autre');
+    expect(readFileSync(join(dir, 'k.txt'), 'utf8')).toContain('<<<<<<<<<');
+    const v = await conflictVersions(dir, 'k.txt');
+    expect(v.workingMatches).toBe(true);
+  });
+
   it('suppression/modification : version absente, garder ou supprimer', async () => {
     setup('d.js', 'v1\n', 'v2\n', 'v1\n');
     g('checkout', '-q', 'autre');

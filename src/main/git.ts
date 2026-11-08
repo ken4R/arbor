@@ -1045,9 +1045,11 @@ export async function conflictVersions(repo: string, path: string): Promise<Conf
   // Binaire : octet nul dans les 8 premiers ko (heuristique de git) ; contenu non UTF-8 traité de même (U+FFFD).
   const binary = texts.some((t) => t.slice(0, 8000).includes('\0') || t.includes('�'));
   let tooLarge = !binary && texts.some((t) => Buffer.byteLength(t) > MERGE_MAX_BYTES || t.split('\n').length > MERGE_MAX_LINES);
+  // Fins de ligne mixtes (CRLF et LF dans un même fichier) : l'éditeur normaliserait tout le fichier, repli sur la vue simple.
+  const mixedEol = !binary && texts.some((t) => /\r\n/.test(t) && /(^|[^\r])\n/.test(t));
   let merge: MergeModel | null = null;
   let workingMatches = false;
-  if (!unsupported && !binary && !tooLarge && mine !== null && theirs !== null) {
+  if (!unsupported && !mixedEol && !binary && !tooLarge && mine !== null && theirs !== null) {
     merge = await editorMerge(repo, base ?? '', mine, theirs);
     if (merge && merge.blocks.length > MERGE_MAX_BLOCKS) {
       tooLarge = true;
@@ -1068,7 +1070,7 @@ export async function conflictVersions(repo: string, path: string): Promise<Conf
     tooLarge,
     merge,
     workingMatches,
-    ...(unsupported ? { unsupported } : {}),
+    ...(unsupported || mixedEol ? { unsupported: unsupported ?? 'mixed-eol' } : {}),
   };
 }
 

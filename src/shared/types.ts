@@ -216,7 +216,7 @@ export interface ConflictVersions {
   /** Plus de 1 Mo, 20 000 lignes ou 2 000 blocs : contenus vidés, repli sur la vue simple. */
   tooLarge: boolean;
   /** Sous-module, lien symbolique ou filtre de contenu (`filter`, LFS…) : repli sur la vue simple. */
-  unsupported?: 'submodule' | 'symlink' | 'filter';
+  unsupported?: 'submodule' | 'symlink' | 'filter' | 'mixed-eol';
   /** Fusion calculée par `git merge-file --diff3` (ma version d'abord) ; null hors fusion de texte ou sortie illisible. */
   merge: MergeModel | null;
   /** Le fichier de l'arbre de travail est encore celui écrit par Git (aucune résolution commencée ailleurs). */

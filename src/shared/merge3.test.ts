@@ -256,6 +256,8 @@ describe('normalizeConflictText', () => {
     expect(normalizeConflictText('a\r\n<<<<<<< HEAD\r\nx\r\n||||||| parent de abc\r\n=======\r\n>>>>>>> 1234 (sujet)\r\n')).toBe(
       'a\r\n<<<<<<<\r\nx\r\n|||||||\r\n=======\r\n>>>>>>>\r\n',
     );
-    expect(normalizeConflictText('<<<<<<<< pas un marqueur\n')).toBe('<<<<<<<< pas un marqueur\n');
+    // Marqueurs plus longs (attribut conflict-marker-size) : étiquette retirée aussi.
+    expect(normalizeConflictText('<<<<<<<<< HEAD\nx\n>>>>>>>>> MERGE_HEAD\n')).toBe('<<<<<<<<<\nx\n>>>>>>>>>\n');
+    expect(normalizeConflictText('<<<<<< six seulement\n')).toBe('<<<<<< six seulement\n');
   });
 });
