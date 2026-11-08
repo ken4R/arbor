@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { gitSide, parseLog, parseNameStatus, parseRefs, parseStatus, pushRemote, translateGitError } from './git';
+import { gitSide, parseLog, parseNameStatus, parseRefs, parseRemotes, parseStatus, parseTags, pushRemote, translateGitError } from './git';
 
 describe('parseStatus', () => {
   it('sépare indexé, non indexé, non suivi et conflits', () => {
@@ -85,5 +85,61 @@ describe('pushRemote', () => {
     expect(pushRemote(['upstream'])).toBe('upstream');
     expect(() => pushRemote(['a', 'b'])).toThrow(/Plusieurs remotes/);
     expect(() => pushRemote([])).toThrow(/Aucun remote/);
+  });
+});
+
+describe('parseTags', () => {
+  const rec = (...f: string[]) => f.join('\x1f') + '\x1e';
+  const C = 'c'.repeat(40);
+  const T = 't'.repeat(40);
+
+  it('tag léger, annoté, sur un arbre, imbriqué', () => {
+    const out =
+      [
+        rec('v1.1', 'tag', T, C, 'commit', 'Version 1.1', '1700000100'),
+        rec('v1.0', 'commit', C, '', '', 'sujet du commit', '1700000000'),
+        rec('arbre', 'tree', 'e'.repeat(40), '', '', '', ''),
+        rec('imbrique', 'tag', 'f'.repeat(40), T, 'tag', 'n', '1700000200'),
+      ].join('\n') + '\n';
+    expect(parseTags(out)).toEqual([
+      { name: 'v1.1', sha: C, annotated: true, subject: 'Version 1.1', date: 1700000100 },
+      { name: 'v1.0', sha: C, annotated: false, subject: '', date: 1700000000 },
+      { name: 'arbre', sha: null, annotated: false, subject: '', date: 0 },
+      { name: 'imbrique', sha: null, annotated: true, subject: 'n', date: 1700000200 },
+    ]);
+  });
+
+  it('noms avec / ou accents, sortie vide', () => {
+    const out = rec('release/2.0', 'commit', C, '', '', 'x', '1') + '\n' + rec('été-2024', 'tag', T, C, 'commit', 'Sortie d’été', '2') + '\n';
+    expect(parseTags(out).map((t) => [t.name, t.sha])).toEqual([
+      ['release/2.0', C],
+      ['été-2024', C],
+    ]);
+    expect(parseTags('')).toEqual([]);
+  });
+});
+
+describe('parseRemotes', () => {
+  it('URL de fetch et de push distinctes, remote sans URL, URL avec espaces', () => {
+    const names = 'miroir\norigin\nsansurl\n';
+    const verbose = [
+      'miroir\t/chemin/avec des espaces/depot.git (fetch)',
+      'miroir\t/chemin/avec des espaces/depot.git (push)',
+      'origin\thttps://exemple.org/a.git (fetch)',
+      'origin\tssh://git@exemple.org/a.git (push)',
+      'sansurl\t',
+      '',
+    ].join('\n');
+    expect(parseRemotes(names, verbose)).toEqual([
+      { name: 'miroir', fetchUrl: '/chemin/avec des espaces/depot.git', pushUrl: null },
+      { name: 'origin', fetchUrl: 'https://exemple.org/a.git', pushUrl: 'ssh://git@exemple.org/a.git' },
+      { name: 'sansurl', fetchUrl: null, pushUrl: null },
+    ]);
+  });
+
+  it('plusieurs URL : la première est retenue ; aucun remote', () => {
+    const verbose = 'o\thttps://a (fetch)\no\thttps://a (push)\no\thttps://b (push)\n';
+    expect(parseRemotes('o\n', verbose)).toEqual([{ name: 'o', fetchUrl: 'https://a', pushUrl: null }]);
+    expect(parseRemotes('', '')).toEqual([]);
   });
 });

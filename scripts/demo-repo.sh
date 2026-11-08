@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Crée un dépôt de démonstration réaliste pour tester Arbor.
-# Usage : scripts/demo-repo.sh <dossier> [--conflict]
+# Usage : scripts/demo-repo.sh <dossier> [--conflict | --conflict3]
 set -euo pipefail
 
-DIR=${1:?"Usage : $0 <dossier> [--conflict]"}
-rm -rf "$DIR" "$DIR-remote.git"
+DIR=${1:?"Usage : $0 <dossier> [--conflict | --conflict3]"}
+rm -rf "$DIR" "$DIR-remote.git" "$DIR-miroir.git"
 mkdir -p "$DIR"
 cd "$DIR"
 git init -q -b main
@@ -48,6 +48,27 @@ git branch -q -u origin/main
 c app.js "console.log(5)" "Camille Martin" camille@example.com "Commit local non poussé"
 c config.js "$(for i in $(seq 1 40); do echo "export const option$i = $i;"; done)" "Camille Martin" camille@example.com "Ajoute la configuration"
 
+# Tags : annoté v1.1 sur le dernier commit poussé, léger (nom avec « / » et accent) sur la fusion
+git tag -a v1.1 -m "Version 1.1
+
+Connexion rangée dans auth/ et déconnexion." origin/main
+git tag "jalon/été" ":/^Fusionne feature/login"
+
+# Second remote (dépôt nu <dossier>-miroir.git), récupéré
+git clone -q --bare "../$(basename "$DIR")-remote.git" "../$(basename "$DIR")-miroir.git"
+git remote add miroir "../$(basename "$DIR")-miroir.git"
+git fetch -q miroir
+
+# Branche à réécrire (rebase interactif) : 5 commits, un fichier chacun (réordonnables sans conflit), dont un fixup!
+git checkout -qb feature/historique
+mkdir -p historique
+c historique/journal.js "export const journal = [];" "Léa Dubois" lea@example.com "Ajoute le journal des modifications"
+c historique/affichage.js "export function afficher() {}" "Léa Dubois" lea@example.com "Affiche l'historique"
+c historique/journal.js "export const taille = 100;" "Léa Dubois" lea@example.com "fixup! Ajoute le journal des modifications"
+c historique/pagination.js "export const parPage = 20;" "Hugo Petit" hugo@example.com "Pagine l'historique"
+c historique/filtre.js "export function parAuteur() {}" "Hugo Petit" hugo@example.com "Filtre l'historique par auteur"
+git checkout -q main
+
 # Modifications en cours : un fichier modifié, un nouveau, un indexé
 echo "modif" >> README.md
 echo "nouveau" > notes.txt
@@ -64,6 +85,22 @@ if [[ "${2:-}" == "--conflict" ]]; then
   git checkout -q main
   echo "version B" > app.js && git commit -qam "Version B"
   git merge conflit >/dev/null 2>&1 || true
+elif [[ "${2:-}" == "--conflict3" ]]; then
+  # Fusion de `conflit3` en cours : fusion.txt = changements sans conflit des deux côtés (lignes 3 et 36) et deux
+  # blocs en conflit (lignes 12 et 24) ; obsolete.js = modifié ici (main), supprimé dans conflit3.
+  git stash -q --include-untracked
+  for i in $(seq 1 40); do echo "ligne $i"; done > fusion.txt
+  printf 'export function ancien() {\n  return 1;\n}\n' > obsolete.js
+  git add fusion.txt obsolete.js && git commit -qm "Ajoute fusion.txt et obsolete.js"
+  git checkout -qb conflit3
+  sed -e 's/^ligne 3$/ligne 3 (leur version)/' -e 's/^ligne 12$/ligne 12 : leur version/' -e 's/^ligne 24$/ligne 24 : leur version/' fusion.txt > fusion.tmp && mv fusion.tmp fusion.txt
+  git rm -q obsolete.js
+  git commit -qam "Leur version : fusion.txt, suppression d'obsolete.js"
+  git checkout -q main
+  sed -e 's/^ligne 12$/ligne 12 : ma version/' -e 's/^ligne 24$/ligne 24 : ma version/' -e 's/^ligne 36$/ligne 36 (ma version)/' fusion.txt > fusion.tmp && mv fusion.tmp fusion.txt
+  printf 'export function ancien() {\n  return 2;\n}\n' > obsolete.js
+  git commit -qam "Ma version : fusion.txt, obsolete.js modifié"
+  git merge conflit3 >/dev/null 2>&1 || true
 fi
 
 echo "Dépôt de démo prêt : $(pwd)"

@@ -63,8 +63,7 @@ export function useSearch(repo: string): [SearchState, (patch: Partial<SearchSta
 
 /** Empreinte des refs : la recherche par fichier est relancée seulement quand elle change. */
 export function refsKey(snap: RepoSnapshot): string {
-  // `snap.tags` ne contient que les noms : les SHA des tags viennent des décorations des commits chargés.
-  const tags = snap.commits.flatMap((c) => c.refs.filter((r) => r.type === 'tag').map((r) => `tag:${r.name}=${c.sha}`));
+  const tags = snap.tags.map((t) => `tag:${t.name}=${t.sha}`);
   return [snap.head ?? '', ...snap.branches.map((b) => `${b.name}=${b.sha}`), ...tags].join('\n');
 }
 
