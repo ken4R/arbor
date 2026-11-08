@@ -4,8 +4,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { remoteOf } from '../renderer/actions';
-import { addRemote, fetchRemote, parseConfigValues, pruneRemote, remoteConfig, remoteUrlError, removeRemote, renameRemote, setRemoteUrl, snapshot, translateGitError } from './git';
+import { addRemote, fetchRemote, parseConfigValues, parseScopedConfigValues, pruneRemote, remoteConfig, remoteUrlError, removeRemote, renameRemote, setRemoteUrl, snapshot, translateGitError } from './git';
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -43,6 +42,43 @@ describe('parseConfigValues', () => {
   });
 });
 
+describe('parseScopedConfigValues', () => {
+  it('découpe les paires portée / valeur', () => {
+    expect(parseScopedConfigValues('global\0/g\0local\0/p c\0')).toEqual([
+      { scope: 'global', value: '/g' },
+      { scope: 'local', value: '/p c' },
+    ]);
+  });
+  it('clé absente : liste vide', () => {
+    expect(parseScopedConfigValues('')).toEqual([]);
+  });
+});
+
+describe('cas limites des URL', () => {
+  it('pushurl venue de la configuration globale : erreur claire, rien de retiré', async () => {
+    const { dir, sh } = repo();
+    const global = join(mkdtempSync(join(tmpdir(), 'arbor-remotes-global-')), 'gitconfig');
+    dirs.push(join(global, '..'));
+    const saved = process.env.GIT_CONFIG_GLOBAL;
+    process.env.GIT_CONFIG_GLOBAL = global;
+    try {
+      await addRemote(dir, 'r', '/a', '/local-push', false);
+      sh('config', '--file', global, 'remote.r.pushurl', '/global-push');
+      await expect(setRemoteUrl(dir, 'r', null, true)).rejects.toThrow("L'URL de push vient de la configuration globale : modifiez-la là-bas.");
+      expect(sh('config', '--local', '--get', 'remote.r.pushurl').trim()).toBe('/local-push');
+    } finally {
+      if (saved === undefined) delete process.env.GIT_CONFIG_GLOBAL;
+      else process.env.GIT_CONFIG_GLOBAL = saved;
+    }
+  });
+
+  it('fetch en échec à l’ajout : remote gardé, erreur explicite', async () => {
+    const { dir, sh } = repo();
+    await expect(addRemote(dir, 'x', join(dir, 'inexistant'), null, true)).rejects.toThrow(/^Remote « x » ajouté, mais le fetch a échoué : /);
+    expect(sh('remote')).toBe('x\n');
+  });
+});
+
 describe('remoteUrlError', () => {
   it('accepte les URL habituelles', () => {
     expect(remoteUrlError('https://exemple.org/projet.git')).toBeNull();
@@ -61,17 +97,6 @@ describe('translateGitError (remotes)', () => {
     expect(translateGitError('error: remote origin already exists.')).toBe('Le remote « origin » existe déjà.');
     expect(translateGitError("error: No such remote: 'zz'")).toContain('« zz » n\'existe pas');
     expect(translateGitError("error: No such remote 'zz'")).toContain('« zz » n\'existe pas');
-  });
-});
-
-describe('remoteOf', () => {
-  it('rattache une branche au plus long remote qui la préfixe', () => {
-    const remotes = [{ name: 'a' }, { name: 'a/b' }, { name: 'origin' }];
-    expect(remoteOf(remotes, 'a/b/x')).toBe('a/b');
-    expect(remoteOf(remotes, 'a/x')).toBe('a');
-    expect(remoteOf(remotes, 'a/bc')).toBe('a');
-    expect(remoteOf(remotes, 'origin/main')).toBe('origin');
-    expect(remoteOf(remotes, 'autre/main')).toBeNull();
   });
 });
 

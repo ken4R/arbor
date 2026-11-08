@@ -1,5 +1,6 @@
 import type { Commit, RepoSnapshot } from '../shared/types';
 import type { Remote } from '../shared/types';
+import { remoteOf } from '../shared/remotes';
 import { openAddRemoteDialog, openEditRemoteDialog } from './components/RemoteDialog';
 import { api } from './api';
 import type { MenuItem } from './components/ContextMenu';
@@ -219,14 +220,4 @@ export function fetchRemoteAction(ui: Ui, snap: RepoSnapshot, name: string) {
 
 export function pruneRemoteAction(ui: Ui, snap: RepoSnapshot, name: string) {
   return ui.run(`Prune de ${name}…`, () => api.pruneRemote(snap.path, name), `Prune de « ${name} » terminé`);
-}
-
-/**
- * Remote auquel appartient une branche distante (`<remote>/<branche>`) : le plus long nom de remote qui préfixe
- * la branche, pour que `a/b/x` revienne au remote `a/b` et non à `a`. null si aucun ne correspond.
- */
-export function remoteOf(remotes: readonly { name: string }[], branch: string): string | null {
-  let best: string | null = null;
-  for (const r of remotes) if (branch.startsWith(r.name + '/') && (best === null || r.name.length > best.length)) best = r.name;
-  return best;
 }

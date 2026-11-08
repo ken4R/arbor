@@ -1,5 +1,6 @@
 import type { Remote, RepoSnapshot } from '../../../shared/types';
-import { branchMenu, checkoutBranch, fetchRemoteAction, remoteMenu, remoteOf } from '../../actions';
+import { remoteOf } from '../../../shared/remotes';
+import { branchMenu, checkoutBranch, fetchRemoteAction, remoteMenu } from '../../actions';
 import { useUi } from '../../ui';
 import { Icon, IconRemoteAdd } from '../Icons';
 import { openAddRemoteDialog } from '../RemoteDialog';

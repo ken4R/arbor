@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { RemoteConfig, RepoSnapshot } from '../../shared/types';
 import { api } from '../api';
 import type { Ui } from '../ui';
@@ -48,8 +48,10 @@ function RemoteDialog({ ui, repo, mode, onClose }: { ui: Ui; repo: string; mode:
   const nErr = mode.kind === 'add' ? nameError(name, mode.existing) : null;
   const fErr = multiFetch ? null : urlError(fetchUrl);
   const pErr = multiPush ? null : urlError(pushUrl);
+  // L'URL de fetch n'est exigée qu'à l'ajout ou si elle a été modifiée : un remote qui n'a qu'une pushurl reste éditable.
+  const fetchRequired = mode.kind === 'add' || fetchChanged;
   const invalid =
-    !!(nErr || fErr || pErr) || (mode.kind === 'add' && !name.trim()) || (!multiFetch && !fetchUrl.trim()) || (!!edit && !fetchChanged && !pushChanged);
+    !!(nErr || fErr || pErr) || (mode.kind === 'add' && !name.trim()) || (fetchRequired && !fetchUrl.trim()) || (!!edit && !fetchChanged && !pushChanged);
 
   const close = () => {
     if (!dirty) return onClose();
@@ -144,18 +146,34 @@ export function openAddRemoteDialog(ui: Ui, snap: RepoSnapshot) {
   ui.openDialog((close) => <RemoteDialog ui={ui} repo={snap.path} mode={{ kind: 'add', existing }} onClose={close} />);
 }
 
-/** Relit les URL brutes du remote puis ouvre le dialogue de modification. */
+/**
+ * Modification des URL : le dialogue s'ouvre aussitôt en « chargement », lit les URL brutes par `api.remoteConfig`
+ * (lecture seule, hors `ui.run` : pas de rafraîchissement du dépôt ni de blocage des onglets) et affiche une
+ * éventuelle erreur sur place.
+ */
+function EditRemoteDialog({ ui, repo, name, onClose }: { ui: Ui; repo: string; name: string; onClose: () => void }) {
+  const [state, setState] = useState<{ config: RemoteConfig } | { error: string } | null>(null);
+  useEffect(() => {
+    let alive = true;
+    api.remoteConfig(repo, name).then(
+      (config) => alive && setState({ config }),
+      (e: unknown) => alive && setState({ error: e instanceof Error ? e.message : String(e) }),
+    );
+    return () => {
+      alive = false;
+    };
+  }, [repo, name]);
+
+  if (state && 'config' in state) return <RemoteDialog ui={ui} repo={repo} mode={{ kind: 'edit', name, config: state.config }} onClose={onClose} />;
+  return (
+    <Dialog title={`Modifier le remote « ${name} »`} onClose={onClose} className="remote-dialog" message={state ? undefined : 'Lecture de la configuration…'}>
+      {state && <div className="prefs-error">{state.error}</div>}
+    </Dialog>
+  );
+}
+
+/** Ouvre le dialogue de modification des URL d'un remote. */
 export function openEditRemoteDialog(ui: Ui, snap: RepoSnapshot, name: string) {
   const repo = snap.path;
-  let config: RemoteConfig | null = null;
-  void ui
-    .run('Lecture du remote…', async () => {
-      config = await api.remoteConfig(repo, name);
-    })
-    .then((ok) => {
-      if (ok && config) {
-        const cfg = config;
-        ui.openDialog((close) => <RemoteDialog ui={ui} repo={repo} mode={{ kind: 'edit', name, config: cfg }} onClose={close} />);
-      }
-    });
+  ui.openDialog((close) => <EditRemoteDialog ui={ui} repo={repo} name={name} onClose={close} />);
 }

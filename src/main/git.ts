@@ -893,6 +893,16 @@ async function configValues(repo: string, key: string): Promise<string[]> {
   return parseConfigValues(await git(repo, ['config', '--null', '--get-all', key], { okCodes: [1] }));
 }
 
+/** Sortie de `git config --null --show-scope --get-all` : paires `portée NUL valeur NUL`. */
+export function parseScopedConfigValues(out: string): { scope: string; value: string }[] {
+  const parts = out.split('\0');
+  const res: { scope: string; value: string }[] = [];
+  for (let i = 0; i + 1 < parts.length; i += 2) res.push({ scope: parts[i], value: parts[i + 1] });
+  return res;
+}
+
+const SCOPE_LABELS: Record<string, string> = { global: 'globale', system: 'système', worktree: 'du worktree', command: 'de la ligne de commande' };
+
 /** URL brutes d'un remote, avant réécriture par `insteadOf` : `remote.<nom>.url` et `remote.<nom>.pushurl`. */
 export async function remoteConfig(repo: string, name: string): Promise<RemoteConfig> {
   await checkRefName(repo, 'remote', name);
@@ -907,7 +917,13 @@ export async function addRemote(repo: string, name: string, url: string, pushUrl
   const push = pushUrl?.trim() ? checkRemoteUrl(pushUrl) : null;
   await git(repo, ['remote', 'add', '--', name, fetchUrl]);
   if (push) await git(repo, ['remote', 'set-url', '--push', '--', name, push]);
-  if (fetch) await fetchRemote(repo, name);
+  if (!fetch) return;
+  try {
+    await fetchRemote(repo, name);
+  } catch (e) {
+    // Le remote reste configuré : l'utilisateur corrige l'URL ou relance le fetch.
+    throw new GitError(`Remote « ${name} » ajouté, mais le fetch a échoué : ${(e as Error).message}`, e instanceof GitError ? e.stderr : '');
+  }
 }
 
 export async function renameRemote(repo: string, oldName: string, newName: string) {
@@ -931,8 +947,12 @@ export async function setRemoteUrl(repo: string, name: string, url: string | nul
   const key = `remote.${name}.${push ? 'pushurl' : 'url'}`;
   const current = await configValues(repo, key);
   if (push && !url?.trim()) {
+    // Une pushurl venue d'un autre niveau (globale, système…) survivrait au retrait local : on refuse.
+    const scoped = parseScopedConfigValues(await git(repo, ['config', '--null', '--show-scope', '--get-all', key], { okCodes: [1] }));
+    const other = scoped.find((v) => v.scope !== 'local');
+    if (other) throw new GitError(`L'URL de push vient de la configuration ${SCOPE_LABELS[other.scope] ?? other.scope} : modifiez-la là-bas.`, '');
     // Code 5 : clé déjà absente (supprimée entre-temps).
-    if (current.length) await git(repo, ['config', '--unset-all', key], { okCodes: [5] });
+    if (scoped.length) await git(repo, ['config', '--local', '--unset-all', key], { okCodes: [5] });
     return;
   }
   const value = checkRemoteUrl(url ?? '');
