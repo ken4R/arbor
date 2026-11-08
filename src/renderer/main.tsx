@@ -18,6 +18,8 @@ import './commands/tabs';
 
 // remotes
 import './commands/remotes';
+// tags
+import './commands/tags';
 
 // Préférences enregistrées lues dès le démarrage (et migration des anciennes clés localStorage).
 void loadPreferences();

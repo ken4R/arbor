@@ -1,9 +1,10 @@
-import type { Commit, RepoSnapshot } from '../shared/types';
+import type { Commit, RepoSnapshot, Tag } from '../shared/types';
 import type { Remote } from '../shared/types';
 import { remoteOf } from '../shared/remotes';
 import { openAddRemoteDialog, openEditRemoteDialog } from './components/RemoteDialog';
 import { api } from './api';
 import type { MenuItem } from './components/ContextMenu';
+import { openDeleteTagDialog, openTagDialog, pushTagAction } from './components/TagDialog';
 import type { Ui } from './ui';
 
 export function checkoutBranch(ui: Ui, repo: string, name: string) {
@@ -91,8 +92,7 @@ export function commitMenu(ui: Ui, snap: RepoSnapshot, c: Commit): MenuItem[] {
     },
     {
       label: 'Créer un tag ici…',
-      onClick: () =>
-        ui.ask({ title: 'Nouveau tag', label: 'Nom du tag', confirm: 'Créer', onSubmit: (n) => ui.run('Tag…', () => api.createTag(repo, n, c.sha)) }),
+      onClick: () => openTagDialog(ui, snap, c.sha, `${short} « ${c.subject} »`),
     },
     { label: 'Checkout de ce commit (HEAD détachée)', onClick: () => ui.run('Checkout…', () => api.checkout(repo, c.sha)) },
     'separator',
@@ -220,4 +220,29 @@ export function fetchRemoteAction(ui: Ui, snap: RepoSnapshot, name: string) {
 
 export function pruneRemoteAction(ui: Ui, snap: RepoSnapshot, name: string) {
   return ui.run(`Prune de ${name}…`, () => api.pruneRemote(snap.path, name), `Prune de « ${name} » terminé`);
+}
+
+// tags
+
+/** Checkout d'un tag par son nom complet (`refs/tags/<nom>`), jamais ambigu avec une branche du même nom. */
+export function checkoutTag(ui: Ui, repo: string, tag: Tag) {
+  if (tag.sha === null) return;
+  return ui.run(`Checkout du tag ${tag.name}…`, () => api.checkoutTag(repo, tag.name));
+}
+
+/** Menu contextuel d'un tag (barre latérale, badge du graphe). */
+export function tagMenu(ui: Ui, snap: RepoSnapshot, tag: Tag): MenuItem[] {
+  const repo = snap.path;
+  const pushes: MenuItem[] = snap.remotes.length
+    ? snap.remotes.map((r) => ({ label: `Pousser vers « ${r.name} »`, onClick: () => void pushTagAction(ui, repo, r.name, tag.name) }))
+    : [{ label: 'Pousser (aucun remote)', disabled: true, onClick: () => {} }];
+  return [
+    { label: `Checkout « ${tag.name} » (HEAD détachée)`, disabled: tag.sha === null, onClick: () => void checkoutTag(ui, repo, tag) },
+    'separator',
+    ...pushes,
+    'separator',
+    { label: 'Supprimer…', danger: true, onClick: () => openDeleteTagDialog(ui, snap, tag) },
+    'separator',
+    { label: 'Copier le nom', onClick: () => void navigator.clipboard.writeText(tag.name) },
+  ];
 }

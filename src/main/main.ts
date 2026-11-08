@@ -254,6 +254,8 @@ const READ_ONLY = new Set([
   'saveSession',
   // remotes
   'remoteConfig',
+  // tags
+  'remoteTags',
 ]);
 
 const handlers: Record<string, (...args: any[]) => Promise<unknown>> = {
@@ -328,6 +330,13 @@ const handlers: Record<string, (...args: any[]) => Promise<unknown>> = {
   setRemoteUrl: g.setRemoteUrl,
   fetchRemote: g.fetchRemote,
   pruneRemote: g.pruneRemote,
+  // tags
+  checkoutTag: g.checkoutTag,
+  deleteTag: g.deleteTag,
+  deleteRemoteTag: g.deleteRemoteTag,
+  pushTag: g.pushTag,
+  pushAllTags: g.pushAllTags,
+  remoteTags: g.remoteTags,
 };
 
 for (const [name, fn] of Object.entries(handlers)) {

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Commit, RepoSnapshot } from '../../shared/types';
 import type { GraphRow } from '../graph';
 import type { Selection } from '../App';
-import { branchMenu, checkoutBranch, commitMenu } from '../actions';
+import { branchMenu, checkoutBranch, commitMenu, tagMenu } from '../actions';
 import { useUi } from '../ui';
 import { fullDate, hashColor, initials, laneColor, relativeDate } from '../util';
 import { isShaQuery, matchNormalized, normalize, normalizeCommit, useSearch } from '../search';
@@ -232,7 +232,12 @@ function RefBadges({ commit, snap, color }: { commit: Commit; snap: RepoSnapshot
               e.stopPropagation();
               if (r.type !== 'tag' && !current) checkoutBranch(ui, snap.path, r.name);
             }}
-            onContextMenu={(e) => r.type !== 'tag' && ui.openMenu(e, branchMenu(ui, snap, r.name, r.type === 'remote'))}
+            onContextMenu={(e) => {
+              if (r.type !== 'tag') return ui.openMenu(e, branchMenu(ui, snap, r.name, r.type === 'remote'));
+              // Tag absent de l'instantané (course avec un rafraîchissement) : le menu du commit s'ouvre.
+              const tag = snap.tags.find((t) => t.name === r.name);
+              if (tag) ui.openMenu(e, tagMenu(ui, snap, tag));
+            }}
             title={r.type === 'remote' ? `Branche distante ${r.name}` : r.type === 'tag' ? `Tag ${r.name}` : synced ? `${r.name} (synchronisée)` : r.name}
           >
             {r.type === 'tag' ? '◆ ' : ''}
