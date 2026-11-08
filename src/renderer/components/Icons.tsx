@@ -61,6 +61,13 @@ export function Logo({ size = 22 }: { size?: number }) {
   );
 }
 
+/** Ajouter un remote (« + » de la barre latérale). */
+export function IconRemoteAdd() {
+  return (
+    <svg {...s} width={12} height={12}><path d="M8 3v10M3 8h10" /></svg>
+  );
+}
+
 /** « + » de la section Tags (nouveau tag sur HEAD). */
 export function IconTagAdd() {
   return (

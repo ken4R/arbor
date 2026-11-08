@@ -16,6 +16,8 @@ import './commands/prefs';
 // onglets
 import './commands/tabs';
 
+// remotes
+import './commands/remotes';
 // tags
 import './commands/tags';
 

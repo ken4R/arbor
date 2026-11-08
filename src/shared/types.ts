@@ -197,6 +197,18 @@ export interface ArborApi {
   restoreSession(): Promise<{ repos: string[]; active: number }>;
   /** Enregistre les onglets ouverts (seuls les dépôts ouverts dans Arbor sont retenus). */
   saveSession(repos: string[], active: number): Promise<void>;
+  // remotes
+  /** URL brutes d'un remote telles qu'écrites dans la configuration (avant `insteadOf`), pour les éditer. */
+  remoteConfig(repo: string, name: string): Promise<RemoteConfig>;
+  /** Ajoute un remote ; `pushUrl` null = même URL que le fetch ; `fetch` récupère ses branches aussitôt. */
+  addRemote(repo: string, name: string, url: string, pushUrl: string | null, fetch: boolean): Promise<void>;
+  renameRemote(repo: string, oldName: string, newName: string): Promise<void>;
+  /** Supprime le remote, ses branches distantes et la configuration de suivi qui le référence. */
+  removeRemote(repo: string, name: string): Promise<void>;
+  /** URL de fetch (`push` faux) ou de push ; pour le push, `url` null retire `pushurl`. */
+  setRemoteUrl(repo: string, name: string, url: string | null, push: boolean): Promise<void>;
+  fetchRemote(repo: string, name: string): Promise<void>;
+  pruneRemote(repo: string, name: string): Promise<void>;
   // tags
   /** Checkout de `refs/tags/<name>` (HEAD détachée). */
   checkoutTag(repo: string, name: string): Promise<void>;
@@ -207,6 +219,12 @@ export interface ArborApi {
   pushAllTags(repo: string, remote: string): Promise<void>;
   /** Tags du remote (`git ls-remote`, accès réseau). */
   remoteTags(repo: string, remote: string): Promise<RemoteTag[]>;
+}
+
+/** Valeurs brutes de `remote.<nom>.url` et `remote.<nom>.pushurl` (plusieurs possibles, souvent zéro ou une). */
+export interface RemoteConfig {
+  urls: string[];
+  pushUrls: string[];
 }
 
 /** Tag présent sur un remote (`git ls-remote --tags --refs`) : `sha` = objet pointé (le tag annoté lui-même). */
