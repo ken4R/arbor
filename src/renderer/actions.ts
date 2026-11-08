@@ -1,6 +1,10 @@
-import type { Commit, RepoSnapshot } from '../shared/types';
+import type { Commit, RepoSnapshot, Tag } from '../shared/types';
+import type { Remote } from '../shared/types';
+import { remoteOf } from '../shared/remotes';
+import { openAddRemoteDialog, openEditRemoteDialog } from './components/RemoteDialog';
 import { api } from './api';
 import type { MenuItem } from './components/ContextMenu';
+import { openDeleteTagDialog, openTagDialog, pushTagAction } from './components/TagDialog';
 import type { Ui } from './ui';
 import { openRebaseDialog } from './components/RebaseDialog';
 
@@ -94,8 +98,7 @@ export function commitMenu(ui: Ui, snap: RepoSnapshot, c: Commit): MenuItem[] {
     },
     {
       label: 'Créer un tag ici…',
-      onClick: () =>
-        ui.ask({ title: 'Nouveau tag', label: 'Nom du tag', confirm: 'Créer', onSubmit: (n) => ui.run('Tag…', () => api.createTag(repo, n, c.sha)) }),
+      onClick: () => openTagDialog(ui, snap, c.sha, `${short} « ${c.subject} »`),
     },
     { label: 'Checkout de ce commit (HEAD détachée)', onClick: () => ui.run('Checkout…', () => api.checkout(repo, c.sha)) },
     'separator',
@@ -172,4 +175,85 @@ export function stashSaveAction(ui: Ui, snap: RepoSnapshot) {
 export function stashPopAction(ui: Ui, snap: RepoSnapshot) {
   if (!snap.stashes.length) return;
   return ui.run('Pop…', () => api.stashApply(snap.path, 0, snap.stashes[0].sha, true));
+}
+
+// remotes
+
+/** Menu d'un remote (en-tête de sa section dans la barre latérale). */
+export function remoteMenu(ui: Ui, snap: RepoSnapshot, remote: Remote): MenuItem[] {
+  const repo = snap.path;
+  const name = remote.name;
+  const url = remote.fetchUrl ?? remote.pushUrl;
+  const remoteBranches = snap.branches.filter((b) => b.remote && remoteOf(snap.remotes, b.name) === name && !b.name.endsWith('/HEAD')).length;
+  return [
+    { label: `Fetch « ${name} »`, onClick: () => fetchRemoteAction(ui, snap, name) },
+    { label: `Prune « ${name} »`, onClick: () => pruneRemoteAction(ui, snap, name) },
+    'separator',
+    { label: "Modifier l'URL…", onClick: () => openEditRemoteDialog(ui, snap, name) },
+    {
+      label: 'Renommer…',
+      onClick: () =>
+        ui.ask({
+          title: `Renommer le remote « ${name} »`,
+          message: 'Les branches distantes et la configuration de suivi des branches locales suivent le nouveau nom.',
+          label: 'Nouveau nom',
+          initial: name,
+          confirm: 'Renommer',
+          onSubmit: (n) => {
+            if (n !== name) void ui.run('Renommage du remote…', () => api.renameRemote(repo, name, n), `Remote renommé en « ${n} »`);
+          },
+        }),
+    },
+    {
+      label: 'Supprimer…',
+      danger: true,
+      onClick: () =>
+        ui.ask({
+          title: `Supprimer le remote « ${name} »`,
+          message:
+            `Le remote sera retiré de la configuration, avec ses ${remoteBranches} branche${remoteBranches > 1 ? 's' : ''} distante${remoteBranches > 1 ? 's' : ''} ` +
+            'et le suivi des branches locales qui s’y rattachent. Les commits et les branches locales sont conservés.',
+          confirm: 'Supprimer',
+          danger: true,
+          onSubmit: () => void ui.run('Suppression du remote…', () => api.removeRemote(repo, name), `Remote « ${name} » supprimé`),
+        }),
+    },
+    'separator',
+    { label: "Copier l'URL", disabled: !url, onClick: () => url && void navigator.clipboard.writeText(url) },
+    'separator',
+    { label: 'Ajouter un remote…', onClick: () => openAddRemoteDialog(ui, snap) },
+  ];
+}
+
+export function fetchRemoteAction(ui: Ui, snap: RepoSnapshot, name: string) {
+  return ui.run(`Fetch de ${name}…`, () => api.fetchRemote(snap.path, name), `Fetch de « ${name} » terminé`);
+}
+
+export function pruneRemoteAction(ui: Ui, snap: RepoSnapshot, name: string) {
+  return ui.run(`Prune de ${name}…`, () => api.pruneRemote(snap.path, name), `Prune de « ${name} » terminé`);
+}
+
+// tags
+
+/** Checkout d'un tag par son nom complet (`refs/tags/<nom>`), jamais ambigu avec une branche du même nom. */
+export function checkoutTag(ui: Ui, repo: string, tag: Tag) {
+  if (tag.sha === null) return;
+  return ui.run(`Checkout du tag ${tag.name}…`, () => api.checkoutTag(repo, tag.name));
+}
+
+/** Menu contextuel d'un tag (barre latérale, badge du graphe). */
+export function tagMenu(ui: Ui, snap: RepoSnapshot, tag: Tag): MenuItem[] {
+  const repo = snap.path;
+  const pushes: MenuItem[] = snap.remotes.length
+    ? snap.remotes.map((r) => ({ label: `Pousser vers « ${r.name} »`, onClick: () => void pushTagAction(ui, repo, r.name, tag.name) }))
+    : [{ label: 'Pousser (aucun remote)', disabled: true, onClick: () => {} }];
+  return [
+    { label: `Checkout « ${tag.name} » (HEAD détachée)`, disabled: tag.sha === null, onClick: () => void checkoutTag(ui, repo, tag) },
+    'separator',
+    ...pushes,
+    'separator',
+    { label: 'Supprimer…', danger: true, onClick: () => openDeleteTagDialog(ui, snap, tag) },
+    'separator',
+    { label: 'Copier le nom', onClick: () => void navigator.clipboard.writeText(tag.name) },
+  ];
 }

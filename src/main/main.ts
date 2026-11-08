@@ -254,6 +254,11 @@ const READ_ONLY = new Set([
   'saveSession',
   // rebase interactif
   'rebasePlan',
+  'conflictStages', // ls-files --no-optional-locks : n'écrit rien
+  // remotes
+  'remoteConfig',
+  // tags
+  'remoteTags',
 ]);
 
 const handlers: Record<string, (...args: any[]) => Promise<unknown>> = {
@@ -325,6 +330,25 @@ const handlers: Record<string, (...args: any[]) => Promise<unknown>> = {
   rebaseInteractive: (repo: string, upstream: unknown, expectedHead: unknown, steps: unknown) =>
     g.rebaseInteractive(repo, String(upstream), String(expectedHead), Array.isArray(steps) ? steps : []),
   skipOp: g.skipOp,
+  conflictVersions: g.conflictVersions,
+  saveResolution: g.saveResolution,
+  resolveDeletion: g.resolveDeletion,
+  conflictStages: g.conflictStages,
+  // remotes
+  remoteConfig: g.remoteConfig,
+  addRemote: g.addRemote,
+  renameRemote: g.renameRemote,
+  removeRemote: g.removeRemote,
+  setRemoteUrl: g.setRemoteUrl,
+  fetchRemote: g.fetchRemote,
+  pruneRemote: g.pruneRemote,
+  // tags
+  checkoutTag: g.checkoutTag,
+  deleteTag: g.deleteTag,
+  deleteRemoteTag: g.deleteRemoteTag,
+  pushTag: g.pushTag,
+  pushAllTags: g.pushAllTags,
+  remoteTags: g.remoteTags,
 };
 
 for (const [name, fn] of Object.entries(handlers)) {

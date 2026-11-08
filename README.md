@@ -29,6 +29,8 @@ npm test               # tests unitaires
 - **Rafraîchissement automatique** : l'interface suit les changements faits hors d'Arbor (terminal, éditeur), fichiers ignorés exclus, sans boucle ; interrupteur « Auto » dans la barre d'outils.
 - **Fusion et rebase** depuis le menu contextuel d'une branche, avec bandeau Continuer/Passer/Abandonner.
 - **Conflits** : vue dédiée qui met en évidence les deux versions, « garder ma version » / « garder leur version ».
+- **Éditeur de fusion à trois panneaux** : fusion calculée par Git (`git merge-file --diff3`, filtres du dépôt appliqués), ma version, base et leur version alignées bloc par bloc, résultat modifiable en bas (un segment par bloc), changements sans conflit appliqués d'office, choix par conflit (ma version, leur version, les deux, base), Alt+↑/↓ et Alt+1/2/3 (aussi dans la palette), défilement synchronisé ; « ma version » reste la vôtre pendant un rebase (pas d'inversion pendant `git am`) ; fins de ligne CRLF, saut final et bit exécutable conservés, écriture atomique ; avertissement si le fichier a déjà été modifié (résolution commencée ailleurs, rerere) ; enregistrement refusé si le fichier a changé pendant l'édition ; conflits suppression/modification (garder ou supprimer le fichier). Repli sur la vue simple pour les fichiers binaires, filtrés (LFS…), de plus de 1 Mo, 20 000 lignes ou 2 000 blocs, les sous-modules et les liens symboliques.
+  Les brouillons de l'éditeur restent en mémoire seulement : ils survivent au changement d'onglet ou de fichier, pas à la fermeture d'Arbor.
 - **Stash** : mettre de côté, appliquer, pop, supprimer.
 - **Commits** : cherry-pick, revert, reset soft/mixed/hard, tag, branche depuis un commit, copie du SHA.
 - **Historique d'un fichier et blame** : clic droit sur un fichier, liste des commits qui l'ont modifié (renommages suivis) avec le diff de chaque version, blame ligne par ligne (lignes non commitées comprises) qui renvoie vers les commits.
@@ -36,6 +38,8 @@ npm test               # tests unitaires
 - **Palette de commandes** (Ctrl/Cmd+Maj+P ou Ctrl/Cmd+K) : recherche floue, insensible aux accents, sur les commandes (fetch, pull, push, commit, stash, nouvelle branche, continuer/abandonner…), les branches et tags, les dépôts récents et les fichiers modifiés ; préfixes `>` commandes, `@` branches, `#` fichiers ; seules les commandes possibles dans l'état du dépôt sont proposées.
 - **Onglets multi-dépôts** : un onglet par dépôt (Ctrl/Cmd+T, Ctrl/Cmd+W, Ctrl+Tab / Ctrl+Maj+Tab, clic du milieu), chaque onglet garde sa sélection, son diff et son brouillon de commit ; seul l'onglet actif est surveillé ; onglets rouverts au redémarrage (préférence « restaurer les onglets »), dépôts supprimés écartés, dépôts momentanément inaccessibles (disque externe, partage réseau) gardés et rouverts au lancement suivant ; dépôts de même nom distingués par leur dossier parent.
 - **Rebase interactif** (clic droit sur un commit « Rebase interactif à partir d'ici… », sur une branche, ou palette) : liste des commits plus récent en haut, réordonnés par glisser-déposer ou Alt+↑/↓, actions pick/reword/edit/squash/fixup/drop (touches p r e s f d), messages saisis avant de démarrer, commits déjà publiés signalés ; refusé s'il y a des modifications locales ou des fusions dans la plage. Le bandeau affiche l'étape, le commit d'arrêt (edit, conflit) et les étapes restantes, avec Continuer, Passer et Abandonner.
+- **Gestion des remotes** : ajouter (URL de push facultative, fetch immédiat), renommer, supprimer (avec confirmation), modifier l'URL de fetch ou de push (valeurs brutes de la configuration, avant `insteadOf` ; push vide = même URL que le fetch), fetch ou prune d'un seul remote, copie de l'URL ; « + » et bouton Fetch dans l'en-tête des remotes, URL en infobulle, commandes de palette « Ajouter un remote… », « Fetch <remote> », « Prune <remote> ».
+- **Tags** : création légère ou annotée (message multiligne) sur n'importe quel commit, avec publication immédiate facultative ; section de la barre latérale (clic = sélection du commit, double-clic = checkout de `refs/tags/<nom>`, « + » = tag sur HEAD, infobulle du message) ; menu du tag dans la barre latérale et sur les badges du graphe (checkout, pousser vers un remote, supprimer en local et sur le remote si le tag y est présent, copier le nom) ; palette : « Créer un tag… », « Pousser tous les tags vers <remote> ».
 
 ![Résolution de conflits](docs/conflits.png)
 
@@ -52,6 +56,6 @@ Le rendu n'a aucun accès direct au système : toutes les commandes passent par 
 ## Feuille de route
 
 1. Onglets : conserver aussi l'état propre aux composants (défilement du graphe, recherche, panneaux repliés), aujourd'hui remis à zéro à chaque activation.
-2. Éditeur de fusion à trois panneaux, gestion des remotes et des tags, annulation via le reflog.
+2. Annulation via le reflog.
 3. Authentification GitHub/GitLab, pull requests, identifiants SSH/HTTPS.
 4. Performances sur gros dépôts, tests de bout en bout en CI, paquets d'installation (electron-builder).

@@ -18,6 +18,12 @@ import './commands/tabs';
 
 // rebase interactif
 import './commands/rebase';
+// éditeur de fusion
+import './commands/conflicts';
+// remotes
+import './commands/remotes';
+// tags
+import './commands/tags';
 
 // Préférences enregistrées lues dès le démarrage (et migration des anciennes clés localStorage).
 void loadPreferences();
