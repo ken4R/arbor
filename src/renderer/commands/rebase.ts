@@ -1,6 +1,7 @@
 import type { RepoSnapshot } from '../../shared/types';
 import { api } from '../api';
 import { registerCommands, type CommandContext } from '../commands';
+import { skipConfirmMessage } from '../components/OperationBanner';
 import { openRebaseDialog } from '../components/RebaseDialog';
 
 // Commandes du rebase interactif : ouvrir le planificateur (base demandée) et passer l'étape en cours.
@@ -37,10 +38,9 @@ registerCommands('rebase', () => [
     run: (c) => {
       if (!ready(c)) return;
       const { ui, snap } = c;
-      const stopped = snap.status.rebase?.stopped;
       ui.ask({
         title: 'Passer l’étape en cours',
-        message: `${stopped ? `Le commit ${stopped.sha.slice(0, 7)}${stopped.subject ? ` « ${stopped.subject} »` : ''}` : 'Le commit en cours'} ne sera pas appliqué : ses modifications, et les résolutions de conflit déjà faites pour lui, seront perdues.`,
+        message: skipConfirmMessage(snap),
         confirm: 'Passer',
         danger: true,
         onSubmit: () => ui.run('Passage de l’étape…', () => api.skipOp(snap.path)),

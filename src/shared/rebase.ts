@@ -37,7 +37,8 @@ export interface RebaseProgress {
   onto: string;
   /** Commit sur lequel le rebase s'est arrêté. */
   stopped: { sha: string; subject: string } | null;
-  reason: 'conflict' | 'edit' | 'exec' | 'other';
+  /** `empty` : le commit n'apporte plus rien (changements déjà présents) ; Continuer le retire. */
+  reason: 'conflict' | 'edit' | 'exec' | 'empty' | 'other';
   remaining: { action: string; sha: string; subject: string }[];
 }
 
@@ -186,21 +187,30 @@ export function parseTodoLines(text: string): { action: string; sha: string; res
  * présence de `amend` (arrêt « edit »), `stopped-sha`. Les lignes exec d'Arbor ne comptent pas comme des étapes.
  */
 export function progressFromFiles(
-  f: { done: string; todo: string; amend: boolean; stoppedSha: string | null },
+  f: {
+    done: string;
+    todo: string;
+    amend: boolean;
+    stoppedSha: string | null;
+    /** Index et arbre de travail identiques à HEAD : un arrêt sans conflit vient alors d'un commit devenu vide. */
+    clean?: boolean;
+    /** Actions choisies dans le planificateur (`arbor-rebase/actions.json`), affichées à la place de pick/fixup. */
+    actions?: Record<string, string>;
+  },
   conflicted: number,
 ): Omit<RebaseProgress, 'headName' | 'onto' | 'interactive'> {
   const doneAll = parseTodoLines(f.done);
   const done = doneAll.filter((l) => !isArborExec(l));
   const remaining = parseTodoLines(f.todo)
     .filter((l) => !isArborExec(l))
-    .map((l) => ({ action: l.action, sha: l.sha, subject: l.rest }));
+    .map((l) => ({ action: (l.sha && f.actions?.[l.sha]) || l.action, sha: l.sha, subject: l.rest }));
   const lastAll = doneAll[doneAll.length - 1];
   const lastCommit = [...done].reverse().find((l) => l.sha);
   let reason: RebaseProgress['reason'] = 'other';
   if (conflicted > 0) reason = 'conflict';
   else if (f.amend) reason = 'edit';
   else if (lastAll?.action === 'exec') reason = 'exec';
-  else if (f.stoppedSha) reason = 'conflict';
+  else if (f.stoppedSha) reason = f.clean ? 'empty' : 'conflict';
   const stoppedSha = f.stoppedSha ?? lastCommit?.sha ?? null;
   const line = stoppedSha ? [...done].reverse().find((l) => l.sha && (stoppedSha.startsWith(l.sha) || l.sha.startsWith(stoppedSha))) : undefined;
   return {
@@ -210,4 +220,29 @@ export function progressFromFiles(
     reason,
     remaining,
   };
+}
+
+/**
+ * Le commit d'arrêt ne sera pas créé (Passer, ou Continuer sur un commit devenu vide) : s'il est le premier d'un
+ * groupe (pick/edit), les lignes qui le suivent dans `todo` et lui appartenaient (fixup/squash en tête, puis la ligne
+ * exec d'Arbor qui applique son message) s'appliqueraient au commit précédent. Renvoie la liste d'instructions sans
+ * ces lignes, ou null s'il n'y a rien à retirer. `amend` : arrêt « edit », le commit existe déjà.
+ */
+export function todoWithoutOrphanedGroup(done: string, todo: string, amend: boolean): string | null {
+  if (amend) return null;
+  const last = parseTodoLines(done).pop();
+  if (!last || !['pick', 'edit', 'reword'].includes(last.action)) return null;
+  const lines = todo.split('\n');
+  const drop = new Set<number>();
+  for (let i = 0; i < lines.length; i++) {
+    const [parsed] = parseTodoLines(lines[i]);
+    if (!parsed) continue; // commentaire ou ligne vide
+    if (parsed.action === 'fixup' || parsed.action === 'squash') {
+      drop.add(i);
+      continue;
+    }
+    if (isArborExec(parsed)) drop.add(i);
+    break;
+  }
+  return drop.size ? lines.filter((_l, i) => !drop.has(i)).join('\n') : null;
 }

@@ -18,7 +18,7 @@ import type {
 } from '../shared/types';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import type { RebasePlan } from '../shared/types';
-import { REBASE_MIN_GIT, buildTodo, gitVersionAtLeast, parseGitVersion, progressFromFiles, validateSteps, type RebaseProgress, type RebaseStep } from '../shared/rebase';
+import { REBASE_MIN_GIT, buildTodo, gitVersionAtLeast, parseGitVersion, progressFromFiles, todoWithoutOrphanedGroup, validateSteps, type RebaseProgress, type RebaseStep } from '../shared/rebase';
 
 export class GitError extends Error {
   constructor(message: string, public readonly stderr: string) {
@@ -27,6 +27,8 @@ export class GitError extends Error {
 }
 
 const GIT_ERRORS: [RegExp, (m: RegExpMatchArray) => string][] = [
+  // Avant les conflits : un commit devenu vide pendant un rebase sort aussi « could not apply ».
+  [/previous cherry-pick is now empty/, () => 'Le commit en cours est devenu vide (ses changements sont déjà présents) : retirez-le avec Passer (ou Continuer pendant un rebase).'],
   // Les conflits passent en premier : leur sortie contient aussi l'état du dépôt (« no changes added… »).
   [/CONFLICT|Automatic merge failed|could not apply|after resolving the conflicts|Index was not unstashed/, () => 'Des conflits sont apparus : résolvez-les depuis la liste « Conflits ».'],
   [/branch '(.+?)' is not fully merged/, (m) => `La branche « ${m[1]} » n'est pas entièrement fusionnée. Cochez « Forcer » pour la supprimer quand même.`],
@@ -198,8 +200,8 @@ async function gitDir(repo: string): Promise<string> {
   return dir.startsWith('/') || /^[A-Za-z]:/.test(dir) ? dir : join(repo, dir);
 }
 
-async function repoState(repo: string): Promise<RepoState> {
-  const dir = await gitDir(repo);
+async function repoState(repo: string, knownDir?: string): Promise<RepoState> {
+  const dir = knownDir ?? (await gitDir(repo));
   if (existsSync(join(dir, 'rebase-merge')) || existsSync(join(dir, 'rebase-apply'))) return 'rebasing';
   if (existsSync(join(dir, 'MERGE_HEAD'))) return 'merging';
   if (existsSync(join(dir, 'CHERRY_PICK_HEAD'))) return 'cherry-picking';
@@ -208,16 +210,18 @@ async function repoState(repo: string): Promise<RepoState> {
 }
 
 export async function status(repo: string): Promise<WorkingStatus> {
-  const [out, state] = await Promise.all([
+  const [out, dir] = await Promise.all([
     git(repo, ['--no-optional-locks', 'status', '--porcelain=v1', '-z', '-b', '--untracked-files=all']),
-    repoState(repo),
+    gitDir(repo),
   ]);
+  const state = await repoState(repo, dir);
   const parsed = parseStatus(out);
   if (state !== 'rebasing') {
-    await cleanupRebaseScratch(repo);
+    await cleanupRebaseScratch(repo, dir);
     return { ...parsed, state };
   }
-  return { ...parsed, state, rebase: await rebaseProgress(repo, parsed.conflicted.length) };
+  const clean = parsed.staged.length === 0 && parsed.unstaged.every((f) => f.status === '?');
+  return { ...parsed, state, rebase: await rebaseProgress(repo, parsed.conflicted.length, clean, dir) };
 }
 
 // Surveillance du dépôt (rafraîchissement automatique). `status` ci-dessus passe `--no-optional-locks` :
@@ -764,8 +768,11 @@ export async function abort(repo: string) {
 export async function continueOp(repo: string) {
   const state = await repoState(repo);
   if (state === 'merging') await git(repo, ['commit', '--no-edit']);
-  else if (state === 'rebasing') await git(repo, ['rebase', '--continue']);
-  else if (state === 'cherry-picking') await git(repo, ['cherry-pick', '--continue']);
+  else if (state === 'rebasing') {
+    // Commit devenu vide : Continuer le retire, ses lignes de groupe (exec de message…) ne doivent pas suivre.
+    if (await indexMatchesHead(repo)) await dropOrphanedRebaseGroup(repo);
+    await git(repo, ['rebase', '--continue']);
+  } else if (state === 'cherry-picking') await git(repo, ['cherry-pick', '--continue']);
   else if (state === 'reverting') await git(repo, ['revert', '--continue']);
 }
 
@@ -877,20 +884,43 @@ const REBASE_SEQUENCE_EDITOR = 'cp "$ARBOR_REBASE_TODO"';
 /** Au-delà, le planificateur refuse (liste illisible, rebase très long). */
 export const REBASE_MAX_COMMITS = 500;
 
-/** Dépôts où Arbor a lancé un rebase interactif (dossier `arbor-rebase/` à supprimer à la fin). */
-const rebaseScratch = new Set<string>();
 /** Rebase en cours de lancement : le dossier ne doit pas être supprimé par un `status` concurrent. */
 const rebaseStarting = new Set<string>();
 
-async function rebaseScratchDir(repo: string): Promise<string> {
-  return join((await gitDirs(repo)).gitDir, 'arbor-rebase');
+async function rebaseScratchDir(repo: string, knownGitDir?: string): Promise<string> {
+  return join(knownGitDir ?? (await gitDir(repo)), 'arbor-rebase');
 }
 
-/** Supprime `<gitDir>/arbor-rebase/` une fois le rebase lancé par Arbor terminé ou abandonné. */
-async function cleanupRebaseScratch(repo: string) {
-  if (!rebaseScratch.has(repo) || rebaseStarting.has(repo)) return;
-  rebaseScratch.delete(repo);
-  await rm(await rebaseScratchDir(repo), { recursive: true, force: true }).catch(() => {});
+/**
+ * Supprime `<gitDir>/arbor-rebase/` hors rebase (terminé, abandonné, y compris après un redémarrage d'Arbor pendant
+ * un arrêt), sauf pendant le lancement. Appelé par `status` quand l'état n'est pas « rebasing ».
+ */
+async function cleanupRebaseScratch(repo: string, knownGitDir?: string) {
+  if (rebaseStarting.has(repo)) return;
+  const dir = await rebaseScratchDir(repo, knownGitDir);
+  if (existsSync(dir)) await rm(dir, { recursive: true, force: true }).catch(() => {});
+}
+
+/** Index et arbre de travail (fichiers suivis) identiques à HEAD, sans conflit. */
+async function indexMatchesHead(repo: string): Promise<boolean> {
+  const out = await git(repo, ['--no-optional-locks', 'status', '--porcelain=v1', '-z', '--untracked-files=no']);
+  return out.length === 0;
+}
+
+/**
+ * Rebase lancé par Arbor, commit d'arrêt qui ne sera pas créé (Passer, commit devenu vide) : retire de
+ * `rebase-merge/git-rebase-todo` les lignes de son groupe (fixup suivants, exec du message), qui sinon
+ * s'appliqueraient au commit précédent.
+ */
+async function dropOrphanedRebaseGroup(repo: string) {
+  const dir = await gitDir(repo);
+  if (!existsSync(join(dir, 'arbor-rebase'))) return;
+  const merge = join(dir, 'rebase-merge');
+  const todoFile = join(merge, 'git-rebase-todo');
+  const [done, todo] = await Promise.all([readOptional(join(merge, 'done')), readOptional(todoFile)]);
+  if (done === null || todo === null) return;
+  const next = todoWithoutOrphanedGroup(done, todo, existsSync(join(merge, 'amend')));
+  if (next !== null) await writeFile(todoFile, next);
 }
 
 async function assertRebaseGit(repo: string) {
@@ -955,13 +985,14 @@ export async function rebaseInteractive(repo: string, upstream: string, expected
 
   const dir = await rebaseScratchDir(repo);
   rebaseStarting.add(repo);
-  rebaseScratch.add(repo);
   try {
     await rm(dir, { recursive: true, force: true });
     await mkdir(dir, { recursive: true });
     const todoFile = join(dir, 'todo');
     await writeFile(todoFile, todo);
     await Promise.all(messages.map((m, i) => writeFile(join(dir, `msg-${i}`), m)));
+    // Actions choisies, pour afficher reword/squash dans les étapes restantes (le todo n'a que pick/fixup).
+    await writeFile(join(dir, 'actions.json'), JSON.stringify(Object.fromEntries(clean.map((s) => [s.sha, s.action]))));
     try {
       await git(
         repo,
@@ -987,8 +1018,10 @@ export async function rebaseInteractive(repo: string, upstream: string, expected
 
 export async function skipOp(repo: string) {
   const state = await repoState(repo);
-  if (state === 'rebasing') await git(repo, ['rebase', '--skip']);
-  else if (state === 'cherry-picking') await git(repo, ['cherry-pick', '--skip']);
+  if (state === 'rebasing') {
+    await dropOrphanedRebaseGroup(repo);
+    await git(repo, ['rebase', '--skip']);
+  } else if (state === 'cherry-picking') await git(repo, ['cherry-pick', '--skip']);
   else if (state === 'reverting') await git(repo, ['revert', '--skip']);
   else if (state === 'merging') throw new GitError('Une fusion ne peut pas être passée : continuez-la ou abandonnez-la.', '');
 }
@@ -996,14 +1029,24 @@ export async function skipOp(repo: string) {
 const readOptional = (file: string) => fsReadFile(file, 'utf8').catch(() => null);
 
 /** Progression du rebase en cours (`rebase-merge/` ou, pour l'ancien moteur, `rebase-apply/`). */
-export async function rebaseProgress(repo: string, conflicted: number): Promise<RebaseProgress | null> {
-  const dir = await gitDir(repo);
+export async function rebaseProgress(repo: string, conflicted: number, clean = false, knownGitDir?: string): Promise<RebaseProgress | null> {
+  const dir = knownGitDir ?? (await gitDir(repo));
   const merge = join(dir, 'rebase-merge');
   if (existsSync(merge)) {
-    const [done, todo, stopped, headName, onto] = await Promise.all(
-      ['done', 'git-rebase-todo', 'stopped-sha', 'head-name', 'onto'].map((f) => readOptional(join(merge, f))),
+    const [done, todo, stopped, headName, onto, actionsJson] = await Promise.all(
+      [...['done', 'git-rebase-todo', 'stopped-sha', 'head-name', 'onto'].map((f) => join(merge, f)), join(dir, 'arbor-rebase', 'actions.json')].map(readOptional),
     );
-    const p = progressFromFiles({ done: done ?? '', todo: todo ?? '', amend: existsSync(join(merge, 'amend')), stoppedSha: stopped?.trim() || null }, conflicted);
+    let actions: Record<string, string> | undefined;
+    try {
+      const parsed: unknown = actionsJson ? JSON.parse(actionsJson) : undefined;
+      if (parsed && typeof parsed === 'object') actions = parsed as Record<string, string>;
+    } catch {
+      // fichier illisible : actions techniques
+    }
+    const p = progressFromFiles(
+      { done: done ?? '', todo: todo ?? '', amend: existsSync(join(merge, 'amend')), stoppedSha: stopped?.trim() || null, clean, actions },
+      conflicted,
+    );
     // Sujets absents des fichiers (liste écrite par un autre outil, SHA abrégés) : relus dans le dépôt.
     if (p.stopped && !p.stopped.subject) {
       p.stopped.subject = (await git(repo, ['log', '-1', '--format=%s', '--end-of-options', p.stopped.sha], { okCodes: [128] }).catch(() => '')).trim();

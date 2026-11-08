@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { REBASE_MIN_GIT, buildTodo, defaultGroupMessage, gitVersionAtLeast, messageExec, parseGitVersion, parseTodoLines, progressFromFiles, rebaseGroups, resultCount, validateSteps, type RebaseStep } from './rebase';
+import { REBASE_MIN_GIT, buildTodo, defaultGroupMessage, gitVersionAtLeast, messageExec, parseGitVersion, parseTodoLines, progressFromFiles, rebaseGroups, todoWithoutOrphanedGroup, resultCount, validateSteps, type RebaseStep } from './rebase';
 
 const sha = (c: string) => c.repeat(40);
 const A = sha('a');
@@ -147,6 +147,31 @@ describe('parseTodoLines', () => {
   });
 });
 
+describe('todoWithoutOrphanedGroup', () => {
+  it('reword sauté : retire la ligne exec qui appliquerait son message au commit précédent', () => {
+    const todo = `${messageExec(0)}\npick ${B} Deux\n`;
+    expect(todoWithoutOrphanedGroup(`pick ${A} Un\n`, todo, false)).toBe(`pick ${B} Deux\n`);
+  });
+
+  it('chef d\'un groupe squash sauté : retire les fixup du groupe et son exec, garde la suite', () => {
+    const todo = `fixup ${B} Deux\r\nfixup ${C} Trois\r\n${messageExec(1)}\r\npick ${D} Quatre\r\n${messageExec(2)}\r\n`;
+    expect(todoWithoutOrphanedGroup(`pick ${sha('e')}\n${messageExec(0)}\nedit ${A} Un\n`, todo, false)).toBe(`pick ${D} Quatre\r\n${messageExec(2)}\r\n`);
+  });
+
+  it('groupe de fixup seuls (sans exec) : retire les fixup', () => {
+    expect(todoWithoutOrphanedGroup(`pick ${A}\n`, `# commentaire\nfixup ${B}\npick ${C}\n`, false)).toBe(`# commentaire\npick ${C}\n`);
+  });
+
+  it('ne retire rien : arrêt edit (commit déjà créé), membre d\'un groupe, exec en échec, rien qui suit', () => {
+    const todo = `fixup ${B}\n${messageExec(0)}\n`;
+    expect(todoWithoutOrphanedGroup(`edit ${A}\n`, todo, true)).toBeNull();
+    expect(todoWithoutOrphanedGroup(`pick ${A}\nfixup ${C}\n`, todo, false)).toBeNull();
+    expect(todoWithoutOrphanedGroup(`pick ${A}\n${messageExec(0)}\n`, `pick ${B}\n`, false)).toBeNull();
+    expect(todoWithoutOrphanedGroup(`pick ${A}\n`, `pick ${B}\n${messageExec(0)}\n`, false)).toBeNull();
+    expect(todoWithoutOrphanedGroup('', todo, false)).toBeNull();
+  });
+});
+
 describe('parseGitVersion', () => {
   it('lit la version, y compris les suffixes de distribution', () => {
     expect(parseGitVersion('git version 2.43.0\n')).toEqual([2, 43]);
@@ -193,6 +218,20 @@ describe('progressFromFiles', () => {
     expect(p.reason).toBe('exec');
     expect(p.stopped).toEqual({ sha: A, subject: 'Un' });
     expect([p.step, p.total]).toEqual([1, 2]);
+  });
+
+  it('commit devenu vide : arrêt sans conflit, index propre', () => {
+    const files = { done: `pick ${A} Un\n`, todo: '', amend: false, stoppedSha: A, clean: true };
+    expect(progressFromFiles(files, 0).reason).toBe('empty');
+    expect(progressFromFiles({ ...files, clean: false }, 0).reason).toBe('conflict');
+  });
+
+  it('affiche les actions choisies dans le planificateur à la place de pick/fixup', () => {
+    const p = progressFromFiles(
+      { done: `edit ${A} Un\n`, todo: `pick ${B} Deux\n${messageExec(0)}\nfixup ${C} Trois\npick ${D} Quatre\n`, amend: true, stoppedSha: A, actions: { [B]: 'reword', [C]: 'squash' } },
+      0,
+    );
+    expect(p.remaining.map((r) => r.action)).toEqual(['reword', 'squash', 'pick']);
   });
 
   it('fichiers vides : aucune étape', () => {

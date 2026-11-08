@@ -9,6 +9,14 @@ const STATE_LABEL = {
   reverting: 'Revert en cours',
 } as const;
 
+/** Texte de confirmation de « Passer » : sur un arrêt edit ou exec, le commit existe déjà et reste tel quel. */
+export function skipConfirmMessage(snap: RepoSnapshot): string {
+  const rb = snap.status.state === 'rebasing' ? snap.status.rebase ?? null : null;
+  if (rb && (rb.reason === 'edit' || rb.reason === 'exec')) return 'Les modifications non commitées seront perdues ; le commit reste tel quel.';
+  const what = rb?.stopped ? `Le commit ${rb.stopped.sha.slice(0, 7)}${rb.stopped.subject ? ` « ${rb.stopped.subject} »` : ''}` : 'Le commit en cours';
+  return `${what} ne sera pas appliqué : ses modifications, et les résolutions de conflit déjà faites pour lui, seront perdues.`;
+}
+
 /** Bandeau de l'opération en cours (fusion, rebase, cherry-pick, revert) : état, progression du rebase, actions. */
 export function OperationBanner({ repo, snap }: { repo: string; snap: RepoSnapshot }) {
   const ui = useUi();
@@ -26,13 +34,14 @@ export function OperationBanner({ repo, snap }: { repo: string; snap: RepoSnapsh
   if (rb && !st.conflicted.length && rb.reason === 'edit') text = 'Modifiez puis Continuer ; « Modifier le dernier commit » pour l’amender.';
   else if (rb && !st.conflicted.length && rb.reason === 'exec')
     text = 'Le message n’a pas pu être appliqué (hook ?) : corrigez avec « Modifier le dernier commit » puis Continuer.';
+  else if (rb && !st.conflicted.length && rb.reason === 'empty')
+    text = 'Ce commit est devenu vide (ses changements sont déjà présents) : Continuer le retire.';
   const canSkip = st.state !== 'merging';
 
   const skip = () => {
-    const what = rb?.stopped ? `Le commit ${rb.stopped.sha.slice(0, 7)}${rb.stopped.subject ? ` « ${rb.stopped.subject} »` : ''}` : 'Le commit en cours';
     ui.ask({
       title: 'Passer l’étape en cours',
-      message: `${what} ne sera pas appliqué : ses modifications, et les résolutions de conflit déjà faites pour lui, seront perdues.`,
+      message: skipConfirmMessage(snap),
       confirm: 'Passer',
       danger: true,
       onSubmit: () => ui.run('Passage de l’étape…', () => api.skipOp(repo)),

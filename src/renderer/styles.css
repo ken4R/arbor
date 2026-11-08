@@ -2043,13 +2043,14 @@ tr.cf-marker {
   font-size: 12px;
   resize: vertical;
 }
-.rebase-help,
-.rebase-summary {
+.rebase-help {
   margin: 0;
   font-size: 12px;
   color: var(--text-dim);
 }
 .rebase-summary {
+  margin: 0;
+  font-size: 12px;
   font-weight: 600;
   color: var(--text);
 }
