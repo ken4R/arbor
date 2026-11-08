@@ -181,7 +181,8 @@ export interface ArborApi {
   stashApply(repo: string, index: number, sha: string, pop: boolean): Promise<void>;
   stashDrop(repo: string, index: number, sha: string): Promise<void>;
   initialRepo(): Promise<string | null>;
-  createTag(repo: string, name: string, sha: string): Promise<void>;
+  /** Tag léger si `message` est null, annoté sinon. */
+  createTag(repo: string, name: string, sha: string, message: string | null): Promise<void>;
   cherryPick(repo: string, sha: string): Promise<void>;
   revert(repo: string, sha: string): Promise<void>;
   reset(repo: string, sha: string, mode: 'soft' | 'mixed' | 'hard'): Promise<void>;
@@ -205,6 +206,28 @@ export interface ArborApi {
   resolveDeletion(repo: string, path: string, keep: boolean): Promise<void>;
   /** Identité actuelle des étages d'un fichier en conflit (comparée à `ConflictVersions.stages`) ; null s'il n'est plus en conflit. */
   conflictStages(repo: string, path: string): Promise<string | null>;
+  // remotes
+  /** URL brutes d'un remote telles qu'écrites dans la configuration (avant `insteadOf`), pour les éditer. */
+  remoteConfig(repo: string, name: string): Promise<RemoteConfig>;
+  /** Ajoute un remote ; `pushUrl` null = même URL que le fetch ; `fetch` récupère ses branches aussitôt. */
+  addRemote(repo: string, name: string, url: string, pushUrl: string | null, fetch: boolean): Promise<void>;
+  renameRemote(repo: string, oldName: string, newName: string): Promise<void>;
+  /** Supprime le remote, ses branches distantes et la configuration de suivi qui le référence. */
+  removeRemote(repo: string, name: string): Promise<void>;
+  /** URL de fetch (`push` faux) ou de push ; pour le push, `url` null retire `pushurl`. */
+  setRemoteUrl(repo: string, name: string, url: string | null, push: boolean): Promise<void>;
+  fetchRemote(repo: string, name: string): Promise<void>;
+  pruneRemote(repo: string, name: string): Promise<void>;
+  // tags
+  /** Checkout de `refs/tags/<name>` (HEAD détachée). */
+  checkoutTag(repo: string, name: string): Promise<void>;
+  deleteTag(repo: string, name: string): Promise<void>;
+  /** Supprime `refs/tags/<name>` sur le remote. */
+  deleteRemoteTag(repo: string, remote: string, name: string): Promise<void>;
+  pushTag(repo: string, remote: string, name: string): Promise<void>;
+  pushAllTags(repo: string, remote: string): Promise<void>;
+  /** Tags du remote (`git ls-remote`, accès réseau). */
+  remoteTags(repo: string, remote: string): Promise<RemoteTag[]>;
 }
 
 /** Versions d'un fichier en conflit pour l'éditeur de fusion ; null = absent de ce côté (supprimé, ou pas de base). */
@@ -233,4 +256,16 @@ export interface MergeModel {
   blocks: MergeBlock[];
   eol: '\n' | '\r\n';
   finalNewline: FinalNewlines;
+}
+
+/** Valeurs brutes de `remote.<nom>.url` et `remote.<nom>.pushurl` (plusieurs possibles, souvent zéro ou une). */
+export interface RemoteConfig {
+  urls: string[];
+  pushUrls: string[];
+}
+
+/** Tag présent sur un remote (`git ls-remote --tags --refs`) : `sha` = objet pointé (le tag annoté lui-même). */
+export interface RemoteTag {
+  name: string;
+  sha: string;
 }
