@@ -6,7 +6,7 @@ Arbor est un client Git graphique pour bureau (Windows, macOS, Linux) : graphe d
 
 ## Démarrer
 
-Prérequis : Node.js 20+ et Git installé sur la machine (2.27 ou plus récent pour le rebase interactif).
+Prérequis : Node.js 20+ et Git installé sur la machine (2.27 ou plus récent).
 
 ```bash
 npm install
@@ -27,7 +27,7 @@ npm test               # tests unitaires
 - **Branches** : checkout (double-clic), création, suppression, suivi automatique des branches distantes.
 - **Remotes** : fetch, pull, push (avec publication d'une nouvelle branche), compteurs en avance/en retard.
 - **Rafraîchissement automatique** : l'interface suit les changements faits hors d'Arbor (terminal, éditeur), fichiers ignorés exclus, sans boucle ; interrupteur « Auto » dans la barre d'outils.
-- **Fusion et rebase** depuis le menu contextuel d'une branche, avec bandeau Continuer/Abandonner.
+- **Fusion et rebase** depuis le menu contextuel d'une branche, avec bandeau Continuer/Passer/Abandonner.
 - **Conflits** : vue dédiée qui met en évidence les deux versions, « garder ma version » / « garder leur version ».
 - **Stash** : mettre de côté, appliquer, pop, supprimer.
 - **Commits** : cherry-pick, revert, reset soft/mixed/hard, tag, branche depuis un commit, copie du SHA.
