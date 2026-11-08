@@ -259,6 +259,9 @@ const READ_ONLY = new Set([
   'remoteConfig',
   // tags
   'remoteTags',
+  // reflog
+  'reflog',
+  'undoInfo',
 ]);
 
 const handlers: Record<string, (...args: any[]) => Promise<unknown>> = {
@@ -349,6 +352,10 @@ const handlers: Record<string, (...args: any[]) => Promise<unknown>> = {
   pushTag: g.pushTag,
   pushAllTags: g.pushAllTags,
   remoteTags: g.remoteTags,
+  // reflog
+  reflog: (repo: string, ref: unknown, skip: unknown) => g.reflog(repo, String(ref), Number(skip)),
+  undoInfo: g.undoInfo,
+  undoLast: (repo: string, expectedHead: unknown, expectedTarget: unknown) => g.undoLast(repo, String(expectedHead), String(expectedTarget)),
 };
 
 for (const [name, fn] of Object.entries(handlers)) {

@@ -24,6 +24,8 @@ import './commands/conflicts';
 import './commands/remotes';
 // tags
 import './commands/tags';
+// reflog
+import './commands/reflog';
 
 // Préférences enregistrées lues dès le démarrage (et migration des anciennes clés localStorage).
 void loadPreferences();

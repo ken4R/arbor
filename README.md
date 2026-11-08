@@ -40,6 +40,7 @@ npm test               # tests unitaires
 - **Rebase interactif** (clic droit sur un commit « Rebase interactif à partir d'ici… », sur une branche, ou palette) : liste des commits plus récent en haut, réordonnés par glisser-déposer ou Alt+↑/↓, actions pick/reword/edit/squash/fixup/drop (touches p r e s f d), messages saisis avant de démarrer, commits déjà publiés signalés ; refusé s'il y a des modifications locales ou des fusions dans la plage. Le bandeau affiche l'étape, le commit d'arrêt (edit, conflit) et les étapes restantes, avec Continuer, Passer et Abandonner.
 - **Gestion des remotes** : ajouter (URL de push facultative, fetch immédiat), renommer, supprimer (avec confirmation), modifier l'URL de fetch ou de push (valeurs brutes de la configuration, avant `insteadOf` ; push vide = même URL que le fetch), fetch ou prune d'un seul remote, copie de l'URL ; « + » et bouton Fetch dans l'en-tête des remotes, URL en infobulle, commandes de palette « Ajouter un remote… », « Fetch <remote> », « Prune <remote> ».
 - **Tags** : création légère ou annotée (message multiligne) sur n'importe quel commit, avec publication immédiate facultative ; section de la barre latérale (clic = sélection du commit, double-clic = checkout de `refs/tags/<nom>`, « + » = tag sur HEAD, infobulle du message) ; menu du tag dans la barre latérale et sur les badges du graphe (checkout, pousser vers un remote, supprimer en local et sur le remote si le tag y est présent, copier le nom) ; palette : « Créer un tag… », « Pousser tous les tags vers <remote> ».
+- **Annulation par le reflog** : bouton Annuler de la barre d'outils (et palette « Annuler la dernière opération ») qui ramène la branche extraite à son état précédent d'après son reflog, après confirmation : `reset --soft` après un commit ou un amend (les changements restent indexés), `reset --keep` après une fusion, un pull, un rebase, un reset, un cherry-pick ou un revert (modifications locales conservées, refus de Git si elles seraient écrasées) ; refusé en HEAD détachée, pendant une opération ou si la branche a changé depuis l'affichage ; les commits retirés restent dans le reflog (Annuler à nouveau rétablit l'état). Palette « Afficher le reflog… » : reflog de la branche ou de HEAD par pages de 200, date de chaque opération, retour à n'importe quel état par « Reset (keep) » avec confirmation. Pas de Ctrl+Z.
 
 ![Résolution de conflits](docs/conflits.png)
 
@@ -56,6 +57,5 @@ Le rendu n'a aucun accès direct au système : toutes les commandes passent par 
 ## Feuille de route
 
 1. Onglets : conserver aussi l'état propre aux composants (défilement du graphe, recherche, panneaux repliés), aujourd'hui remis à zéro à chaque activation.
-2. Annulation via le reflog.
-3. Authentification GitHub/GitLab, pull requests, identifiants SSH/HTTPS.
-4. Performances sur gros dépôts, tests de bout en bout en CI, paquets d'installation (electron-builder).
+2. Authentification GitHub/GitLab, pull requests, identifiants SSH/HTTPS.
+3. Performances sur gros dépôts, tests de bout en bout en CI, paquets d'installation (electron-builder).

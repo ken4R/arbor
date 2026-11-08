@@ -188,7 +188,8 @@ export interface ArborApi {
   createTag(repo: string, name: string, sha: string, message: string | null): Promise<void>;
   cherryPick(repo: string, sha: string): Promise<void>;
   revert(repo: string, sha: string): Promise<void>;
-  reset(repo: string, sha: string, mode: 'soft' | 'mixed' | 'hard'): Promise<void>;
+  /** `keep` : garde les modifications locales, refusé si elles touchent un fichier qui change (`git reset --keep`). */
+  reset(repo: string, sha: string, mode: 'soft' | 'mixed' | 'hard' | 'keep'): Promise<void>;
   /** Surveille ce dépôt (un seul à la fois) et émet l'événement `repoChanged`. */
   watchRepo(repo: string): Promise<void>;
   unwatchRepo(): Promise<void>;
@@ -240,6 +241,13 @@ export interface ArborApi {
   pushAllTags(repo: string, remote: string): Promise<void>;
   /** Tags du remote (`git ls-remote`, accès réseau). */
   remoteTags(repo: string, remote: string): Promise<RemoteTag[]>;
+  // reflog
+  /** Page du reflog de `ref` (« HEAD » ou nom de branche locale), plus récent d'abord, à partir de l'entrée `skip`. */
+  reflog(repo: string, ref: string, skip: number): Promise<ReflogEntry[]>;
+  /** Dernière opération annulable de la branche extraite (bouton Annuler), ou la raison du refus. */
+  undoInfo(repo: string): Promise<UndoInfo>;
+  /** Annule la dernière opération si HEAD vaut encore `expectedHead` et la cible `expectedTarget` (voir `undoInfo`). */
+  undoLast(repo: string, expectedHead: string, expectedTarget: string): Promise<void>;
 }
 
 /** Commits qu'un rebase interactif peut réécrire (`upstream..HEAD`, sans fusion), plus ancien d'abord. */
@@ -296,4 +304,40 @@ export interface RemoteConfig {
 export interface RemoteTag {
   name: string;
   sha: string;
+}
+
+/** Nature d'une entrée du reflog, tirée de son message (`%gs`). */
+export type ReflogKind = 'commit' | 'amend' | 'merge' | 'rebase' | 'reset' | 'pull' | 'cherry-pick' | 'revert' | 'checkout' | 'other';
+
+/** Entrée du reflog d'une référence (log -g). */
+export interface ReflogEntry {
+  /** Position dans le reflog (0 = état actuel), pour le sélecteur `ref@{index}`. */
+  index: number;
+  /** Sélecteur lisible, ex. `main@{2}`. */
+  selector: string;
+  /** Commit pointé par la référence après l'opération. */
+  sha: string;
+  /** Message du reflog, ex. « commit (amend): Corrige… », « rebase (finish): refs/heads/x onto … ». */
+  subject: string;
+  kind: ReflogKind;
+  /** Date de l'opération (secondes Unix), pas celle du commit. */
+  date: number;
+}
+
+/** Annulation de la dernière opération d'une branche : reset `--soft` (commit, amend) ou `--keep` (le reste). */
+export interface UndoPlan {
+  kind: ReflogKind;
+  /** Message du reflog de l'opération annulée, raccourci pour l'affichage. */
+  label: string;
+  /** Commit vers lequel la branche revient (entrée précédente du reflog). */
+  target: string;
+  mode: 'soft' | 'keep';
+}
+
+/** Réponse de `undoInfo` : `plan` null avec `reason` quand rien n'est annulable. */
+export interface UndoInfo {
+  branch: string | null;
+  head: string | null;
+  plan: UndoPlan | null;
+  reason: string | null;
 }
