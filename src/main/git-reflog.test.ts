@@ -143,6 +143,13 @@ describe('reflog et annulation sur un vrai dépôt', () => {
     await undoLast(dir, info.head!, info.plan!.target);
     expect(g('rev-parse', 'HEAD')).toBe(before);
     expect(g('status', '--porcelain')).toBe('A  b.txt');
+    // Annuler à nouveau (entrée « reset ») rétablit le commit : l'index correspond déjà à sa version.
+    const redo = await undoInfo(dir);
+    expect(redo.plan).toMatchObject({ kind: 'reset', mode: 'keep' });
+    await undoLast(dir, redo.head!, redo.plan!.target);
+    expect(g('log', '-1', '--format=%s')).toBe('ajoute b');
+    expect(g('status', '--porcelain')).toBe('');
+    g('reset', '-q', '--soft', 'HEAD~1');
     g('commit', '-qm', 'ajoute b');
   });
 
@@ -179,6 +186,7 @@ describe('reflog et annulation sur un vrai dépôt', () => {
     g('checkout', '-q', 'x');
     writeFileSync(join(dir, '.git', 'MERGE_HEAD'), `${g('rev-parse', 'main')}\n`);
     expect((await undoInfo(dir)).reason).toMatch(/opération est en cours/);
+    await expect(reset(dir, g('rev-parse', 'HEAD~1'), 'keep')).rejects.toThrow(/opération est en cours/);
     rmSync(join(dir, '.git', 'MERGE_HEAD'));
   });
 

@@ -900,6 +900,9 @@ export async function revert(repo: string, sha: string) {
 export async function reset(repo: string, sha: string, mode: 'soft' | 'mixed' | 'hard' | 'keep') {
   assertSha(sha);
   if (!['soft', 'mixed', 'hard', 'keep'].includes(mode)) throw new GitError(`Mode de reset inconnu : ${mode}.`, '');
+  // Retour à un état du reflog : jamais au milieu d'une fusion ou d'un rebase (dialogue ouvert avant son début).
+  if (mode === 'keep' && (await repoState(repo)) !== 'clean')
+    throw new GitError('Une opération est en cours : terminez-la ou abandonnez-la avant de revenir à un état du reflog.', '');
   await git(repo, ['reset', `--${mode}`, sha, '--']);
 }
 
