@@ -252,6 +252,7 @@ const READ_ONLY = new Set([
   'setPreferences',
   'restoreSession',
   'saveSession',
+  'conflictStages', // ls-files --no-optional-locks : n'écrit rien
 ]);
 
 const handlers: Record<string, (...args: any[]) => Promise<unknown>> = {
@@ -321,6 +322,7 @@ const handlers: Record<string, (...args: any[]) => Promise<unknown>> = {
   conflictVersions: g.conflictVersions,
   saveResolution: g.saveResolution,
   resolveDeletion: g.resolveDeletion,
+  conflictStages: g.conflictStages,
 };
 
 for (const [name, fn] of Object.entries(handlers)) {

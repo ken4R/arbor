@@ -17,9 +17,9 @@ type Mode = DiffMode;
 export function DiffView({ repo, target, onClose, reloadKey }: { repo: string; target: DiffTarget; onClose: () => void; reloadKey?: unknown }) {
   if (target.kind === 'working' && target.conflict) {
     // Éditeur de fusion à trois panneaux ; vue simple en repli (binaire, trop gros, sous-module, lien symbolique).
-    // `reloadKey` n'est pas transmis : un changement extérieur est détecté à l'enregistrement.
+    // `reloadKey` (nouvel instantané) : l'éditeur vérifie seulement si les étages ont changé (autre étape de l'opération).
     const fallback = <ConflictView repo={repo} path={target.path} onClose={onClose} />;
-    return <MergeEditor key={`${repo}\0${target.path}`} repo={repo} path={target.path} onClose={onClose} fallback={fallback} />;
+    return <MergeEditor key={`${repo}\0${target.path}`} repo={repo} path={target.path} onClose={onClose} fallback={fallback} reloadKey={reloadKey} />;
   }
   return <PatchView repo={repo} target={target} onClose={onClose} reloadKey={reloadKey} />;
 }

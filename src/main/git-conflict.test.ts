@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { composeResult } from '../shared/merge3';
-import { conflictVersions, parseFilterAttr, parseUnmerged, resolveDeletion, saveResolution } from './git';
+import { conflictStages, conflictVersions, parseFilterAttr, parseUnmerged, resolveDeletion, saveResolution, stagesKey } from './git';
 
 const SHA = (c: string) => c.repeat(40);
 
@@ -241,6 +241,37 @@ describe('conflits sur un vrai dépôt', () => {
     expect(v.merge!.eol).toBe('\r\n');
     writeFileSync(join(dir, '.gitattributes'), 'w.txt filter=lfs\n');
     expect(await conflictVersions(dir, 'w.txt')).toMatchObject({ unsupported: 'filter', merge: null });
+  });
+
+  it('étages : identité stable pendant l’édition, nouvelle après « git rebase --skip »', async () => {
+    // Deux commits de main modifient la même ligne que amont : deux étapes en conflit sur f.txt.
+    setup('f.txt', 'a\nb\nc\n', 'a\nB-m1\nc\n', 'a\nB-amont\nc\n');
+    write('f.txt', 'a\nB-m2\nc\n');
+    commitAll('m2');
+    tryG('rebase', 'autre');
+    const v1 = await conflictVersions(dir, 'f.txt');
+    expect(v1.mine).toBe('a\nB-m1\nc\n');
+    expect(await conflictStages(dir, 'f.txt')).toBe(v1.stages);
+    await saveResolution(dir, 'f.txt', 'a\nrésolu en partie\nc\n', v1.workingHash, false);
+    expect(await conflictStages(dir, 'f.txt')).toBe(v1.stages); // l'enregistrement ne change pas les étages
+    tryG('rebase', '--skip');
+    const s2 = await conflictStages(dir, 'f.txt');
+    expect(s2).not.toBeNull();
+    expect(s2).not.toBe(v1.stages);
+    const v2 = await conflictVersions(dir, 'f.txt');
+    expect(v2.stages).toBe(s2);
+    expect(v2.mine).toBe('a\nB-m2\nc\n');
+    tryG('rebase', '--abort');
+    expect(await conflictStages(dir, 'f.txt')).toBeNull();
+  });
+});
+
+describe('stagesKey', () => {
+  it('ordre des étages indifférent, côté de « ma version » compris', () => {
+    const e = (stage: 1 | 2 | 3, sha: string) => ({ mode: '100644', sha: SHA(sha), stage, path: 'f' });
+    expect(stagesKey([e(3, 'c'), e(1, 'a'), e(2, 'b')], 2)).toBe(stagesKey([e(1, 'a'), e(2, 'b'), e(3, 'c')], 2));
+    expect(stagesKey([e(1, 'a'), e(2, 'b'), e(3, 'c')], 2)).not.toBe(stagesKey([e(1, 'a'), e(2, 'b'), e(3, 'c')], 3));
+    expect(stagesKey([e(1, 'a'), e(2, 'b')], 2)).not.toBe(stagesKey([e(1, 'a'), e(2, 'b'), e(3, 'c')], 2));
   });
 });
 

@@ -1,13 +1,17 @@
 import { execFile } from 'node:child_process';
+import { createHash, randomBytes } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { readFile as fsReadFile, realpath } from 'node:fs/promises';
-import { basename, join, resolve as resolvePath, sep } from 'node:path';
+import { chmod, lstat, mkdtemp, readFile as fsReadFile, realpath, rename, rm, stat, unlink, writeFile as fsWriteFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { basename, dirname, join, resolve as resolvePath, sep } from 'node:path';
 import type {
   Branch,
   Commit,
+  ConflictVersions,
   DiffTarget,
   FileChange,
   FileStatusCode,
+  MergeModel,
   Ref,
   RepoSnapshot,
   Remote,
@@ -16,6 +20,7 @@ import type {
   Tag,
   WorkingStatus,
 } from '../shared/types';
+import { blocksFromMergeOutput, markerSize, normalizeConflictText, parseMergeOutput, splitLines } from '../shared/merge3';
 
 export class GitError extends Error {
   constructor(message: string, public readonly stderr: string) {
@@ -876,12 +881,6 @@ export async function toplevel(path: string): Promise<string> {
 
 // Éditeur de fusion à trois panneaux : versions d'un fichier en conflit (étages de l'index), fusion calculée par
 // `git merge-file`, enregistrement du résultat.
-import { createHash, randomBytes } from 'node:crypto';
-import { chmod, lstat, mkdtemp, rename, rm, stat, unlink, writeFile as fsWriteFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { dirname } from 'node:path'; // utilisé par `safeRepoPath`
-import type { ConflictVersions, MergeModel } from '../shared/types';
-import { blocksFromMergeOutput, markerSize, normalizeConflictText, parseMergeOutput, splitLines } from '../shared/merge3';
 
 export interface UnmergedEntry {
   mode: string;
@@ -937,6 +936,22 @@ async function unmergedEntries(repo: string, path: string): Promise<UnmergedEntr
 }
 
 const notInConflict = (path: string) => new GitError(`« ${path} » n'est plus en conflit : rouvrez-le depuis la liste des conflits.`, '');
+
+/** Identité des étages d'un fichier en conflit (étage de « ma version », mode et objet de chaque étage). */
+export function stagesKey(entries: UnmergedEntry[], mineStage: 2 | 3): string {
+  const parts = [...entries].sort((a, b) => a.stage - b.stage).map((e) => `${e.stage}:${e.mode}:${e.sha}`);
+  return `${mineStage}|${parts.join(',')}`;
+}
+
+/**
+ * Identité actuelle des étages (même valeur que `ConflictVersions.stages`), sans relire ni refusionner les versions :
+ * l'éditeur la compare après chaque rafraîchissement pour voir si l'opération est passée à une autre étape.
+ * null si le fichier n'est plus en conflit.
+ */
+export async function conflictStages(repo: string, path: string): Promise<string | null> {
+  const [entries, state] = await Promise.all([unmergedEntries(repo, path), conflictSideState(repo)]);
+  return entries.length ? stagesKey(entries, gitSide(state, 'mine') === 'ours' ? 2 : 3) : null;
+}
 
 /**
  * État qui décide des côtés : pendant `git am` (`rebase-apply/applying`), Git n'inverse pas « ours » et « theirs »
@@ -1070,6 +1085,7 @@ export async function conflictVersions(repo: string, path: string): Promise<Conf
     tooLarge,
     merge,
     workingMatches,
+    stages: stagesKey(entries, mineStage),
     ...(unsupported || mixedEol ? { unsupported: unsupported ?? 'mixed-eol' } : {}),
   };
 }

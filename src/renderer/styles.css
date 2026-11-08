@@ -2146,3 +2146,13 @@ tr.cf-marker {
   gap: 8px;
   margin: 12px 0 8px;
 }
+.mg-stale {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 12px;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--warn-bg);
+  border-bottom: 1px solid var(--warn-border);
+}

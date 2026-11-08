@@ -1,3 +1,4 @@
+import type { FinalNewlines, MergeBlock } from './merge3';
 import type { Preferences } from './prefs';
 
 export interface Commit {
@@ -202,6 +203,8 @@ export interface ArborApi {
   saveResolution(repo: string, path: string, content: string, expectedHash: string | null, markResolved: boolean): Promise<string>;
   /** Conflit suppression/modification : garde le fichier de l'arbre de travail (`git add`) ou le supprime (`git rm`). */
   resolveDeletion(repo: string, path: string, keep: boolean): Promise<void>;
+  /** Identité actuelle des étages d'un fichier en conflit (comparée à `ConflictVersions.stages`) ; null s'il n'est plus en conflit. */
+  conflictStages(repo: string, path: string): Promise<string | null>;
 }
 
 /** Versions d'un fichier en conflit pour l'éditeur de fusion ; null = absent de ce côté (supprimé, ou pas de base). */
@@ -221,6 +224,8 @@ export interface ConflictVersions {
   merge: MergeModel | null;
   /** Le fichier de l'arbre de travail est encore celui écrit par Git (aucune résolution commencée ailleurs). */
   workingMatches: boolean;
+  /** Identité des étages (voir `conflictStages`) : change quand l'opération passe à une autre étape. */
+  stages: string;
 }
 
 /** Blocs de l'éditeur de fusion, tirés de la sortie de Git (voir `shared/merge3.ts`). */
@@ -229,4 +234,3 @@ export interface MergeModel {
   eol: '\n' | '\r\n';
   finalNewline: FinalNewlines;
 }
-import type { FinalNewlines, MergeBlock } from './merge3';

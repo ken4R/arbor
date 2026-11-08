@@ -66,7 +66,20 @@ const SIDES = ['mine', 'base', 'theirs'] as const;
 
 type View = 'editor' | 'warn' | 'fallback';
 
-export function MergeEditor({ repo, path, onClose, fallback }: { repo: string; path: string; onClose: () => void; fallback: React.ReactNode }) {
+export function MergeEditor({
+  repo,
+  path,
+  onClose,
+  fallback,
+  reloadKey,
+}: {
+  repo: string;
+  path: string;
+  onClose: () => void;
+  fallback: React.ReactNode;
+  /** Nouvelle valeur à chaque instantané du dépôt : déclenche la vérification des étages. */
+  reloadKey?: unknown;
+}) {
   const ui = useUi();
   const draftKey = `${repo}\0${path}`;
   const [versions, setVersions] = useState<ConflictVersions | null>(null);
@@ -85,11 +98,12 @@ export function MergeEditor({ repo, path, onClose, fallback }: { repo: string; p
   const segs = useRef(new Map<number, HTMLElement>());
   const done = useRef(false); // fichier résolu ou brouillon abandonné : ne plus écrire de brouillon
 
-  // Chargement (et « Recharger », qui abandonne le brouillon). Les rafraîchissements du dépôt sont ignorés :
-  // un changement extérieur est détecté à l'enregistrement par l'empreinte.
+  const [stale, setStale] = useState(false); // étages changés alors qu'il y a des choix non enregistrés
+
+  // Chargement (et « Recharger », qui abandonne le brouillon). L'ancien contenu reste affiché pendant un rechargement
+  // (pas de clignotement). Un changement extérieur du fichier est détecté à l'enregistrement par l'empreinte.
   useEffect(() => {
     let alive = true;
-    setVersions(null);
     setError(null);
     api
       .conflictVersions(repo, path)
@@ -106,13 +120,40 @@ export function MergeEditor({ repo, path, onClose, fallback }: { repo: string; p
         setOverwriteOk(ok);
         setView(ok || !v.merge ? 'editor' : 'warn');
         setExpanded(new Set());
+        setStale(false);
         setVersions(v);
       })
-      .catch((e) => alive && setError(e.message));
+      .catch((e) => {
+        if (!alive) return;
+        setVersions(null);
+        setError(e.message);
+      });
     return () => {
       alive = false;
     };
   }, [repo, path, reloads]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Après chaque rafraîchissement : les étages ont-ils changé (« Passer », étape suivante d'un rebase en conflit sur
+  // le même fichier…) ? Vérification légère (`ls-files -u`) : ni relecture ni nouvelle fusion si rien n'a changé.
+  // Sans choix en attente, rechargement direct ; sinon, bandeau avec « Recharger ».
+  const loaded = useRef<{ stages: string | null; dirty: boolean }>({ stages: null, dirty: false });
+  loaded.current = { stages: versions?.stages ?? null, dirty };
+  useEffect(() => {
+    if (reloadKey === undefined) return;
+    let alive = true;
+    api
+      .conflictStages(repo, path)
+      .then((s) => {
+        const { stages, dirty: unsaved } = loaded.current;
+        if (!alive || s === null || stages === null || s === stages) return; // plus en conflit : l'application ferme la vue
+        if (unsaved) setStale(true);
+        else setReloads((n) => n + 1);
+      })
+      .catch(() => {}); // vérification au mieux : l'enregistrement revérifie
+    return () => {
+      alive = false;
+    };
+  }, [reloadKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const mode = !versions
     ? null
@@ -431,6 +472,14 @@ export function MergeEditor({ repo, path, onClose, fallback }: { repo: string; p
           </span>
           {dirty && <span className="diff-context">modifié</span>}
         </>,
+      )}
+      {stale && (
+        <div className="mg-stale">
+          <span>Les versions en conflit ont changé (nouvelle étape de l'opération) : l'éditeur montre encore les anciennes.</span>
+          <button className="btn btn-sm" onClick={reload}>
+            Recharger
+          </button>
+        </div>
       )}
       <div className="mg-panes">
         <div className="mg-top" ref={top} onScroll={() => sync('top')}>
