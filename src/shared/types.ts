@@ -124,6 +124,16 @@ export interface RepoSnapshot {
   stashes: Stash[];
   status: WorkingStatus;
   head: string | null;
+  /**
+   * Fonctionnalités détectées sans lancer `git` (fichiers seulement) : `submodules` = `.gitmodules` présent ;
+   * `lfs` = `.gitattributes` racine avec `filter=lfs` ou dossier `<gitDir>/lfs`. Absent = non calculé.
+   */
+  features?: RepoFeatures;
+}
+
+export interface RepoFeatures {
+  submodules: boolean;
+  lfs: boolean;
 }
 
 /** Le dépôt a changé hors d'Arbor : `git` = références, index ou opération en cours ; `worktree` = fichiers. */
@@ -248,6 +258,14 @@ export interface ArborApi {
   undoInfo(repo: string): Promise<UndoInfo>;
   /** Annule la dernière opération si HEAD vaut encore `expectedHead` et la cible `expectedTarget` (voir `undoInfo`). */
   undoLast(repo: string, expectedHead: string, expectedTarget: string): Promise<void>;
+
+  // glisser-déposer
+
+  // sous-modules
+
+  // lfs
+
+  // état des onglets
 }
 
 /** Commits qu'un rebase interactif peut réécrire (`upstream..HEAD`, sans fusion), plus ancien d'abord. */
@@ -341,3 +359,11 @@ export interface UndoInfo {
   plan: UndoPlan | null;
   reason: string | null;
 }
+
+// glisser-déposer
+
+// sous-modules
+
+// lfs
+
+// état des onglets

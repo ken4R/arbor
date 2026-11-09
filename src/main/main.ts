@@ -262,6 +262,14 @@ const READ_ONLY = new Set([
   // reflog
   'reflog',
   'undoInfo',
+
+  // glisser-déposer
+
+  // sous-modules
+
+  // lfs
+
+  // état des onglets
 ]);
 
 const handlers: Record<string, (...args: any[]) => Promise<unknown>> = {
@@ -356,6 +364,14 @@ const handlers: Record<string, (...args: any[]) => Promise<unknown>> = {
   reflog: (repo: string, ref: unknown, skip: unknown) => g.reflog(repo, String(ref), Number(skip)),
   undoInfo: g.undoInfo,
   undoLast: (repo: string, expectedHead: unknown, expectedTarget: unknown) => g.undoLast(repo, String(expectedHead), String(expectedTarget)),
+
+  // glisser-déposer
+
+  // sous-modules
+
+  // lfs
+
+  // état des onglets
 };
 
 for (const [name, fn] of Object.entries(handlers)) {

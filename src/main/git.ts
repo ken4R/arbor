@@ -13,6 +13,7 @@ import type {
   FileStatusCode,
   MergeModel,
   Ref,
+  RepoFeatures,
   RepoSnapshot,
   Remote,
   RepoState,
@@ -64,6 +65,12 @@ const GIT_ERRORS: [RegExp, (m: RegExpMatchArray) => string][] = [
   // Index avec des conflits sans fusion en cours (ex. stash pop) : `reset --soft` et `--keep` refusent.
   [/Cannot do a (?:soft|keep) reset in the middle of a merge/, () => 'Des conflits ne sont pas résolus : résolvez-les (ou annulez-les) avant de revenir en arrière.'],
   [/Untracked working tree file '(.+?)' would be overwritten/, (m) => `Le fichier non suivi « ${m[1]} » serait écrasé : déplacez-le, ajoutez-le ou mettez-le de côté (stash) avant.`],
+
+  // glisser-déposer
+
+  // sous-modules
+
+  // lfs
 ];
 
 /** Traduit les erreurs Git courantes en français ; sinon renvoie la fin du message d'origine. */
@@ -460,9 +467,60 @@ export async function headSha(repo: string): Promise<string | null> {
   return (await git(repo, ['rev-parse', '--verify', '-q', 'HEAD'], { okCodes: [1] })).trim() || null;
 }
 
+/**
+ * Vrai si un `.gitattributes` affecte `filter=lfs` à au moins un motif. Ignore les commentaires et les définitions de
+ * macro (`[attr]…`), accepte les motifs entre guillemets ; `-filter`, `!filter` ou `filter=autre` ne comptent pas.
+ */
+export function hasLfsAttribute(text: string): boolean {
+  for (const raw of text.split(/\r?\n/)) {
+    let line = raw.trim();
+    if (!line || line.startsWith('#') || line.startsWith('[attr]')) continue;
+    if (line.startsWith('"')) {
+      // Motif entre guillemets (peut contenir des espaces et des guillemets échappés).
+      const end = line.slice(1).search(/(?<!\\)"/);
+      if (end < 0) continue;
+      line = line.slice(end + 2);
+    } else {
+      line = line.replace(/^\S+/, '');
+    }
+    if (line.split(/\s+/).includes('filter=lfs')) return true;
+  }
+  return false;
+}
+
+/** Lit un fichier texte ; null s'il n'existe pas ou n'est pas lisible. */
+async function readTextOrNull(full: string): Promise<string | null> {
+  return fsReadFile(full, 'utf8').catch(() => null);
+}
+
+/**
+ * Dossiers Git d'un arbre de travail sans lancer `git` : `.git` dossier, ou fichier `gitdir: …` (worktree lié,
+ * sous-module) suivi de son `commondir` éventuel. Liste vide si rien n'est trouvé.
+ */
+async function gitDirsFromFiles(repo: string): Promise<string[]> {
+  const dotGit = join(repo, '.git');
+  const st = await stat(dotGit).catch(() => null);
+  if (!st) return [];
+  if (st.isDirectory()) return [dotGit];
+  const m = (await readTextOrNull(dotGit))?.match(/^gitdir:\s*(.+?)\s*$/m);
+  if (!m) return [];
+  const dir = resolvePath(repo, m[1]);
+  const common = (await readTextOrNull(join(dir, 'commondir')))?.trim();
+  return common ? [dir, resolvePath(dir, common)] : [dir];
+}
+
+/** Sous-modules et LFS détectés par les fichiers seulement (appelé à chaque instantané : aucun lancement de `git`). */
+export async function repoFeatures(repo: string): Promise<RepoFeatures> {
+  const [attributes, dirs] = await Promise.all([readTextOrNull(join(repo, '.gitattributes')), gitDirsFromFiles(repo)]);
+  return {
+    submodules: existsSync(join(repo, '.gitmodules')),
+    lfs: (attributes !== null && hasLfsAttribute(attributes)) || dirs.some((d) => existsSync(join(d, 'lfs'))),
+  };
+}
+
 export async function snapshot(repo: string): Promise<RepoSnapshot> {
   const head = await headSha(repo);
-  const [commits, br, tagsOut, remotesOut, remotesVerbose, st, stashList] = await Promise.all([
+  const [commits, br, tagsOut, remotesOut, remotesVerbose, st, stashList, features] = await Promise.all([
     log(repo, head !== null),
     branches(repo),
     git(repo, TAGS_ARGS),
@@ -470,6 +528,7 @@ export async function snapshot(repo: string): Promise<RepoSnapshot> {
     git(repo, ['remote', '-v']),
     status(repo),
     stashes(repo),
+    repoFeatures(repo),
   ]);
   return {
     path: repo,
@@ -481,6 +540,7 @@ export async function snapshot(repo: string): Promise<RepoSnapshot> {
     stashes: stashList,
     status: st,
     head,
+    features,
   };
 }
 

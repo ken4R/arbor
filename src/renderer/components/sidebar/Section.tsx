@@ -9,6 +9,8 @@ export interface SectionAction {
 }
 
 export interface SectionProps {
+  /** Identifiant stable de la section (local, remote:<nom>, remotes, tags, stashes, submodules, lfs) ; inutilisé pour l'instant. */
+  id?: string;
   title: string;
   count: number;
   icon: React.ReactNode;

@@ -31,6 +31,7 @@ export function RemotesSection({ snap, match, onSelectCommit }: { snap: RepoSnap
       {remotes.map(({ remote: r, branches }, i) => (
         <div key={r.name} title={remoteTooltip(r)}>
           <Section
+            id={`remote:${r.name}`}
             title={r.name}
             count={branches.length}
             icon={<Icon.cloud />}
@@ -53,7 +54,7 @@ export function RemotesSection({ snap, match, onSelectCommit }: { snap: RepoSnap
         </div>
       ))}
       {snap.remotes.length === 0 && (
-        <Section title="Remotes" count={0} icon={<Icon.cloud />} actions={[add]}>
+        <Section id="remotes" title="Remotes" count={0} icon={<Icon.cloud />} actions={[add]}>
           <div className="side-empty">Aucun remote</div>
         </Section>
       )}

@@ -64,6 +64,12 @@
   --rebase-drop-bg: rgba(224, 96, 126, 0.08);
   --rebase-published: #5aa6e8;
   --rebase-published-bg: rgba(90, 166, 232, 0.14);
+  /* Glisser-déposer (cible survolée) */
+  --drop-target: #3fb6a8;
+  --drop-target-bg: rgba(63, 182, 168, 0.16);
+  /* Badges sous-module et LFS */
+  --badge-submodule: #5aa6e8;
+  --badge-lfs: #d9793f;
   color-scheme: dark;
 }
 
@@ -131,6 +137,12 @@
   --merge-base-bg: rgba(60, 70, 90, 0.06);
   --merge-both-bg: rgba(15, 125, 115, 0.12);
   --merge-resolved-bg: rgba(29, 127, 61, 0.08);
+  /* Glisser-déposer (cible survolée) */
+  --drop-target: #0f7d73;
+  --drop-target-bg: rgba(15, 125, 115, 0.12);
+  /* Badges sous-module et LFS */
+  --badge-submodule: #2a78c8;
+  --badge-lfs: #b35215;
   color-scheme: light;
 }
 
@@ -200,6 +212,12 @@
     --merge-base-bg: rgba(60, 70, 90, 0.06);
     --merge-both-bg: rgba(15, 125, 115, 0.12);
     --merge-resolved-bg: rgba(29, 127, 61, 0.08);
+    /* Glisser-déposer (cible survolée) */
+    --drop-target: #0f7d73;
+    --drop-target-bg: rgba(15, 125, 115, 0.12);
+    /* Badges sous-module et LFS */
+    --badge-submodule: #2a78c8;
+    --badge-lfs: #b35215;
     color-scheme: light;
   }
 }
@@ -2490,3 +2508,11 @@ tr.cf-marker {
   font-size: 12px;
   color: var(--warn);
 }
+
+/* glisser-déposer */
+
+/* sous-modules */
+
+/* lfs */
+
+/* état des onglets */

@@ -34,7 +34,7 @@ export function TagsSection({ snap, match, onSelectCommit }: { snap: RepoSnapsho
     : [];
 
   return (
-    <Section title="Tags" count={tags.length} icon={<Icon.tag />} collapsed actions={actions}>
+    <Section id="tags" title="Tags" count={tags.length} icon={<Icon.tag />} collapsed actions={actions}>
       {shown.map((t) => {
         const inGraph = t.sha !== null && loaded.has(t.sha);
         return (
