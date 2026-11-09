@@ -11,9 +11,11 @@ interface Props {
   activeDiff: DiffTarget | null;
   action?: { label: string; onClick: (f: FileChange) => void };
   menu?: (f: FileChange) => MenuItem[];
+  /** Chemins des sous-modules : badge « sous-module » sur ces entrées. */
+  submodules?: ReadonlySet<string>;
 }
 
-export function FileList({ files, diffFor, activeDiff, action, menu }: Props) {
+export function FileList({ files, diffFor, activeDiff, action, menu, submodules }: Props) {
   const ui = useUi();
   return (
     <ul className="files">
@@ -36,6 +38,11 @@ export function FileList({ files, diffFor, activeDiff, action, menu }: Props) {
               <span className="file-name">{file}</span>
               {dir && <span className="file-dir">{dir}</span>}
             </span>
+            {submodules?.has(f.path) && (
+              <span className="file-badge-submodule" title="Sous-module : le diff montre le changement de commit">
+                sous-module
+              </span>
+            )}
             {action && (
               <button
                 className="file-action"

@@ -69,6 +69,8 @@ const GIT_ERRORS: [RegExp, (m: RegExpMatchArray) => string][] = [
   // glisser-déposer
 
   // sous-modules
+  [/transport '(\w+)' not allowed/, (m) => `Git refuse le transport « ${m[1]} » pour ce sous-module (réglage protocol.${m[1]}.allow). Arbor ne modifie pas ce réglage : si vous faites confiance à cette URL, initialisez le sous-module depuis un terminal.`],
+  [/No url found for submodule path '(.+?)' in \.gitmodules/, (m) => `Aucune URL n'est déclarée pour le sous-module « ${m[1]} » dans .gitmodules.`],
 
   // lfs
 ];
@@ -707,7 +709,7 @@ const diffPaths = (t: { path: string; oldPath?: string }) => (t.oldPath ? [t.old
  * le texte doit rester analysable et réapplicable par `git apply` (préfixes a/ b/ pour -p1, pas de couleur,
  * pas d'outil externe ni de textconv qui produiraient un contenu différent du fichier réel).
  */
-const DIFF_OUTPUT = ['--no-color', '--no-ext-diff', '--no-textconv', '--src-prefix=a/', '--dst-prefix=b/'];
+const DIFF_OUTPUT = ['--no-color', '--no-ext-diff', '--no-textconv', '--src-prefix=a/', '--dst-prefix=b/', '--submodule=short'];
 
 export async function diff(repo: string, t: DiffTarget): Promise<string> {
   if (t.kind === 'commit') {
@@ -763,6 +765,7 @@ export async function discard(repo: string, paths: string[]) {
 
 import type { PatchAction, PatchSelection } from '../shared/types';
 import { buildPartialPatch, PatchError } from '../shared/patch';
+import { parseSubmoduleChange } from '../shared/diff';
 
 /** Indexe, désindexe ou annule une partie du diff affiché d'un fichier du répertoire de travail. */
 export async function applyPatchSelection(repo: string, t: DiffTarget, shown: string, sel: PatchSelection, action: PatchAction) {
@@ -774,6 +777,8 @@ export async function applyPatchSelection(repo: string, t: DiffTarget, shown: st
   // Le patch est reconstruit à partir du diff actuel, qui doit être celui que l'utilisateur a vu.
   const raw = await diff(repo, t);
   if (raw !== shown) throw new GitError('Le fichier a changé depuis l\'affichage, recommencez.', '');
+  // sous-modules : un gitlink (mode 160000) n'a pas de lignes à indexer partiellement.
+  if (parseSubmoduleChange(raw)) throw new GitError('Sous-module : indexez ou désindexez son commit en entier.', '');
   let patch: string;
   try {
     patch = buildPartialPatch(raw, sel, action !== 'stage');
@@ -1718,4 +1723,214 @@ export async function undoLast(repo: string, expectedHead: string, expectedTarge
   if (info.head !== expectedHead || info.plan.target !== expectedTarget)
     throw new GitError('La branche a changé depuis l\'affichage : relancez Annuler pour voir la dernière opération.', '');
   await reset(repo, info.plan.target, info.plan.mode);
+}
+
+// sous-modules
+// Trois lancements de `git` au plus pour l'état de tous les sous-modules, tous dans le dépôt parent. On ne lance
+// jamais `git` dans le dossier d'un sous-module sans `<chemin>/.git` : Git remonterait jusqu'au dépôt parent.
+
+import type { Submodule, SubmoduleState } from '../shared/types';
+
+/** Entrée de `.gitmodules`. */
+export interface GitmodulesEntry {
+  name: string;
+  path: string;
+  url: string | null;
+  branch: string | null;
+}
+
+/**
+ * Analyse `git config -z -f .gitmodules --get-regexp '^submodule\.'` : enregistrements `clé\nvaleur\0`. Le nom est
+ * entre `submodule.` et le dernier point (il peut contenir des points). Dernière valeur gagnante, comme Git ; entrées
+ * sans `path` (ou à chemin refusé) écartées ; un chemin déjà déclaré par un autre nom est ignoré.
+ */
+export function parseGitmodules(out: string): GitmodulesEntry[] {
+  const PREFIX = 'submodule.';
+  const byName = new Map<string, { path?: string; url?: string; branch?: string }>();
+  for (const rec of out.split('\0')) {
+    if (!rec.startsWith(PREFIX)) continue;
+    const nl = rec.indexOf('\n');
+    const key = nl < 0 ? rec : rec.slice(0, nl);
+    const dot = key.lastIndexOf('.');
+    if (dot <= PREFIX.length) continue; // pas de nom
+    const name = key.slice(PREFIX.length, dot);
+    const variable = key.slice(dot + 1).toLowerCase();
+    const entry = byName.get(name) ?? {};
+    byName.set(name, entry);
+    if (nl < 0) continue; // booléen sans valeur
+    const value = rec.slice(nl + 1);
+    if (variable === 'path' || variable === 'url' || variable === 'branch') entry[variable] = value;
+  }
+  const seen = new Set<string>();
+  const result: GitmodulesEntry[] = [];
+  for (const [name, e] of byName) {
+    const path = e.path === undefined ? null : normalizeSubmodulePath(e.path);
+    if (path === null || seen.has(path)) continue;
+    seen.add(path);
+    result.push({ name, path, url: e.url ?? null, branch: e.branch ?? null });
+  }
+  return result;
+}
+
+/**
+ * Chemin de sous-module relatif et sans détour (`..`, `.`, `.git`, chemin absolu, caractère de contrôle refusés) ;
+ * barres finales retirées. null si le chemin est refusé : il ne doit jamais servir à construire un chemin du disque.
+ */
+export function normalizeSubmodulePath(raw: string): string | null {
+  const path = raw.replace(/\/+$/, '');
+  if (!path || path.startsWith('/') || /^[A-Za-z]:/.test(path) || /[\0-\x1f\\]/.test(path)) return null;
+  const parts = path.split('/');
+  if (parts.some((p) => p === '' || p === '.' || p === '..' || p.toLowerCase() === '.git')) return null;
+  return path;
+}
+
+/** Entrée de `git ls-files -s -z` : `mode SP sha SP étage TAB chemin NUL`, étages 0 à 3. */
+export interface IndexEntry {
+  mode: string;
+  sha: string;
+  stage: 0 | 1 | 2 | 3;
+  path: string;
+}
+
+export function parseLsFilesStage(out: string): IndexEntry[] {
+  return out
+    .split('\0')
+    .filter(Boolean)
+    .flatMap((rec) => {
+      const tab = rec.indexOf('\t');
+      if (tab < 0) return [];
+      const [mode, sha, stage] = rec.slice(0, tab).split(' ');
+      const n = Number(stage);
+      if (![0, 1, 2, 3].includes(n) || !mode || !sha) return [];
+      return [{ mode, sha, stage: n as IndexEntry['stage'], path: rec.slice(tab + 1) }];
+    });
+}
+
+/** Indicateurs d'un sous-module dans `git status --porcelain=v2` (champ `S<c><m><u>`). */
+export interface SubmoduleStatusFlags {
+  /** `C` : le commit extrait diffère de celui de l'index. */
+  commitChanged: boolean;
+  /** `M` : fichiers suivis modifiés. */
+  modified: boolean;
+  /** `U` : fichiers non suivis. */
+  untracked: boolean;
+  /** Entrée `u` (non fusionnée). */
+  conflict: boolean;
+}
+
+/**
+ * Analyse `git status --porcelain=v2 -z` limité aux chemins des sous-modules : `1 XY sub mH mI mW hH hI chemin`,
+ * `2 … score chemin NUL origine`, `u XY sub m1 m2 m3 mW h1 h2 h3 chemin`. Seules les entrées de sous-module
+ * (`sub` commençant par `S`) sont gardées, indexées par chemin.
+ */
+export function parseSubmoduleStatusV2(out: string): Map<string, SubmoduleStatusFlags> {
+  const result = new Map<string, SubmoduleStatusFlags>();
+  const recs = out.split('\0');
+  for (let i = 0; i < recs.length; i++) {
+    const rec = recs[i];
+    const kind = rec[0];
+    const fields = kind === '1' ? 8 : kind === '2' ? 9 : kind === 'u' ? 10 : 0;
+    if (!fields) continue;
+    if (kind === '2') i++; // chemin d'origine du renommage
+    const parts = rec.split(' ');
+    if (parts.length <= fields) continue;
+    const sub = parts[2];
+    if (!/^S[C.][M.][U.]$/.test(sub)) continue;
+    const path = parts.slice(fields).join(' ');
+    result.set(path, { commitChanged: sub[1] === 'C', modified: sub[2] === 'M', untracked: sub[3] === 'U', conflict: kind === 'u' });
+  }
+  return result;
+}
+
+/** État d'un sous-module à partir de l'index, du statut et de la présence de `<chemin>/.git`. */
+export function submoduleState(input: { inIndex: boolean; conflict: boolean; initialized: boolean; flags?: SubmoduleStatusFlags }): SubmoduleState {
+  if (input.conflict || input.flags?.conflict) return 'conflict';
+  if (!input.inIndex) return 'missing';
+  if (!input.initialized) return 'uninitialized';
+  return input.flags?.commitChanged ? 'changed' : 'ok';
+}
+
+/** Assemble la liste des sous-modules à partir des sorties analysées (pur, testé). */
+export function buildSubmodules(
+  entries: GitmodulesEntry[],
+  index: IndexEntry[],
+  status: Map<string, SubmoduleStatusFlags>,
+  isInitialized: (path: string) => boolean,
+): Submodule[] {
+  return entries.map((e) => {
+    const own = index.filter((x) => x.path === e.path);
+    const gitlink = own.find((x) => x.stage === 0 && x.mode === '160000');
+    const conflict = own.some((x) => x.stage !== 0);
+    const initialized = isInitialized(e.path);
+    const flags = status.get(e.path);
+    const state = submoduleState({ inIndex: !!gitlink, conflict, initialized, flags });
+    return {
+      ...e,
+      expected: conflict ? null : (gitlink?.sha ?? null),
+      initialized,
+      state,
+      dirty: initialized && !!flags?.modified,
+      untracked: initialized && !!flags?.untracked,
+    };
+  });
+}
+
+/** Sous-modules déclarés dans `.gitmodules` (aucun lancement de `git` sans ce fichier). */
+export async function submodules(repo: string): Promise<Submodule[]> {
+  if (!existsSync(join(repo, '.gitmodules'))) return [];
+  const config = await git(repo, ['config', '-z', '-f', '.gitmodules', '--get-regexp', '^submodule\\.'], { okCodes: [1] });
+  const entries = parseGitmodules(config);
+  if (entries.length === 0) return [];
+  const paths = entries.map((e) => e.path);
+  const [ls, st] = await Promise.all([
+    git(repo, ['--literal-pathspecs', 'ls-files', '-s', '-z', '--', ...paths]),
+    git(repo, ['--no-optional-locks', '--literal-pathspecs', 'status', '--porcelain=v2', '-z', '--', ...paths]),
+  ]);
+  return buildSubmodules(entries, parseLsFilesStage(ls), parseSubmoduleStatusV2(st), (p) => existsSync(join(repo, p, '.git')));
+}
+
+/** Sous-module désigné par le rendu, revérifié contre la liste recalculée. */
+export async function requireSubmodule(repo: string, path: unknown): Promise<Submodule> {
+  const sub = typeof path === 'string' ? (await submodules(repo)).find((s) => s.path === path) : undefined;
+  if (!sub) throw new GitError(`« ${String(path)} » n'est pas un sous-module déclaré dans .gitmodules.`, '');
+  return sub;
+}
+
+const notInitialized = (path: string) => new GitError(`Le sous-module « ${path} » n'est pas initialisé : initialisez-le d'abord.`, '');
+
+/** Dossier d'un sous-module initialisé, vérifié comme racine de son propre dépôt (sinon Git remonterait au parent). */
+async function verifiedRoot(repo: string, sub: Submodule): Promise<string> {
+  if (!sub.initialized) throw notInitialized(sub.path);
+  const dir = join(repo, sub.path);
+  const top = await toplevel(dir).catch(() => null);
+  if (top === null || (await realpath(top)) !== (await realpath(dir))) throw new GitError(`Le dossier « ${sub.path} » n'est pas un dépôt Git valide.`, '');
+  return dir;
+}
+
+export async function submoduleRoot(repo: string, path: unknown): Promise<string> {
+  return verifiedRoot(repo, await requireSubmodule(repo, path));
+}
+
+export async function submoduleHead(repo: string, path: unknown): Promise<string | null> {
+  const sub = await requireSubmodule(repo, path);
+  if (!sub.initialized) return null;
+  return headSha(await verifiedRoot(repo, sub));
+}
+
+/** `git submodule update [--init] --recursive [-- <chemin>]` (mode de mise à jour configuré par l'utilisateur). */
+export async function submoduleUpdate(repo: string, path: unknown, init: unknown) {
+  const target = path === null ? null : (await requireSubmodule(repo, path)).path;
+  await git(repo, ['submodule', 'update', ...(init === true ? ['--init'] : []), '--recursive', ...(target ? ['--', target] : [])]);
+}
+
+/** Revient au commit attendu : checkout forcé (`--checkout`), quel que soit `submodule.<nom>.update`. */
+export async function submoduleReset(repo: string, path: unknown) {
+  const sub = await requireSubmodule(repo, path);
+  if (!sub.initialized) throw notInitialized(sub.path);
+  if (!sub.expected) throw new GitError(`Aucun commit attendu pour « ${sub.path} » (sous-module en conflit ou absent de l'index).`, '');
+  await git(repo, ['submodule', 'update', '--checkout', '--recursive', '--', sub.path]);
+}
+
+export async function submoduleSync(repo: string) {
+  await git(repo, ['submodule', 'sync', '--recursive']);
 }

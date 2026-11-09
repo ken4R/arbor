@@ -262,6 +262,18 @@ export interface ArborApi {
   // glisser-déposer
 
   // sous-modules
+  /** Sous-modules déclarés dans `.gitmodules` et leur état (3 lancements de `git`, aucun dans les sous-modules). */
+  submodules(repo: string): Promise<Submodule[]>;
+  /** Commit extrait dans un sous-module initialisé ; null s'il n'est pas initialisé ou sans commit. */
+  submoduleHead(repo: string, path: string): Promise<string | null>;
+  /** `git submodule update [--init] --recursive [-- <chemin>]` ; `path` null = tous les sous-modules. */
+  submoduleUpdate(repo: string, path: string | null, init: boolean): Promise<void>;
+  /** Revient au commit attendu par le dépôt parent (`git submodule update --checkout -- <chemin>`). */
+  submoduleReset(repo: string, path: string): Promise<void>;
+  /** Recopie les URL de `.gitmodules` dans la configuration (`git submodule sync --recursive`). */
+  submoduleSync(repo: string): Promise<void>;
+  /** Valide un sous-module initialisé et l'autorise comme dépôt ; renvoie son chemin, à ouvrir dans un onglet. */
+  openSubmodule(repo: string, path: string): Promise<string>;
 
   // lfs
 
@@ -363,6 +375,29 @@ export interface UndoInfo {
 // glisser-déposer
 
 // sous-modules
+
+/**
+ * État d'un sous-module : `uninitialized` = dossier sans `.git` ; `ok` = commit attendu extrait ; `changed` = autre
+ * commit extrait ; `conflict` = gitlink en conflit dans l'index ; `missing` = déclaré dans `.gitmodules` mais absent
+ * de l'index.
+ */
+export type SubmoduleState = 'uninitialized' | 'ok' | 'changed' | 'conflict' | 'missing';
+
+export interface Submodule {
+  /** Nom dans `.gitmodules` (`submodule.<nom>.path`), souvent égal au chemin. */
+  name: string;
+  path: string;
+  url: string | null;
+  branch: string | null;
+  /** Commit attendu (gitlink de l'index, étage 0) ; null s'il est absent ou en conflit. */
+  expected: string | null;
+  initialized: boolean;
+  state: SubmoduleState;
+  /** Fichiers suivis modifiés dans le sous-module (initialisé seulement). */
+  dirty: boolean;
+  /** Fichiers non suivis dans le sous-module (initialisé seulement). */
+  untracked: boolean;
+}
 
 // lfs
 

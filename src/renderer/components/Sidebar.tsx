@@ -3,6 +3,7 @@ import type { RepoSnapshot } from '../../shared/types';
 import { LocalBranchesSection } from './sidebar/LocalBranchesSection';
 import { RemotesSection } from './sidebar/RemotesSection';
 import { StashesSection } from './sidebar/StashesSection';
+import { SubmodulesSection } from './sidebar/SubmodulesSection';
 import { TagsSection } from './sidebar/TagsSection';
 
 /** Barre latérale : filtre commun puis sections de `sidebar/` (même signature : snap, match, onSelectCommit). */
@@ -17,6 +18,7 @@ export function Sidebar({ snap, onSelectCommit }: { snap: RepoSnapshot; onSelect
       <RemotesSection snap={snap} match={match} onSelectCommit={onSelectCommit} />
       <TagsSection snap={snap} match={match} onSelectCommit={onSelectCommit} />
       <StashesSection snap={snap} match={match} onSelectCommit={onSelectCommit} />
+      <SubmodulesSection snap={snap} match={match} onSelectCommit={onSelectCommit} />
     </nav>
   );
 }

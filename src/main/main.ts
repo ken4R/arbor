@@ -266,6 +266,9 @@ const READ_ONLY = new Set([
   // glisser-déposer
 
   // sous-modules
+  'submodules', // ls-files et status --no-optional-locks : n'écrivent rien
+  'submoduleHead',
+  'openSubmodule', // valide le chemin, n'écrit que la liste des récents
 
   // lfs
 
@@ -368,6 +371,13 @@ const handlers: Record<string, (...args: any[]) => Promise<unknown>> = {
   // glisser-déposer
 
   // sous-modules
+  submodules: g.submodules,
+  submoduleHead: g.submoduleHead,
+  submoduleUpdate: (repo: string, path: unknown, init: unknown) => g.submoduleUpdate(repo, path, init),
+  submoduleReset: g.submoduleReset,
+  submoduleSync: g.submoduleSync,
+  // Chemin revérifié (déclaré, initialisé, racine de son propre dépôt) avant d'être autorisé comme dépôt ouvert.
+  openSubmodule: async (repo: string, path: unknown) => openRepo(await g.submoduleRoot(repo, path)),
 
   // lfs
 

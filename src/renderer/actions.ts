@@ -7,6 +7,8 @@ import type { MenuItem } from './components/ContextMenu';
 import { openDeleteTagDialog, openTagDialog, pushTagAction } from './components/TagDialog';
 import type { Ui } from './ui';
 import { openRebaseDialog } from './components/RebaseDialog';
+import type { Submodule } from '../shared/types';
+import { openRepoTab } from './tabs';
 
 export function checkoutBranch(ui: Ui, repo: string, name: string) {
   return ui.run(`Checkout de ${name}…`, () => api.checkout(repo, name));
@@ -255,5 +257,66 @@ export function tagMenu(ui: Ui, snap: RepoSnapshot, tag: Tag): MenuItem[] {
     { label: 'Supprimer…', danger: true, onClick: () => openDeleteTagDialog(ui, snap, tag) },
     'separator',
     { label: 'Copier le nom', onClick: () => void navigator.clipboard.writeText(tag.name) },
+  ];
+}
+
+// sous-modules
+
+/** Ouvre un sous-module initialisé dans un nouvel onglet (chemin revérifié par le processus principal). */
+export function openSubmoduleTab(ui: Ui, repo: string, path: string) {
+  return ui.run(
+    'Ouverture du sous-module…',
+    async () => {
+      const top = await api.openSubmodule(repo, path);
+      if (!openRepoTab(top, 'new')) throw new Error("Impossible d'ouvrir un onglet pendant une autre opération.");
+    },
+    undefined,
+    { allowOpen: true },
+  );
+}
+
+/** Initialise (au besoin) et met à jour un sous-module, ou tous si `path` est null. */
+export function updateSubmodulesAction(ui: Ui, repo: string, path: string | null) {
+  const what = path ? `« ${path} »` : 'tous les sous-modules';
+  return ui.run(`Mise à jour de ${what}…`, () => api.submoduleUpdate(repo, path, true), path ? `Sous-module « ${path} » à jour` : 'Sous-modules à jour');
+}
+
+export function syncSubmodulesAction(ui: Ui, repo: string) {
+  return ui.run('Synchronisation des URL…', () => api.submoduleSync(repo), 'URL des sous-modules synchronisées');
+}
+
+/** Remet le sous-module sur le commit attendu par le dépôt parent, après confirmation. */
+export function resetSubmoduleAction(ui: Ui, repo: string, path: string, expected: string | null) {
+  ui.ask({
+    title: 'Revenir au commit attendu',
+    message:
+      `« ${path} » sera extrait sur le commit attendu${expected ? ` ${expected.slice(0, 7)}` : ''} (HEAD détachée dans le sous-module). ` +
+      'Le commit actuellement extrait reste accessible par le reflog du sous-module ; des modifications locales qui gêneraient le checkout le feront échouer.',
+    confirm: 'Revenir au commit attendu',
+    danger: true,
+    onSubmit: () => void ui.run('Retour au commit attendu…', () => api.submoduleReset(repo, path), `« ${path} » est revenu au commit attendu`),
+  });
+}
+
+/** Menu contextuel d'un sous-module (barre latérale). */
+export function submoduleMenu(ui: Ui, snap: RepoSnapshot, sub: Submodule): MenuItem[] {
+  const repo = snap.path;
+  const unstaged = snap.status.unstaged.some((f) => f.path === sub.path);
+  const blocked = sub.state === 'conflict' || sub.state === 'missing';
+  return [
+    { label: 'Ouvrir dans un nouvel onglet', disabled: !sub.initialized, onClick: () => void openSubmoduleTab(ui, repo, sub.path) },
+    { label: 'Voir les modifications', disabled: !unstaged, onClick: () => ui.showDiff({ kind: 'working', path: sub.path, staged: false }) },
+    'separator',
+    { label: sub.initialized ? 'Mettre à jour' : 'Initialiser', disabled: blocked, onClick: () => void updateSubmodulesAction(ui, repo, sub.path) },
+    {
+      label: 'Revenir au commit attendu…',
+      danger: true,
+      disabled: sub.state !== 'changed',
+      onClick: () => resetSubmoduleAction(ui, repo, sub.path, sub.expected),
+    },
+    'separator',
+    { label: 'Synchroniser les URL', onClick: () => void syncSubmodulesAction(ui, repo) },
+    { label: 'Copier le chemin', onClick: () => void navigator.clipboard.writeText(sub.path) },
+    { label: "Copier l'URL", disabled: !sub.url, onClick: () => sub.url && void navigator.clipboard.writeText(sub.url) },
   ];
 }

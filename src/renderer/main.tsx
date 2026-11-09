@@ -26,6 +26,8 @@ import './commands/remotes';
 import './commands/tags';
 // reflog
 import './commands/reflog';
+// sous-modules
+import './commands/submodules';
 
 // Préférences enregistrées lues dès le démarrage (et migration des anciennes clés localStorage).
 void loadPreferences();

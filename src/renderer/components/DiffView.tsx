@@ -7,6 +7,8 @@ import { updatePreferences, usePreferences } from '../prefs';
 import type { DiffMode } from '../../shared/prefs';
 import { Icon } from './Icons';
 import { MergeEditor } from './MergeEditor';
+import { openSubmoduleTab, resetSubmoduleAction } from '../actions';
+import type { SubmoduleChange } from '../../shared/diff';
 
 type Mode = DiffMode;
 
@@ -75,7 +77,9 @@ function PatchView({ repo, target, onClose, reloadKey }: { repo: string; target:
   }, [targetKey, reload]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Indexation partielle : diff du répertoire de travail d'un fichier suivi, ni renommé ni binaire.
-  const editable = target.kind === 'working' && !target.untracked && !target.conflict && !target.oldPath && !!diff && !diff.binary;
+  // Une carte dédiée (sous-module…) remplace les blocs : rien à sélectionner.
+  const card = diff?.submodule ? submoduleCard(ui, repo, target, diff.submodule) : null;
+  const editable = target.kind === 'working' && !target.untracked && !target.conflict && !target.oldPath && !!diff && !diff.binary && !card;
   const staged = target.kind === 'working' && target.staged;
   const linesSelectable = editable && mode === 'unified' && !diff?.newFile && !diff?.deletedFile;
 
@@ -157,7 +161,7 @@ function PatchView({ repo, target, onClose, reloadKey }: { repo: string; target:
         <div className="diff-title">
           <span className="diff-path">{target.path}</span>
           <span className="diff-context">{context}</span>
-          {diff && (
+          {diff && !card && (
             <span className="diff-stats">
               <span className="add">+{diff.additions}</span> <span className="del">−{diff.deletions}</span>
             </span>
@@ -184,14 +188,16 @@ function PatchView({ repo, target, onClose, reloadKey }: { repo: string; target:
             </button>
           </div>
         )}
-        <div className="seg">
-          <button className={mode === 'unified' ? 'on' : ''} onClick={() => changeMode('unified')}>
-            Unifié
-          </button>
-          <button className={mode === 'split' ? 'on' : ''} onClick={() => changeMode('split')}>
-            Côte à côte
-          </button>
-        </div>
+        {!card && (
+          <div className="seg">
+            <button className={mode === 'unified' ? 'on' : ''} onClick={() => changeMode('unified')}>
+              Unifié
+            </button>
+            <button className={mode === 'split' ? 'on' : ''} onClick={() => changeMode('split')}>
+              Côte à côte
+            </button>
+          </div>
+        )}
         <button className="icon-btn" title="Fermer (Échap)" onClick={onClose}>
           <Icon.close />
         </button>
@@ -200,13 +206,14 @@ function PatchView({ repo, target, onClose, reloadKey }: { repo: string; target:
         {error && <div className="empty">{error}</div>}
         {!diff && !error && <div className="empty">Chargement…</div>}
         {diff?.binary && <div className="empty">Fichier binaire : aperçu indisponible.</div>}
-        {diff && !diff.binary && diff.hunks.length === 0 && (
+        {card}
+        {diff && !card && !diff.binary && diff.hunks.length === 0 && (
           <div className="empty">{raw === '' && target.kind === 'working' ? 'Plus aucune modification ici.' : 'Aucune différence de contenu (mode ou renommage).'}</div>
         )}
         {linesSelectable && diff && diff.hunks.length > 0 && nSel === 0 && (
           <div className="patch-hint">Cliquez sur le numéro d'une ligne modifiée pour la sélectionner (Maj+clic : plage).</div>
         )}
-        {diff?.hunks.map((h, i) => (
+        {!card && diff?.hunks.map((h, i) => (
           <div className="hunk" key={i}>
             <div className="hunk-head">
               <span className="hunk-range">{h.header}</span>
@@ -269,6 +276,93 @@ function PatchView({ repo, target, onClose, reloadKey }: { repo: string; target:
         ))}
       </div>
     </div>
+  );
+}
+
+/** Action d'une carte de diff. */
+export interface DiffCardAction {
+  label: string;
+  onClick: () => void;
+  danger?: boolean;
+}
+
+export interface DiffCardProps {
+  /** Variante, pour le style (`diff-card-<kind>`) : `submodule`, `lfs`… */
+  kind: string;
+  /** Nature du changement, ex. « Sous-module », « Fichier LFS ». */
+  label: string;
+  /** Valeurs avant et après (texte court) ; null = absent de ce côté. */
+  before: string | null;
+  after: string | null;
+  /** Infobulles des valeurs (ex. SHA complet). */
+  beforeTitle?: string;
+  afterTitle?: string;
+  /** Précisions affichées sous le changement. */
+  notes?: string[];
+  actions?: DiffCardAction[];
+}
+
+/**
+ * Carte qui remplace les blocs d'un diff sans lignes à indexer (sous-module, pointeur LFS…) : « libellé : avant → après »,
+ * précisions et boutons. Générique : la nature du changement est décrite par l'appelant.
+ */
+export function DiffCard({ kind, label, before, after, beforeTitle, afterTitle, notes, actions }: DiffCardProps) {
+  return (
+    <div className={`diff-card diff-card-${kind}`} role="group" aria-label={label}>
+      <div className="diff-card-change">
+        <span className="diff-card-label">{label} :</span>
+        <code className={`diff-card-value${before === null ? ' absent' : ''}`} title={beforeTitle}>
+          {before ?? 'absent'}
+        </code>
+        <span className="diff-card-arrow" aria-label="devient">
+          →
+        </span>
+        <code className={`diff-card-value${after === null ? ' absent' : ''}`} title={afterTitle}>
+          {after ?? 'absent'}
+        </code>
+      </div>
+      {notes?.map((n) => (
+        <div key={n} className="diff-card-note">
+          {n}
+        </div>
+      ))}
+      {!!actions?.length && (
+        <div className="diff-card-actions">
+          {actions.map((a) => (
+            <button key={a.label} className={`btn btn-sm${a.danger ? ' patch-discard' : ''}`} onClick={a.onClick}>
+              {a.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// sous-modules
+
+/** Carte d'un diff de sous-module : commits avant et après, modifications non commitées, ouverture. */
+function submoduleCard(ui: ReturnType<typeof useUi>, repo: string, target: DiffTarget, change: SubmoduleChange) {
+  const short = (sha: string | null) => sha && sha.slice(0, 7);
+  const notes: string[] = [];
+  if (change.dirty) notes.push('Le sous-module a des modifications non commitées.');
+  if (change.old && change.old === change.new) notes.push('Même commit : seules les modifications non commitées diffèrent.');
+  const actions: DiffCardAction[] = [{ label: 'Ouvrir le sous-module', onClick: () => void openSubmoduleTab(ui, repo, target.path) }];
+  // Diff non indexé d'un autre commit extrait : l'ancien côté est le commit attendu par l'index.
+  if (target.kind === 'working' && !target.staged && change.old && change.new && change.old !== change.new) {
+    actions.push({ label: 'Revenir au commit attendu…', danger: true, onClick: () => resetSubmoduleAction(ui, repo, target.path, change.old) });
+  }
+  return (
+    <DiffCard
+      kind="submodule"
+      label="Sous-module"
+      before={short(change.old)}
+      after={short(change.new)}
+      beforeTitle={change.old ?? undefined}
+      afterTitle={change.new ?? undefined}
+      notes={notes}
+      actions={actions}
+    />
   );
 }
 
