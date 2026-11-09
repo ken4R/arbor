@@ -26,9 +26,27 @@ import './commands/remotes';
 import './commands/tags';
 // reflog
 import './commands/reflog';
+// glisser-déposer
+import './commands/branches';
+import { clearDropHover, endRefDrag } from './refDrop';
 
 // Préférences enregistrées lues dès le démarrage (et migration des anciennes clés localStorage).
 void loadPreferences();
+
+// glisser-déposer : hors des cibles d'Arbor, rien ne se dépose (un fichier externe ne charge jamais file:// dans la
+// fenêtre) ; la source glissée est oubliée au dépôt et à la fin du glisser, même si son élément a été démonté.
+const editable = (t: EventTarget | null) => t instanceof HTMLElement && (t.isContentEditable || /^(INPUT|TEXTAREA)$/.test(t.tagName));
+window.addEventListener('dragover', (e) => {
+  if (e.defaultPrevented || editable(e.target)) return;
+  clearDropHover();
+  e.preventDefault();
+  if (e.dataTransfer) e.dataTransfer.dropEffect = 'none';
+});
+window.addEventListener('drop', (e) => {
+  endRefDrag();
+  if (!editable(e.target)) e.preventDefault();
+});
+window.addEventListener('dragend', () => endRefDrag(), true);
 
 createRoot(document.getElementById('root')!).render(
   <>

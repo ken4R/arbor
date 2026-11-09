@@ -366,6 +366,10 @@ const handlers: Record<string, (...args: any[]) => Promise<unknown>> = {
   undoLast: (repo: string, expectedHead: unknown, expectedTarget: unknown) => g.undoLast(repo, String(expectedHead), String(expectedTarget)),
 
   // glisser-déposer
+  fastForwardBranch: (repo: string, branch: unknown, expectedOld: unknown, source: unknown) => g.fastForwardBranch(repo, String(branch), String(expectedOld), String(source)),
+  rebaseBranch: (repo: string, branch: unknown, onto: unknown, autostash: unknown) => g.rebaseBranch(repo, String(branch), String(onto), autostash === true),
+  pushBranch: (repo: string, remote: unknown, branch: unknown, setUpstream: unknown) => g.pushBranch(repo, String(remote), String(branch), setUpstream === true),
+  moveBranch: (repo: string, branch: unknown, expectedOld: unknown, sha: unknown) => g.moveBranch(repo, String(branch), String(expectedOld), String(sha)),
 
   // sous-modules
 
@@ -401,6 +405,8 @@ function createWindow() {
     webPreferences: { preload: join(__dirname, 'preload.js'), contextIsolation: true, sandbox: false },
   });
   win.setMenuBarVisibility(false);
+  // glisser-déposer : un fichier déposé dans la fenêtre ne doit jamais la faire naviguer (file://…).
+  win.webContents.on('will-navigate', (e) => e.preventDefault());
   const devUrl = process.env.ARBOR_DEV_URL;
   if (devUrl) win.loadURL(devUrl);
   else win.loadFile(join(__dirname, '../renderer/index.html'));

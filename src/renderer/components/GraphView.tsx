@@ -8,6 +8,9 @@ import { fullDate, hashColor, initials, laneColor, relativeDate } from '../util'
 import { isShaQuery, matchNormalized, normalize, normalizeCommit, useSearch } from '../search';
 import { SearchBar } from './SearchBar';
 import { Icon } from './Icons';
+// glisser-déposer
+import { autoScrollOnDrag, dragDisabledReason, dropTargetProps, isRefDrag, startRefDrag } from '../refDrop';
+import { useTabsBusy } from '../tabs';
 
 const ROW_H = 30;
 const LANE_W = 16;
@@ -123,7 +126,15 @@ export function GraphView({ snap, rows, selection, onSelect }: Props) {
           )}
         </span>
       </div>
-      <div className="graph-scroll" ref={scroller} tabIndex={0} onKeyDown={onKey} onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}>
+      <div
+        className="graph-scroll"
+        ref={scroller}
+        tabIndex={0}
+        onKeyDown={onKey}
+        onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}
+        // glisser-déposer : défilement automatique près des bords.
+        onDragOverCapture={(e) => isRefDrag(e) && autoScrollOnDrag(e.currentTarget, e.clientY, ROW_H / 2)}
+      >
         <div style={{ height: total * ROW_H, position: 'relative' }}>
           {visible.map((i) => {
             const style = { top: i * ROW_H, gridTemplateColumns: `${graphCol}px 1fr 160px 120px` };
@@ -154,6 +165,7 @@ export function GraphView({ snap, rows, selection, onSelect }: Props) {
                 style={style}
                 onClick={() => onSelect({ kind: 'commit', sha: c.sha })}
                 onContextMenu={(e) => ui.openMenu(e, commitMenu(ui, snap, c))}
+                {...dropTargetProps(ui, snap, { kind: 'commit', sha: c.sha })}
               >
                 <RowGraph row={row} width={graphCol} commit={c} dashedTop={idx === 0 && headIndex === 0} />
                 <span className="row-msg">
@@ -211,6 +223,8 @@ function RowGraph({ row, width, commit, dashedTop }: { row: GraphRow; width: num
 
 function RefBadges({ commit, snap, color }: { commit: Commit; snap: RepoSnapshot; color: string }) {
   const ui = useUi();
+  // glisser-déposer : badges de branche glissables (sauf opération Git en cours ou dépôt vide).
+  const draggable = !useTabsBusy() && !dragDisabledReason(snap);
   const isHead = commit.refs.some((r) => r.type === 'head');
   const refs = commit.refs.filter((r) => r.type !== 'head');
   if (!refs.length && !isHead) return null;
@@ -223,9 +237,13 @@ function RefBadges({ commit, snap, color }: { commit: Commit; snap: RepoSnapshot
         if (r.type === 'remote' && localNames.has(r.name.split('/').slice(1).join('/'))) return null;
         const synced = r.type === 'local' && refs.some((o) => o.type === 'remote' && o.name.split('/').slice(1).join('/') === r.name);
         const current = r.type === 'local' && r.name === snap.status.branch;
+        const branch = r.type === 'local' || r.type === 'remote';
         return (
           <span
             key={r.type + r.name}
+            draggable={branch && draggable}
+            onDragStart={branch ? (e) => startRefDrag(e, { name: r.name, remote: r.type === 'remote' }) : undefined}
+            {...(branch ? dropTargetProps(ui, snap, { kind: 'branch', name: r.name, remote: r.type === 'remote' }) : {})}
             className={`ref ref-${r.type}${current ? ' ref-current' : ''}`}
             style={r.type === 'tag' ? undefined : { borderColor: color, ...(current ? { background: color } : {}) }}
             onDoubleClick={(e) => {

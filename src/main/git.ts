@@ -67,6 +67,7 @@ const GIT_ERRORS: [RegExp, (m: RegExpMatchArray) => string][] = [
   [/Untracked working tree file '(.+?)' would be overwritten/, (m) => `Le fichier non suivi « ${m[1]} » serait écrasé : déplacez-le, ajoutez-le ou mettez-le de côté (stash) avant.`],
 
   // glisser-déposer
+  [/is already (?:checked out|used by worktree) at '(.+?)'/, (m) => `La branche est extraite dans un autre worktree (${m[1]}) : faites l'opération depuis ce worktree.`],
 
   // sous-modules
 
@@ -851,6 +852,89 @@ export async function merge(repo: string, ref: string) {
 
 export async function rebase(repo: string, onto: string) {
   await git(repo, ['rebase', '--end-of-options', onto]);
+}
+
+// glisser-déposer : actions sur une branche qui n'est pas forcément extraite. Le rendu ne fait que proposer ;
+// chaque fonction revérifie l'état du dépôt (opération en cours, branche déplacée entre-temps, worktree).
+
+/** Refuse l'action pendant une fusion, un rebase, un cherry-pick ou un revert. */
+async function requireCleanState(repo: string) {
+  if ((await repoState(repo)) !== 'clean') throw new GitError("Une opération est en cours : terminez-la ou abandonnez-la d'abord.", '');
+}
+
+/** SHA actuel de `refs/heads/<branch>` (nom vérifié) ; erreur si la branche n'existe pas. */
+async function localBranchSha(repo: string, branch: string): Promise<string> {
+  await checkRefName(repo, 'branch', branch);
+  const sha = (await git(repo, ['rev-parse', '--verify', '-q', `refs/heads/${branch}`], { okCodes: [1] })).trim();
+  if (!sha) throw new GitError(`La branche « ${branch} » n'existe pas (ou plus) : rafraîchissez.`, '');
+  return sha;
+}
+
+/** Refuse une branche extraite : dans ce dépôt (branche courante) ou dans un autre worktree. */
+async function requireNotCheckedOut(repo: string, branch: string, currentHint: string) {
+  const head = (await git(repo, ['symbolic-ref', '-q', 'HEAD'], { okCodes: [1] })).trim();
+  if (head === `refs/heads/${branch}`) throw new GitError(`« ${branch} » est la branche courante : ${currentHint}`, '');
+  const path = (await git(repo, ['for-each-ref', '--format=%(worktreepath)', `refs/heads/${branch}`])).trim();
+  if (path) throw new GitError(`La branche est extraite dans un autre worktree (${path}) : faites l'opération depuis ce worktree.`, '');
+}
+
+/** Résout une révision (nom de branche, SHA) en SHA de commit. */
+async function commitSha(repo: string, rev: string): Promise<string> {
+  const sha = (await git(repo, ['rev-parse', '--verify', '-q', '--end-of-options', `${rev}^{commit}`], { okCodes: [1] })).trim();
+  if (!sha) throw new GitError(`« ${rev} » ne désigne aucun commit (rafraîchissez).`, '');
+  return sha;
+}
+
+/**
+ * Avance `branch` (non extraite) jusqu'à `source` sans checkout, si c'est une avance rapide. `expectedOld` : SHA
+ * affiché ; la mise à jour est atomique (`update-ref <nouveau> <ancien>`) et inscrite au reflog.
+ */
+export async function fastForwardBranch(repo: string, branch: string, expectedOld: string, source: string) {
+  assertSha(expectedOld);
+  await requireCleanState(repo);
+  const old = await localBranchSha(repo, branch);
+  if (old !== expectedOld) throw new GitError(`La branche « ${branch} » a changé depuis l'affichage : rafraîchissez.`, '');
+  await requireNotCheckedOut(repo, branch, 'utilisez « Fusionner ».');
+  const to = await commitSha(repo, source);
+  if (to === old) throw new GitError(`« ${branch} » est déjà à jour avec « ${source} ».`, '');
+  const base = (await git(repo, ['merge-base', old, to], { okCodes: [1] })).trim();
+  if (base === to) throw new GitError(`« ${branch} » contient déjà « ${source} ».`, '');
+  if (base !== old) throw new GitError(`Pas d'avance rapide possible : « ${branch} » a des commits absents de « ${source} ». Basculez sur « ${branch} » pour fusionner.`, '');
+  await git(repo, ['update-ref', '-m', `merge ${source}: Fast-forward`, `refs/heads/${branch}`, to, old]);
+}
+
+/**
+ * Rebase de `branch` sur `onto` (`git rebase <onto> <branch>`) : la branche est extraite d'abord et reste extraite
+ * à la fin. `autostash` faux : `--no-autostash` explicite (la configuration de l'utilisateur ne décide pas).
+ */
+export async function rebaseBranch(repo: string, branch: string, onto: string, autostash: boolean) {
+  await requireCleanState(repo);
+  await localBranchSha(repo, branch);
+  await commitSha(repo, onto);
+  await git(repo, ['rebase', autostash ? '--autostash' : '--no-autostash', '--end-of-options', onto, branch]);
+}
+
+/** Pousse `refs/heads/<branch>` vers la branche du même nom sur `remote` (jamais forcé) ; `-u` si demandé. */
+export async function pushBranch(repo: string, remote: string, branch: string, setUpstream: boolean) {
+  await requireRemote(repo, remote);
+  await localBranchSha(repo, branch);
+  await git(repo, ['push', ...(setUpstream ? ['-u'] : []), '--end-of-options', remote, `refs/heads/${branch}:refs/heads/${branch}`]);
+}
+
+/**
+ * Déplace `branch` (non extraite) sur le commit `sha`, quel qu'il soit (destructif : les commits qui ne sont plus
+ * atteignables restent dans le reflog). `expectedOld` : SHA affiché.
+ */
+export async function moveBranch(repo: string, branch: string, expectedOld: string, sha: string) {
+  assertSha(expectedOld);
+  assertSha(sha);
+  await requireCleanState(repo);
+  const old = await localBranchSha(repo, branch);
+  if (old !== expectedOld) throw new GitError(`La branche « ${branch} » a changé depuis l'affichage : rafraîchissez.`, '');
+  await requireNotCheckedOut(repo, branch, 'utilisez un reset depuis le menu du commit.');
+  const to = await commitSha(repo, sha);
+  if (to === old) throw new GitError(`« ${branch} » pointe déjà sur ce commit.`, '');
+  await git(repo, ['update-ref', '-m', 'branch: déplacée par Arbor', `refs/heads/${branch}`, to, old]);
 }
 
 export async function abort(repo: string) {

@@ -260,6 +260,14 @@ export interface ArborApi {
   undoLast(repo: string, expectedHead: string, expectedTarget: string): Promise<void>;
 
   // glisser-déposer
+  /** Avance `branch` (non extraite, encore à `expectedOld`) jusqu'à `source` sans checkout ; refus si pas d'avance rapide. */
+  fastForwardBranch(repo: string, branch: string, expectedOld: string, source: string): Promise<void>;
+  /** `git rebase <onto> <branch>` : `branch` est extraite et le reste ; `autostash` met de côté les modifications locales. */
+  rebaseBranch(repo: string, branch: string, onto: string, autostash: boolean): Promise<void>;
+  /** Pousse la branche locale vers la branche du même nom sur `remote` (`-u` si `setUpstream`), jamais forcé. */
+  pushBranch(repo: string, remote: string, branch: string, setUpstream: boolean): Promise<void>;
+  /** Déplace `branch` (non extraite, encore à `expectedOld`) sur le commit `sha` (destructif, confirmé par le rendu). */
+  moveBranch(repo: string, branch: string, expectedOld: string, sha: string): Promise<void>;
 
   // sous-modules
 

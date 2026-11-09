@@ -320,6 +320,7 @@ function RepoView({ tabId, repo, onBusy }: RepoViewProps) {
         e.stopPropagation();
         setMenu({ x: e.clientX, y: e.clientY, items });
       },
+      openMenuAt: (x, y, items) => setMenu({ x, y, items }),
       ask: (p) => setPrompt(p),
       openDialog: (render) => {
         const id = ++dialogSeq.current;
