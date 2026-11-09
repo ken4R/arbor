@@ -1,6 +1,7 @@
 import type { FinalNewlines, MergeBlock } from './merge3';
 import type { Preferences } from './prefs';
 import type { RebaseProgress, RebaseStep } from './rebase';
+import type { PersistedView } from './session';
 
 export interface Commit {
   sha: string;
@@ -209,9 +210,9 @@ export interface ArborApi {
   setPreferences(patch: Partial<Preferences>): Promise<Preferences>;
   /** Onglets de la session précédente (`userData/session.json`) ; dépôts supprimés écartés, dépôts inaccessibles gardés
    * par le processus principal pour un prochain lancement (voir `shared/session.ts`), récents inchangés. */
-  restoreSession(): Promise<{ repos: string[]; active: number }>;
-  /** Enregistre les onglets ouverts (seuls les dépôts ouverts dans Arbor sont retenus). */
-  saveSession(repos: string[], active: number): Promise<void>;
+  restoreSession(): Promise<{ repos: string[]; active: number; views: Record<string, PersistedView> }>;
+  /** Enregistre les onglets ouverts (seuls les dépôts ouverts dans Arbor sont retenus) et leur état d'affichage. */
+  saveSession(repos: string[], active: number, views?: Record<string, PersistedView>): Promise<void>;
   /** Commits réécrits par un rebase interactif sur `base` ; `ancestorOnly` : `base` doit être un ancêtre de HEAD. */
   rebasePlan(repo: string, base: string, ancestorOnly: boolean): Promise<RebasePlan>;
   /**

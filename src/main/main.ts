@@ -5,7 +5,7 @@ import { basename, join, resolve } from 'node:path';
 import * as g from './git';
 import { RepoWatcher } from './watcher';
 import { mergePreferences, normalizePreferences, type Preferences } from '../shared/prefs';
-import { MISSING_LIMIT, normalizeSession, type SessionData } from '../shared/session';
+import { MISSING_LIMIT, normalizeSession, type PersistedView, type SessionData } from '../shared/session';
 
 // Données utilisateur isolées (tests d'interface) : à fixer avant `ready`.
 if (process.env.ARBOR_USER_DATA) app.setPath('userData', resolve(process.env.ARBOR_USER_DATA));
@@ -96,7 +96,7 @@ function assertOpened(repo: unknown) {
   }
 }
 
-// Session des onglets : `userData/session.json` = { repos, active, missing } (voir `shared/session.ts`).
+// Session des onglets : `userData/session.json` = { repos, active, missing, views } (voir `shared/session.ts`).
 const sessionFile = () => join(app.getPath('userData'), 'session.json');
 
 /** Délai maximal de vérification d'un dépôt à la restauration (montage réseau figé). */
@@ -157,7 +157,7 @@ async function reopenRepo(path: string): Promise<Reopened> {
   }
 }
 
-async function restoreSession(): Promise<{ repos: string[]; active: number }> {
+async function restoreSession(): Promise<{ repos: string[]; active: number; views: Record<string, PersistedView> }> {
   const saved = readSession();
   // Dépôts indisponibles la dernière fois en fin de liste : leur onglet revient s'ils sont de nouveau accessibles.
   const candidates = [...saved.repos, ...saved.missing];
@@ -165,20 +165,24 @@ async function restoreSession(): Promise<{ repos: string[]; active: number }> {
   const repos: string[] = [];
   const missing: string[] = [];
   let active = 0;
+  const views: Record<string, PersistedView> = {};
   results.forEach((r, i) => {
     if (r.kind === 'missing') missing.push(candidates[i]);
     if (r.kind !== 'ok') return; // `gone` : onglet écarté
     if (!repos.includes(r.top)) repos.push(r.top);
     if (i === saved.active && i < saved.repos.length) active = repos.indexOf(r.top);
+    // État d'affichage enregistré sous le chemin de la session, rendu sous le chemin vérifié.
+    const has = (o: object, k: string) => Object.prototype.hasOwnProperty.call(o, k);
+    if (has(saved.views, candidates[i]) && !has(views, r.top)) views[r.top] = saved.views[candidates[i]];
   });
   missingRepos = missing.slice(0, MISSING_LIMIT);
-  return { repos, active };
+  return { repos, active, views };
 }
 
 /** N'enregistre que des dépôts ouverts dans Arbor (mêmes règles que `assertOpened`), plus les dépôts indisponibles. */
-function saveSession(repos: unknown, active: unknown) {
+function saveSession(repos: unknown, active: unknown, views: unknown) {
   const recent = loadRecent();
-  const s = normalizeSession({ repos, active }, (p) => openedRepos.has(p) || recent.includes(p));
+  const s = normalizeSession({ repos, active, views }, (p) => openedRepos.has(p) || recent.includes(p));
   if (missingRepos === null) missingRepos = readSession().missing; // restauration désactivée : on les garde
   missingRepos = missingRepos.filter((p) => !s.repos.includes(p));
   const data: SessionData = { ...s, missing: missingRepos };
@@ -335,7 +339,7 @@ const handlers: Record<string, (...args: any[]) => Promise<unknown>> = {
   getPreferences: async () => loadPreferences(),
   setPreferences: async (patch: unknown) => savePreferences(patch),
   restoreSession: async () => restoreSession(),
-  saveSession: async (repos: unknown, active: unknown) => saveSession(repos, active),
+  saveSession: async (repos: unknown, active: unknown, views: unknown) => saveSession(repos, active, views),
   // rebase interactif
   rebasePlan: (repo: string, base: unknown, ancestorOnly: unknown) => g.rebasePlan(repo, String(base), ancestorOnly === true),
   rebaseInteractive: (repo: string, upstream: unknown, expectedHead: unknown, steps: unknown) =>
