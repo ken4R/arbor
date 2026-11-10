@@ -26,6 +26,8 @@ import './commands/remotes';
 import './commands/tags';
 // reflog
 import './commands/reflog';
+// sous-modules
+import './commands/submodules';
 // glisser-déposer
 import './commands/branches';
 import { clearDropHover, endRefDrag } from './refDrop';

@@ -279,6 +279,24 @@ export interface ArborApi {
   moveBranch(repo: string, branch: string, expectedOld: string, sha: string): Promise<void>;
 
   // sous-modules
+  /**
+   * Sous-modules déclarés dans `.gitmodules` et leur état (aucun `git` lancé dans les sous-modules). `changed` : chemins
+   * présents dans le statut du dépôt ; le statut détaillé n'est lu que pour eux (les autres sont à jour).
+   */
+  submodules(repo: string, changed: string[]): Promise<Submodule[]>;
+  /** Commit extrait dans un sous-module initialisé ; null s'il n'est pas initialisé ou sans commit. */
+  submoduleHead(repo: string, path: string): Promise<string | null>;
+  /**
+   * Initialise un sous-module non initialisé, ou tous ceux qui ne le sont pas (`path` null) : `--init --checkout`.
+   * Refuse un sous-module déjà initialisé (jamais de déplacement sans confirmation).
+   */
+  submoduleInit(repo: string, path: string | null): Promise<void>;
+  /** Revient au commit attendu `expected` (`git submodule update --checkout -- <chemin>`), refusé s'il a changé. */
+  submoduleReset(repo: string, path: string, expected: string): Promise<void>;
+  /** Recopie les URL de `.gitmodules` dans la configuration (`git submodule sync --recursive`). */
+  submoduleSync(repo: string): Promise<void>;
+  /** Valide un sous-module initialisé et l'autorise comme dépôt ; renvoie son chemin, à ouvrir dans un onglet. */
+  openSubmodule(repo: string, path: string): Promise<string>;
 
   // lfs
 
@@ -380,6 +398,29 @@ export interface UndoInfo {
 // glisser-déposer
 
 // sous-modules
+
+/**
+ * État d'un sous-module : `uninitialized` = dossier sans `.git` ; `ok` = commit attendu extrait ; `changed` = autre
+ * commit extrait ; `conflict` = gitlink en conflit dans l'index ; `missing` = déclaré dans `.gitmodules` mais absent
+ * de l'index.
+ */
+export type SubmoduleState = 'uninitialized' | 'ok' | 'changed' | 'conflict' | 'missing';
+
+export interface Submodule {
+  /** Nom dans `.gitmodules` (`submodule.<nom>.path`), souvent égal au chemin. */
+  name: string;
+  path: string;
+  url: string | null;
+  branch: string | null;
+  /** Commit attendu (gitlink de l'index, étage 0) ; null s'il est absent ou en conflit. */
+  expected: string | null;
+  initialized: boolean;
+  state: SubmoduleState;
+  /** Fichiers suivis modifiés dans le sous-module (initialisé seulement). */
+  dirty: boolean;
+  /** Fichiers non suivis dans le sous-module (initialisé seulement). */
+  untracked: boolean;
+}
 
 // lfs
 

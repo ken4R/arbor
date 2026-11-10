@@ -4,6 +4,9 @@ import { useUi } from '../ui';
 import { FileList } from './FileList';
 import { fileViewItems } from './FileView';
 import { OperationBanner } from './OperationBanner';
+import { useSubmodules } from '../submodules';
+import { openSubmoduleTab, resetSubmoduleAction } from '../actions';
+import type { MenuItem } from './ContextMenu';
 
 /** Message de commit en cours, conservé par App quand on consulte un autre commit. */
 export interface CommitDraft {
@@ -33,6 +36,28 @@ export function WorkingPanel({ repo, snap, activeDiff, draft, onDraft }: Props) 
   // Désindexer un renommage doit aussi désindexer la suppression de l'ancien chemin.
   const withOld = (files: { path: string; oldPath?: string }[]) => files.flatMap((f) => (f.oldPath ? [f.oldPath, f.path] : [f.path]));
   const canCommit = (st.staged.length > 0 || amend) && summary.trim().length > 0 && st.conflicted.length === 0;
+  // Sous-modules : badge, et « Revenir au commit attendu… » à la place de « Annuler les modifications… ».
+  const subs = useSubmodules(snap);
+  const subPaths = new Set(subs.map((s) => s.path));
+  const openSubmoduleItem = (path: string): MenuItem => ({
+    label: 'Ouvrir le sous-module',
+    disabled: !subs.find((s) => s.path === path)?.initialized,
+    onClick: () => void openSubmoduleTab(ui, repo, path),
+  });
+  const submoduleFileMenu = (path: string): MenuItem[] => {
+    const sub = subs.find((s) => s.path === path);
+    return [
+      { label: 'Indexer', onClick: () => ui.run('Indexation…', () => api.stage(repo, [path])) },
+      'separator',
+      openSubmoduleItem(path),
+      {
+        label: 'Revenir au commit attendu…',
+        danger: true,
+        disabled: sub?.state !== 'changed',
+        onClick: () => resetSubmoduleAction(ui, repo, path, sub?.expected ?? null),
+      },
+    ];
+  };
 
   const doCommit = async () => {
     const message = description.trim() ? `${summary.trim()}\n\n${description.trim()}` : summary.trim();
@@ -79,7 +104,8 @@ export function WorkingPanel({ repo, snap, activeDiff, draft, onDraft }: Props) 
           activeDiff={activeDiff}
           diffFor={(f) => ({ kind: 'working', path: f.path, staged: false, untracked: f.status === '?' })}
           action={{ label: 'Indexer', onClick: (f) => ui.run('Indexation…', () => api.stage(repo, [f.path])) }}
-          menu={(f) => [
+          submodules={subPaths}
+          menu={(f) => (subPaths.has(f.path) ? submoduleFileMenu(f.path) : [
             { label: 'Indexer', onClick: () => ui.run('Indexation…', () => api.stage(repo, [f.path])) },
             'separator',
             {
@@ -97,7 +123,7 @@ export function WorkingPanel({ repo, snap, activeDiff, draft, onDraft }: Props) 
             'separator',
             // Fichier non suivi : aucun historique. Fichier supprimé : blame de la version de HEAD.
             ...fileViewItems(ui, f.path, f.status === '?' || !snap.head ? false : null, f.status === '?' || !snap.head ? false : f.status === 'D' ? snap.head : null),
-          ]}
+          ])}
         />
         {st.unstaged.length === 0 && <div className="empty">Rien à indexer</div>}
       </PanelSection>
@@ -112,9 +138,12 @@ export function WorkingPanel({ repo, snap, activeDiff, draft, onDraft }: Props) 
           activeDiff={activeDiff}
           diffFor={(f) => ({ kind: 'working', path: f.path, oldPath: f.oldPath, staged: true })}
           action={{ label: 'Retirer', onClick: (f) => ui.run('Désindexation…', () => api.unstage(repo, withOld([f]))) }}
+          submodules={subPaths}
           menu={(f) =>
             // Fichier ajouté : pas encore d'historique. Renommage : historique et blame de l'ancien chemin (version de HEAD).
-            f.status === 'A' || !snap.head
+            subPaths.has(f.path)
+              ? [openSubmoduleItem(f.path)] // sous-module : ni historique de fichier ni blame
+              : f.status === 'A' || !snap.head
               ? fileViewItems(ui, f.path, false, false)
               : f.oldPath
                 ? fileViewItems(ui, f.oldPath, null, snap.head)

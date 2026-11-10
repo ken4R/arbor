@@ -6,6 +6,7 @@ import { LocalBranchesSection } from './sidebar/LocalBranchesSection';
 import { RemotesSection } from './sidebar/RemotesSection';
 import { SectionStateContext, type SectionState } from './sidebar/Section';
 import { StashesSection } from './sidebar/StashesSection';
+import { SubmodulesSection } from './sidebar/SubmodulesSection';
 import { TagsSection } from './sidebar/TagsSection';
 
 /**
@@ -41,6 +42,7 @@ export function Sidebar({ tabId, snap, onSelectCommit }: { tabId: number; snap: 
       <RemotesSection snap={snap} match={match} onSelectCommit={onSelectCommit} />
       <TagsSection snap={snap} match={match} onSelectCommit={onSelectCommit} />
       <StashesSection snap={snap} match={match} onSelectCommit={onSelectCommit} />
+      <SubmodulesSection snap={snap} match={match} onSelectCommit={onSelectCommit} />
     </nav>
   );
   return <SectionStateContext.Provider value={sections}>{content}</SectionStateContext.Provider>;

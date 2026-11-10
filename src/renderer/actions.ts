@@ -7,6 +7,8 @@ import type { MenuItem } from './components/ContextMenu';
 import { openDeleteTagDialog, openTagDialog, pushTagAction } from './components/TagDialog';
 import type { Ui } from './ui';
 import { openRebaseDialog } from './components/RebaseDialog';
+import type { Submodule } from '../shared/types';
+import { openRepoTab } from './tabs';
 // glisser-déposer
 import { openRefActionDialog } from './components/RefActionDialog';
 
@@ -259,5 +261,67 @@ export function tagMenu(ui: Ui, snap: RepoSnapshot, tag: Tag): MenuItem[] {
     { label: 'Supprimer…', danger: true, onClick: () => openDeleteTagDialog(ui, snap, tag) },
     'separator',
     { label: 'Copier le nom', onClick: () => void navigator.clipboard.writeText(tag.name) },
+  ];
+}
+
+// sous-modules
+
+/** Ouvre un sous-module initialisé dans un nouvel onglet (chemin revérifié par le processus principal). */
+export function openSubmoduleTab(ui: Ui, repo: string, path: string) {
+  return ui.run(
+    'Ouverture du sous-module…',
+    async () => {
+      const top = await api.openSubmodule(repo, path);
+      if (!openRepoTab(top, 'new')) throw new Error("Impossible d'ouvrir un onglet pendant une autre opération.");
+    },
+    undefined,
+    { allowOpen: true },
+  );
+}
+
+/** Initialise un sous-module non initialisé, ou tous ceux qui ne le sont pas si `path` est null (aucun n'est déplacé). */
+export function initSubmodulesAction(ui: Ui, repo: string, path: string | null) {
+  const what = path ? `« ${path} »` : 'des sous-modules manquants';
+  return ui.run(`Initialisation ${path ? 'de ' : ''}${what}…`, () => api.submoduleInit(repo, path), path ? `Sous-module « ${path} » initialisé` : 'Sous-modules initialisés');
+}
+
+export function syncSubmodulesAction(ui: Ui, repo: string) {
+  return ui.run('Synchronisation des URL…', () => api.submoduleSync(repo), 'URL des sous-modules synchronisées');
+}
+
+/** Remet le sous-module sur le commit attendu par le dépôt parent, après confirmation. */
+export function resetSubmoduleAction(ui: Ui, repo: string, path: string, expected: string | null) {
+  if (!expected) return;
+  ui.ask({
+    title: 'Revenir au commit attendu',
+    message:
+      `« ${path} » sera extrait sur le commit attendu ${expected.slice(0, 7)} (HEAD détachée dans le sous-module ; ses propres sous-modules ne sont pas modifiés). ` +
+      'Le commit actuellement extrait reste accessible par le reflog du sous-module ; des modifications locales qui gêneraient le checkout le feront échouer.',
+    confirm: 'Revenir au commit attendu',
+    danger: true,
+    onSubmit: () => void ui.run('Retour au commit attendu…', () => api.submoduleReset(repo, path, expected), `« ${path} » est revenu au commit attendu`),
+  });
+}
+
+/** Menu contextuel d'un sous-module (barre latérale). */
+export function submoduleMenu(ui: Ui, snap: RepoSnapshot, sub: Submodule): MenuItem[] {
+  const repo = snap.path;
+  const unstaged = snap.status.unstaged.some((f) => f.path === sub.path);
+  return [
+    { label: 'Ouvrir dans un nouvel onglet', disabled: !sub.initialized, onClick: () => void openSubmoduleTab(ui, repo, sub.path) },
+    { label: 'Voir les modifications', disabled: !unstaged, onClick: () => ui.showDiff({ kind: 'working', path: sub.path, staged: false }) },
+    'separator',
+    // Seul un sous-module non initialisé s'initialise ; un « autre commit extrait » passe par l'entrée confirmée ci-dessous.
+    { label: 'Initialiser', disabled: sub.state !== 'uninitialized', onClick: () => void initSubmodulesAction(ui, repo, sub.path) },
+    {
+      label: 'Revenir au commit attendu…',
+      danger: true,
+      disabled: sub.state !== 'changed' || !sub.expected,
+      onClick: () => resetSubmoduleAction(ui, repo, sub.path, sub.expected),
+    },
+    'separator',
+    { label: 'Synchroniser les URL', onClick: () => void syncSubmodulesAction(ui, repo) },
+    { label: 'Copier le chemin', onClick: () => void navigator.clipboard.writeText(sub.path) },
+    { label: "Copier l'URL", disabled: !sub.url, onClick: () => sub.url && void navigator.clipboard.writeText(sub.url) },
   ];
 }
