@@ -19,6 +19,7 @@ import {
   submoduleState,
   submoduleSync,
   submoduleInit,
+  hasSymlinkComponent,
   status,
   translateGitError,
 } from './git';
@@ -355,21 +356,30 @@ describe('sous-modules : chemins piégés et changement de type', () => {
     expect((await submodules(dir))[1].state).toBe('uninitialized');
   });
 
-  it('lien symbolique déclaré comme chemin : jamais considéré comme initialisé ni ouvert', async () => {
+  it('lien symbolique déclaré comme chemin : jamais confié à git, jamais initialisé ni ouvert', async () => {
     symlinkSync('../autre', join(dir, 'ext'));
     run(dir, 'config', '-f', '.gitmodules', 'submodule.ext.path', 'ext');
-    let ext = (await submodules(dir)).find((s) => s.path === 'ext')!;
-    expect([ext.state, ext.initialized]).toEqual(['missing', false]);
-    await expect(submoduleRoot(dir, 'ext')).rejects.toThrow(/Aucun commit attendu/);
-    // Les git récents refusent d'écrire un gitlink sur un lien symbolique : gitlink d'abord, puis lien remis en place.
+    const check = async () => {
+      // Le chemin est écarté avant tout appel à git (les git récents refuseraient toute la commande).
+      const subs = await submodules(dir);
+      const ext = subs.find((s) => s.path === 'ext')!;
+      expect([ext.state, ext.initialized, ext.expected]).toEqual(['missing', false, null]);
+      expect(subs.find((s) => s.path === 'lit*')?.state).toBe('ok'); // les autres restent lus
+      await expect(submoduleRoot(dir, 'ext')).rejects.toThrow(/Aucun commit attendu/);
+      expect(await submoduleHead(dir, 'ext')).toBeNull();
+      await expect(submoduleReset(dir, 'ext', shas[0])).rejects.toThrow(/Aucun commit attendu/);
+      await expect(submoduleInit(dir, 'ext')).rejects.toThrow(/Aucun commit attendu/);
+    };
+    await check();
+    // Même avec un gitlink dans l'index (écrit avant le lien : les git récents le refusent sur un lien).
     rmSync(join(dir, 'ext'));
     run(dir, 'update-index', '--add', '--cacheinfo', `160000,${shas[0]},ext`);
     symlinkSync('../autre', join(dir, 'ext'));
-    ext = (await submodules(dir)).find((s) => s.path === 'ext')!;
-    expect([ext.state, ext.initialized]).toEqual(['uninitialized', false]);
-    await expect(submoduleRoot(dir, 'ext')).rejects.toThrow(/n'est pas initialisé/);
-    expect(await submoduleHead(dir, 'ext')).toBeNull();
-    await expect(submoduleReset(dir, 'ext', shas[0])).rejects.toThrow(/n'est pas initialisé/);
+    await check();
+    // Lien sur un dossier intermédiaire.
+    expect(hasSymlinkComponent(dir, 'ext/x/y')).toBe(true);
+    expect(hasSymlinkComponent(dir, 'lit*')).toBe(false);
+    expect(hasSymlinkComponent(dir, 'absent/x')).toBe(false);
   });
 
   it('fichier remplacé par un gitlink : carte de sous-module, indexation partielle refusée', async () => {
