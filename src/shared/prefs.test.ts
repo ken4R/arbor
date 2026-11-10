@@ -14,7 +14,7 @@ describe('normalizePreferences', () => {
   });
 
   it('conserve les valeurs valides', () => {
-    const p = { theme: 'light', diffFontSize: 15, monoFont: 'Fira Code', diffMode: 'split', autoRefresh: false, restoreTabs: false };
+    const p = { theme: 'light', diffFontSize: 15, monoFont: 'Fira Code', diffMode: 'split', autoRefresh: false, restoreTabs: false, layout: { sidebarWidth: 300, rightWidth: 400 } };
     expect(normalizePreferences(p)).toEqual(p);
   });
 
@@ -61,5 +61,19 @@ describe('mergePreferences', () => {
     expect(mergePreferences(cur, { diffFontSize: '14' })).toEqual(cur);
     expect(mergePreferences(cur, { theme: 'sepia' })).toEqual(cur);
     expect(mergePreferences(cur, { monoFont: 'X;' })).toEqual(cur);
+  });
+});
+
+describe('largeur des panneaux', () => {
+  it('borne et arrondit les largeurs, garde le défaut si invalide', () => {
+    expect(normalizePreferences({ layout: { sidebarWidth: 10, rightWidth: 9999 } }).layout).toEqual({ sidebarWidth: 160, rightWidth: 640 });
+    expect(normalizePreferences({ layout: { sidebarWidth: 250.4, rightWidth: '400' } }).layout).toEqual({ sidebarWidth: 250, rightWidth: 340 });
+    expect(normalizePreferences({ layout: 'large' }).layout).toEqual(DEFAULT_PREFERENCES.layout);
+  });
+
+  it('accepte un correctif partiel sans toucher à l’autre largeur', () => {
+    const cur = mergePreferences(DEFAULT_PREFERENCES, { layout: { sidebarWidth: 300, rightWidth: 420 } });
+    expect(mergePreferences(cur, { layout: { sidebarWidth: 200 } }).layout).toEqual({ sidebarWidth: 200, rightWidth: 420 });
+    expect(mergePreferences(cur, { layout: { rightWidth: Number.NaN } }).layout).toEqual({ sidebarWidth: 300, rightWidth: 420 });
   });
 });

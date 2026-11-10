@@ -14,8 +14,14 @@ import {
   setTabsBusy,
   SNAP_CACHE_LIMIT,
   getPendingClose,
+  getTabView,
+  onViewChange,
+  patchTabView,
+  restoreTabs,
+  toPersistedView,
   type TabState,
 } from './tabs';
+import { getSearch } from './search';
 
 // Magasin du module : remis à zéro avant chaque test.
 
@@ -28,6 +34,7 @@ const state = (summary = '', snap: RepoSnapshot | null = null): TabState => ({
   fileView: null,
   draft: { summary, description: '', amend: false },
   snap,
+  view: { graph: null, collapsed: {}, filter: '' },
 });
 const fakeSnap = (path: string) => ({ path }) as unknown as RepoSnapshot;
 
@@ -104,5 +111,59 @@ describe('magasin des onglets', () => {
     const kept = ids.filter((id) => getTabState(id)?.snap);
     expect(kept).toEqual(ids.slice(-(SNAP_CACHE_LIMIT - 1)));
     expect(getTabState(ids[0])?.selection).toEqual({ kind: 'commit', sha: 'abc' });
+  });
+
+  it('garde la disposition (défilement, sections, filtre) à la fermeture et à la réouverture', () => {
+    openRepoTab('/a', 'current');
+    const a = activeId();
+    saveTabState(a, state());
+    patchTabView(a, { graph: { sha: 'abcd', offset: 4 }, collapsed: { tags: false } });
+    patchTabView(a, { filter: 'feat' });
+    // Un enregistrement sans `view` (RepoView) garde la disposition.
+    saveTabState(a, { ...state('x'), view: undefined });
+    openRepoTab('/b', 'new');
+    closeTabById(a);
+    reopenClosedTab();
+    expect(getTabView(activeId())).toEqual({ graph: { sha: 'abcd', offset: 4 }, collapsed: { tags: false }, filter: 'feat' });
+  });
+
+  it('prévient des changements d’affichage hors React, sans toucher aux onglets inconnus', () => {
+    openRepoTab('/a', 'current');
+    let n = 0;
+    const off = onViewChange(() => n++);
+    patchTabView(activeId(), { filter: 'x' });
+    patchTabView(999, { filter: 'y' });
+    expect(n).toBe(1);
+    expect(getTabView(999).filter).toBe('');
+    off();
+    patchTabView(activeId(), { filter: 'z' });
+    expect(n).toBe(1);
+  });
+
+  it('restaure sélection, disposition et recherche depuis la session', () => {
+    const view = {
+      v: 1 as const,
+      selection: 'abcd123',
+      graph: { sha: 'abcd123', offset: 3 },
+      collapsed: { local: true },
+      filter: 'fix',
+      search: { open: true, field: 'message' as const, text: 'journal' },
+    };
+    restoreTabs(['/s1', '/s2'], 1, { '/s1': view });
+    const [t1, t2] = getTabsModel().tabs;
+    expect(getTabState(t1.id)?.selection).toEqual({ kind: 'commit', sha: 'abcd123' });
+    expect(getTabView(t1.id)).toEqual({ graph: view.graph, collapsed: view.collapsed, filter: 'fix' });
+    expect(getSearch('/s1')).toMatchObject({ open: true, field: 'message', text: 'journal', file: null });
+    expect(getTabState(t2.id)).toBeUndefined();
+    // Aller-retour : la vue enregistrée redonne la même chose.
+    expect(toPersistedView(getTabState(t1.id), getSearch('/s1'))).toEqual(view);
+    expect(toPersistedView(undefined, getSearch('/inconnu'))).toEqual({
+      v: 1,
+      selection: null,
+      graph: null,
+      collapsed: {},
+      filter: '',
+      search: { open: false, field: 'all', text: '' },
+    });
   });
 });

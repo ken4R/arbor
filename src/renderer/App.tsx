@@ -35,11 +35,28 @@ import {
   type BusyOptions,
 } from './tabs';
 import { TabBar } from './components/TabBar';
+import { PaneSeparator } from './components/PaneSeparator';
+import { getTabView, onViewChange, patchTabView, toPersistedView } from './tabs';
+import { getSearch, subscribeSearch } from './search';
+import type { ScrollAnchor } from '../shared/session';
+import { CENTER_MIN_WIDTH, DEFAULT_PREFERENCES, RIGHT_WIDTH_MAX, RIGHT_WIDTH_MIN, SIDEBAR_WIDTH_MAX, SIDEBAR_WIDTH_MIN } from '../shared/prefs';
 
 export type Selection = { kind: 'wip' } | { kind: 'commit'; sha: string };
 
 /** Délai de regroupement des enregistrements de la session des onglets. */
 const SESSION_SAVE_DELAY_MS = 500;
+/** Délai après le dernier changement d'affichage (défilement, sections, filtre, recherche) avant l'enregistrement. */
+const VIEW_SAVE_DELAY_MS = 2000;
+
+/** Session complète à enregistrer : onglets et état d'affichage de chacun (sans brouillon). */
+function sessionPayload() {
+  const model = getTabsModel();
+  const { repos, active } = toSession(model);
+  const views = Object.fromEntries(
+    model.tabs.filter((t) => t.repo !== null).map((t) => [t.repo!, toPersistedView(getTabState(t.id), getSearch(t.repo!))]),
+  );
+  return { repos, active, views };
+}
 
 /**
  * Coquille de l'application : onglets, écran d'accueil d'un onglet vide, démarrage.
@@ -60,7 +77,7 @@ export function App() {
       try {
         if ((await loadPreferences()).restoreTabs) {
           const s = await api.restoreSession();
-          if (s.repos.length) restoreTabs(s.repos, s.active);
+          if (s.repos.length) restoreTabs(s.repos, s.active, s.views ?? {});
         }
       } catch {
         // session illisible : on démarre sans onglet restauré
@@ -86,25 +103,36 @@ export function App() {
   }, [errorToast]);
 
   // Session enregistrée après la restauration (pour ne pas l'écraser), regroupée (Ctrl+Tab répété, ouvertures en
-  // série) et seulement si elle a changé depuis le dernier enregistrement.
-  const sessionKey = useMemo(() => JSON.stringify(toSession(model)), [model]);
+  // série) et seulement si elle a changé depuis le dernier enregistrement. L'état d'affichage (défilement,
+  // sections, filtre, recherche, sélection) change souvent et hors React : enregistré 2 s après son dernier changement.
   const savedKey = useRef<string | null>(null);
   useEffect(() => {
     if (!ready) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const save = () => {
-      if (savedKey.current === sessionKey) return;
-      savedKey.current = sessionKey;
-      const s = JSON.parse(sessionKey) as ReturnType<typeof toSession>;
-      api.saveSession(s.repos, s.active).catch(() => {});
+      clearTimeout(timer);
+      const key = JSON.stringify(sessionPayload());
+      if (savedKey.current === key) return;
+      savedKey.current = key;
+      const s = JSON.parse(key) as ReturnType<typeof sessionPayload>;
+      api.saveSession(s.repos, s.active, s.views).catch(() => {});
     };
-    const t = setTimeout(save, SESSION_SAVE_DELAY_MS);
+    const schedule = (ms: number) => {
+      clearTimeout(timer);
+      timer = setTimeout(save, ms);
+    };
+    schedule(SESSION_SAVE_DELAY_MS);
+    const offView = onViewChange(() => schedule(VIEW_SAVE_DELAY_MS));
+    const offSearch = subscribeSearch(() => schedule(VIEW_SAVE_DELAY_MS));
     // Fermeture de la fenêtre pendant le délai : dernier enregistrement, au mieux.
     window.addEventListener('pagehide', save);
     return () => {
-      clearTimeout(t);
+      clearTimeout(timer);
+      offView();
+      offSearch();
       window.removeEventListener('pagehide', save);
     };
-  }, [ready, sessionKey]);
+  }, [ready, model]);
 
   // Onglet vide : le registre de commandes voit « aucun dépôt ».
   const emptyTab = !tab?.repo;
@@ -191,7 +219,12 @@ function RepoView({ tabId, repo, onBusy }: RepoViewProps) {
   // Rafraîchissement automatique (préférence enregistrée, activé par défaut).
   const busyRef = useRef(busy);
   busyRef.current = busy;
-  const { autoRefresh } = usePreferences();
+  const { autoRefresh, layout } = usePreferences();
+  // état des onglets : largeur des panneaux (préférence commune à tous les onglets) et défilement du graphe.
+  const mainRef = useRef<HTMLDivElement>(null);
+  // Seule la largeur modifiée est envoyée : un réglage fait dans une autre fenêtre n'est pas écrasé.
+  const saveLayout = (patch: Partial<typeof layout>) => updatePreferences({ layout: patch }).catch(() => {});
+  const onAnchor = useCallback((a: ScrollAnchor) => patchTabView(tabId, { graph: a }), [tabId]);
   const toggleAutoRefresh = () => updatePreferences({ autoRefresh: !autoRefresh }).catch(() => {}); // échec : l'interrupteur revient à la valeur enregistrée
 
   const refresh = useCallback(async () => {
@@ -341,6 +374,13 @@ function RepoView({ tabId, repo, onBusy }: RepoViewProps) {
 
   const rows = useMemo(() => (snap ? layoutGraph(snap.commits) : []), [snap]);
 
+  // Sélection venue d'ailleurs que le graphe (barre latérale, palette) pendant qu'un diff le cache : à son retour,
+  // le graphe montre la sélection plutôt que l'ancienne position.
+  const diffOpen = !!diffTarget;
+  const revealSelection = useCallback(() => {
+    if (diffOpen) patchTabView(tabId, { graph: null });
+  }, [diffOpen, tabId]);
+
   // Contexte publié pour le registre de commandes (palette, raccourcis).
   useEffect(() => {
     setCommandContext({
@@ -354,6 +394,7 @@ function RepoView({ tabId, repo, onBusy }: RepoViewProps) {
         closeRepo,
         refresh: () => void refresh(),
         selectCommit: (sha) => {
+          revealSelection();
           setSelection({ kind: 'commit', sha });
           setDiffTarget(null);
           setFileView(null);
@@ -366,7 +407,7 @@ function RepoView({ tabId, repo, onBusy }: RepoViewProps) {
         showDiff: (t) => ui.showDiff(t),
       },
     });
-  }, [ui, repo, snap, busy, refresh, switchRepo, closeRepo]);
+  }, [ui, repo, snap, busy, refresh, switchRepo, closeRepo, revealSelection]);
 
   // Si le commit sélectionné disparaît (reset, rebase...), on revient au WIP.
   useEffect(() => {
@@ -393,10 +434,26 @@ function RepoView({ tabId, repo, onBusy }: RepoViewProps) {
     <UiContext.Provider value={ui}>
       <div className="app" onClick={() => setMenu(null)}>
         <Toolbar repo={repo} snap={snap} busy={busy} onClose={closeRepo} onSwitch={switchRepo} onRefresh={refresh} autoRefresh={autoRefresh} onToggleAuto={toggleAutoRefresh} />
-        <div className="main">
+        <div
+          className="main"
+          ref={mainRef}
+          style={{ '--sidebar-w': `${layout.sidebarWidth}px`, '--right-w': `${layout.rightWidth}px` } as React.CSSProperties}
+        >
           {snap ? (
             <>
-              <Sidebar snap={snap} onSelectCommit={(sha) => { setSelection({ kind: 'commit', sha }); setDiffTarget(null); setFileView(null); }} />
+              <Sidebar tabId={tabId} snap={snap} onSelectCommit={(sha) => { revealSelection(); setSelection({ kind: 'commit', sha }); setDiffTarget(null); setFileView(null); }} />
+              <PaneSeparator
+                side="left"
+                label="Largeur de la barre latérale"
+                cssVar="--sidebar-w"
+                value={layout.sidebarWidth}
+                min={SIDEBAR_WIDTH_MIN}
+                max={SIDEBAR_WIDTH_MAX}
+                byDefault={DEFAULT_PREFERENCES.layout.sidebarWidth}
+                centerMin={CENTER_MIN_WIDTH}
+                container={mainRef}
+                onCommit={(w) => saveLayout({ sidebarWidth: w })}
+              />
               <div className="center">
                 {diffTarget ? (
                   <DiffView repo={repo} target={diffTarget} onClose={() => setDiffTarget(null)} reloadKey={snap} />
@@ -409,12 +466,26 @@ function RepoView({ tabId, repo, onBusy }: RepoViewProps) {
                       setSelection(s);
                       setDiffTarget(null);
                     }}
+                    initialAnchor={getTabView(tabId).graph}
+                    onAnchor={onAnchor}
                   />
                 )}
                 {fileView && (
                   <FileView repo={repo} snap={snap} target={fileView} onClose={closeFileView} onSelectCommit={(sha) => setSelection({ kind: 'commit', sha })} />
                 )}
               </div>
+              <PaneSeparator
+                side="right"
+                label="Largeur du panneau de droite"
+                cssVar="--right-w"
+                value={layout.rightWidth}
+                min={RIGHT_WIDTH_MIN}
+                max={RIGHT_WIDTH_MAX}
+                byDefault={DEFAULT_PREFERENCES.layout.rightWidth}
+                centerMin={CENTER_MIN_WIDTH}
+                container={mainRef}
+                onCommit={(w) => saveLayout({ rightWidth: w })}
+              />
               <aside className="right">
                 {selection.kind === 'wip' || !selectedCommit ? (
                   <WorkingPanel repo={repo} snap={snap} activeDiff={diffTarget} draft={draft} onDraft={setDraft} />

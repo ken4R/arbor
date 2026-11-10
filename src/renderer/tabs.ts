@@ -1,8 +1,12 @@
 import { useSyncExternalStore } from 'react';
 import type { DiffTarget, RepoSnapshot } from '../shared/types';
+import type { PersistedView, ScrollAnchor } from '../shared/session';
 import type { Selection } from './App';
 import type { CommitDraft } from './components/WorkingPanel';
 import type { FileViewTarget } from './ui';
+import { setSearch, type SearchState } from './search';
+
+export type { ScrollAnchor };
 
 // Onglets multi-dépôts : modèle (fonctions pures, testées) et magasin du module.
 // Un seul `RepoView` est monté à la fois (l'onglet actif) ; l'état des autres onglets est conservé ici.
@@ -18,6 +22,18 @@ export interface TabsModel {
   activeId: number;
 }
 
+/**
+ * Disposition de l'onglet, écrite sans rendu (`patchTabView`) par le graphe et la barre latérale et relue à leur
+ * montage : ancrage du défilement par SHA, sections repliées par `id`, filtre de la barre latérale.
+ */
+export interface TabView {
+  graph: ScrollAnchor | null;
+  collapsed: Record<string, boolean>;
+  filter: string;
+}
+
+export const EMPTY_VIEW: Readonly<TabView> = Object.freeze({ graph: null, collapsed: Object.freeze({}), filter: '' });
+
 /** État d'affichage propre à un onglet, relu au remontage de son `RepoView`. */
 export interface TabState {
   selection: Selection;
@@ -26,6 +42,7 @@ export interface TabState {
   draft: CommitDraft;
   /** Dernier instantané connu : affiché immédiatement à l'activation, avant la relecture du dépôt. */
   snap: RepoSnapshot | null;
+  view: TabView;
 }
 
 /** Onglet fermé (ou remplacé) : son dépôt et son état d'affichage (sans instantané), pour le rouvrir. */
@@ -177,6 +194,37 @@ export function popClosed(closed: ClosedTab[]): { entry: ClosedTab | null; rest:
   return closed.length ? { entry: closed[closed.length - 1], rest: closed.slice(0, -1) } : { entry: null, rest: closed };
 }
 
+/** État d'affichage enregistré dans la session pour un onglet (sans le brouillon ni le diff ouvert). */
+export function toPersistedView(s: TabState | undefined, search: Pick<SearchState, 'open' | 'field' | 'text'>): PersistedView {
+  const view = s?.view ?? EMPTY_VIEW;
+  return {
+    v: 1,
+    selection: s?.selection.kind === 'commit' ? s.selection.sha : null,
+    graph: view.graph,
+    collapsed: view.collapsed,
+    filter: view.filter,
+    search: { open: search.open, field: search.field, text: search.text },
+  };
+}
+
+/** État d'un onglet restauré depuis la session (instantané relu, brouillon vide). */
+export function fromPersistedView(v: PersistedView): TabState {
+  return {
+    selection: v.selection ? { kind: 'commit', sha: v.selection } : { kind: 'wip' },
+    diffTarget: null,
+    fileView: null,
+    draft: { summary: '', description: '', amend: false },
+    snap: null,
+    view: { graph: v.graph, collapsed: v.collapsed, filter: v.filter },
+  };
+}
+
+/** Sections repliées après un changement : l'entrée est retirée quand la section revient à son état par défaut. */
+export function withCollapsed(collapsed: Record<string, boolean>, id: string, value: boolean, byDefault: boolean): Record<string, boolean> {
+  const rest = Object.fromEntries(Object.entries(collapsed).filter(([k]) => k !== id));
+  return value === byDefault ? rest : { ...rest, [id]: value };
+}
+
 /** Vrai si le brouillon de commit contient du texte (fermer l'onglet demande alors confirmation). */
 export function hasDraft(s: Pick<TabState, 'draft'> | null | undefined): boolean {
   return !!s && !!(s.draft.summary.trim() || s.draft.description.trim());
@@ -200,6 +248,12 @@ let restored = false;
 let pendingClose: number | null = null;
 const states = new Map<number, TabState>();
 const listeners = new Set<() => void>();
+/** Abonnés aux changements d'état d'affichage (sélection, défilement, sections, filtre), hors React. */
+const viewListeners = new Set<() => void>();
+
+function emitView() {
+  viewListeners.forEach((l) => l());
+}
 
 function emit() {
   listeners.forEach((l) => l());
@@ -231,7 +285,7 @@ function commit(next: TabsModel) {
 function rememberClosed(tab: Tab | undefined | null) {
   if (!tab?.repo) return;
   const s = states.get(tab.id);
-  const state = s ? { selection: s.selection, diffTarget: s.diffTarget, fileView: s.fileView, draft: s.draft } : null;
+  const state = s ? { selection: s.selection, diffTarget: s.diffTarget, fileView: s.fileView, draft: s.draft, view: s.view } : null;
   closed = pushClosed(closed, { repo: tab.repo, state });
 }
 
@@ -354,12 +408,21 @@ export function reopenClosedTab() {
   commit(next);
 }
 
-/** Remplace tous les onglets par ceux d'une session restaurée (au démarrage). */
-export function restoreTabs(repos: string[], active: number) {
+/**
+ * Remplace tous les onglets par ceux d'une session restaurée (au démarrage), avec leur état d'affichage
+ * (sélection, défilement, sections, filtre) et leur recherche.
+ */
+export function restoreTabs(repos: string[], active: number, views: Record<string, PersistedView> = {}) {
   states.clear();
   const next = fromSession(repos, active, nextId);
   nextId += next.tabs.length;
   recency = [];
+  for (const t of next.tabs) {
+    const v = t.repo && Object.prototype.hasOwnProperty.call(views, t.repo) ? views[t.repo] : null;
+    if (!v || !t.repo) continue;
+    states.set(t.id, fromPersistedView(v));
+    setSearch(t.repo, { ...v.search, file: null });
+  }
   commit(next);
 }
 
@@ -367,8 +430,33 @@ export function getTabState(id: number): TabState | undefined {
   return states.get(id);
 }
 
-export function saveTabState(id: number, s: TabState) {
-  if (model.tabs.some((t) => t.id === id)) states.set(id, s);
+/** Enregistre l'état d'un onglet ; sans `view`, la disposition déjà enregistrée (`patchTabView`) est gardée. */
+export function saveTabState(id: number, s: Omit<TabState, 'view'> & { view?: TabView }) {
+  if (!model.tabs.some((t) => t.id === id)) return;
+  states.set(id, { ...s, view: s.view ?? states.get(id)?.view ?? EMPTY_VIEW });
+  emitView();
+}
+
+export function getTabView(id: number): TabView {
+  return states.get(id)?.view ?? EMPTY_VIEW;
+}
+
+/**
+ * Modifie la disposition d'un onglet sans rendu (défilement à chaque image, frappe dans le filtre) : seuls les
+ * abonnés `onViewChange` sont prévenus (enregistrement de la session).
+ */
+export function patchTabView(id: number, patch: Partial<TabView>) {
+  if (!model.tabs.some((t) => t.id === id)) return;
+  // Avant le premier enregistrement de `RepoView` : état neutre (WIP sélectionné, brouillon vide).
+  const s = states.get(id) ?? fromPersistedView({ v: 1, selection: null, graph: null, collapsed: {}, filter: '', search: { open: false, field: 'all', text: '' } });
+  states.set(id, { ...s, view: { ...s.view, ...patch } });
+  emitView();
+}
+
+/** Prévient (hors React) de tout changement d'état d'affichage d'un onglet ; renvoie le désabonnement. */
+export function onViewChange(cb: () => void): () => void {
+  viewListeners.add(cb);
+  return () => viewListeners.delete(cb);
 }
 
 /** Réservé aux tests : remet le magasin dans son état initial (un onglet vide, rien d'autre). */

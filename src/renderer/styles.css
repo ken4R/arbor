@@ -418,7 +418,10 @@ code {
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: 240px 1fr 340px;
+  /* Largeurs réglées par les séparateurs (préférence `layout`, voir « état des onglets » en fin de fichier) ;
+     colonnes 2 et 4 = séparateurs (largeur nulle). Fenêtre étroite : les panneaux cèdent, le centre garde son minimum. */
+  --center-min: 320px;
+  grid-template-columns: minmax(0, var(--sidebar-w, 240px)) 0 minmax(var(--center-min), 1fr) 0 minmax(0, var(--right-w, 340px));
 }
 .main > * {
   min-height: 0;
@@ -2616,3 +2619,41 @@ tr.cf-marker {
 /* lfs */
 
 /* état des onglets */
+/* Séparateurs : éléments de grille de largeur nulle (toujours alignés sur la vraie largeur des panneaux) ; zone de
+   saisie de 6 px à leur droite, hors des barres de défilement (barre latérale à gauche, graphe au bord droit du centre). */
+.pane-sep {
+  position: relative;
+  z-index: 5;
+  width: 0;
+  touch-action: none;
+  outline: none;
+}
+.main > .pane-sep {
+  overflow: visible;
+}
+.pane-sep::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 6px;
+  cursor: col-resize;
+}
+.pane-sep::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 1px;
+  background: transparent;
+  pointer-events: none;
+  transition: background 0.12s;
+}
+.pane-sep:hover::after,
+.pane-sep.active::after,
+.pane-sep:focus-visible::after {
+  width: 3px;
+  background: var(--accent);
+}
