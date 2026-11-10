@@ -332,7 +332,8 @@ export function lfsTrackAction(ui: Ui, repo: string, initial = '') {
   ui.ask({
     title: 'Suivre un motif LFS',
     message:
-      'Les fichiers correspondants seront stockés dans LFS à leur prochain ajout (les fichiers déjà commités ne sont pas convertis). ' +
+      'Les nouveaux fichiers correspondants seront stockés dans LFS. Les fichiers déjà suivis qui correspondent apparaîtront ' +
+      'modifiés et seront convertis en LFS s\'ils sont indexés (leurs versions déjà commitées restent dans Git). ' +
       'La règle est ajoutée au .gitattributes racine, à commiter.',
     label: 'Motif (ex. *.psd, assets/**/*.png)',
     initial,
@@ -407,10 +408,20 @@ export function lfsPatternMenu(ui: Ui, repo: string, p: LfsPattern, installed: b
   ];
 }
 
-/** Menu d'un fichier LFS (barre latérale). */
-export function lfsFileMenu(ui: Ui, repo: string, f: LfsFile): MenuItem[] {
+/**
+ * Menu d'un fichier LFS (barre latérale). `modified` : le fichier a des modifications locales (statut) ; il n'est
+ * alors pas un « pointeur seul » et sa récupération est désactivée, raison à l'appui.
+ */
+export function lfsFileMenu(ui: Ui, repo: string, f: LfsFile, modified: boolean): MenuItem[] {
+  const reason = modified
+    ? ' (fichier modifié localement)'
+    : f.present
+      ? ' (contenu déjà extrait)'
+      : lfsIncludeError(f.path) !== null
+        ? ' (nom inutilisable : tout récupérer)'
+        : '';
   return [
-    { label: 'Récupérer le contenu', disabled: f.present || lfsIncludeError(f.path) !== null, onClick: () => void lfsPullAction(ui, repo, [f.path]) },
+    { label: `Récupérer le contenu${reason}`, disabled: reason !== '', onClick: () => void lfsPullAction(ui, repo, [f.path]) },
     'separator',
     { label: 'Copier le chemin', onClick: () => void navigator.clipboard.writeText(f.path) },
     { label: "Copier l'empreinte (oid)", onClick: () => void navigator.clipboard.writeText(f.oid) },

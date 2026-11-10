@@ -85,7 +85,8 @@ export function useLfsError(repo: string): string | null {
 }
 
 /** Texte du bandeau affiché quand le dépôt utilise LFS mais que git-lfs est introuvable. */
-export const LFS_MISSING_TEXT = "git-lfs n'est pas installé : les fichiers apparaissent comme pointeurs ; commits et checkouts peuvent échouer.";
+export const LFS_MISSING_TEXT =
+  "git-lfs n'est pas installé : les fichiers LFS apparaissent comme pointeurs et certains peuvent apparaître modifiés à tort ; commits et checkouts peuvent échouer.";
 
 /** git-lfs absent alors que le dépôt utilise LFS (bandeau d'avertissement). */
 export function lfsMissing(snap: RepoSnapshot, info: LfsInfo | null): boolean {

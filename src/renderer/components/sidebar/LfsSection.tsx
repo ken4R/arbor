@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react';
-import type { LfsFiles, RepoSnapshot } from '../../../shared/types';
+import type { LfsFile, LfsFiles, RepoSnapshot } from '../../../shared/types';
 import { formatLfsSize } from '../../../shared/lfs';
 import { lfsFileMenu, lfsPatternMenu, lfsPullAction, lfsTrackAction } from '../../actions';
 import { api } from '../../api';
 import { LFS_MISSING_TEXT, lfsMissing, useLfsError, useLfsFilesGeneration, useLfsInfo } from '../../lfs';
 import { useUi } from '../../ui';
-import { Icon, IconRemoteAdd } from '../Icons';
+import { IconLfs, IconLfsTrack, Icon } from '../Icons';
 import { Section } from './Section';
 
 /**
@@ -23,16 +23,16 @@ export function LfsSection({ snap, match }: { snap: RepoSnapshot; match: (s: str
   const tracked = (info?.patterns ?? []).filter((p) => !p.excluded).length;
   const actions = installed
     ? [
-        { icon: <IconRemoteAdd />, title: 'Suivre un motif LFS…', onClick: () => lfsTrackAction(ui, repo) },
+        { icon: <IconLfsTrack />, title: 'Suivre un motif LFS…', onClick: () => lfsTrackAction(ui, repo) },
         { icon: <Icon.pull />, title: 'Récupérer tous les fichiers LFS (pull)', onClick: () => void lfsPullAction(ui, repo, null) },
       ]
     : [];
 
   return (
-    <Section id="lfs" title="LFS" count={tracked} icon={<Icon.stash />} collapsed actions={actions}>
+    <Section id="lfs" title="LFS" count={tracked} icon={<IconLfs />} collapsed actions={actions}>
       {lfsMissing(snap, info) && <div className="lfs-warning">{LFS_MISSING_TEXT}</div>}
       {error && <div className="side-empty">{error}</div>}
-      <div className="lfs-subhead">Motifs{info && !installed ? ' (.gitattributes)' : ''}</div>
+      <div className="lfs-subhead">Motifs (.gitattributes)</div>
       {patterns.map((p) => (
         <div
           key={`${p.source}\0${p.pattern}`}
@@ -51,13 +51,19 @@ export function LfsSection({ snap, match }: { snap: RepoSnapshot; match: (s: str
   );
 }
 
-/** Fichiers LFS, lus au montage (section ouverte) puis à chaque commit, changement du statut ou action LFS. */
+/**
+ * Fichiers LFS, lus au montage (section ouverte) puis seulement quand HEAD change ou après une action LFS. Un fichier
+ * modifié localement (statut) n'est jamais affiché « pointeur seul » : git-lfs ne le dit pas extrait, mais son
+ * contenu n'est pas un pointeur à récupérer.
+ */
 function LfsFileList({ snap, match }: { snap: RepoSnapshot; match: (s: string) => boolean }) {
   const ui = useUi();
   const repo = snap.path;
   const generation = useLfsFilesGeneration();
-  const st = snap.status;
-  const key = `${repo}\0${snap.head}\0${st.staged.length}\0${st.unstaged.length}\0${generation}`;
+  const key = `${repo}\0${snap.head}\0${generation}`;
+  const modified = new Set([...snap.status.unstaged, ...snap.status.staged].map((f) => f.path));
+  const pointerOnly = (f: LfsFile) => !f.present && !modified.has(f.path) && f.downloaded !== true;
+  const fetched = (f: LfsFile) => !f.present && !modified.has(f.path) && f.downloaded === true;
   const [list, setList] = useState<LfsFiles | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -77,7 +83,15 @@ function LfsFileList({ snap, match }: { snap: RepoSnapshot; match: (s: string) =
   }, [key]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const files = (list?.files ?? []).filter((f) => match(f.path));
-  const pointers = (list?.files ?? []).filter((f) => !f.present).length;
+  const pointers = (list?.files ?? []).filter(pointerOnly).length;
+  const state = (f: LfsFile) =>
+    modified.has(f.path)
+      ? 'Modifié localement'
+      : f.present
+        ? 'Contenu extrait'
+        : fetched(f)
+          ? 'Objet téléchargé, non extrait : double-clic pour l\'extraire'
+          : 'Pointeur seul : double-clic pour récupérer le contenu';
   return (
     <>
       <div className="lfs-subhead">
@@ -89,15 +103,15 @@ function LfsFileList({ snap, match }: { snap: RepoSnapshot; match: (s: string) =
       {files.map((f) => (
         <div
           key={f.path}
-          className={`side-item lfs-file${f.present ? '' : ' lfs-file-pointer'}`}
-          title={`${f.path}\noid ${f.oid.slice(0, 12)}…${f.size !== null ? `\n${formatLfsSize(f.size)}` : ''}\n${
-            f.present ? 'Contenu extrait' : 'Pointeur seul : double-clic pour récupérer le contenu'
-          }`}
-          onDoubleClick={() => !f.present && void lfsPullAction(ui, repo, [f.path])}
-          onContextMenu={(e) => ui.openMenu(e, lfsFileMenu(ui, repo, f))}
+          className={`side-item lfs-file${pointerOnly(f) ? ' lfs-file-pointer' : ''}`}
+          title={`${f.path}\noid ${f.oid.slice(0, 12)}…${f.size !== null ? `\n${formatLfsSize(f.size)}` : ''}\n${state(f)}`}
+          onDoubleClick={() => (pointerOnly(f) || fetched(f)) && void lfsPullAction(ui, repo, [f.path])}
+          onContextMenu={(e) => ui.openMenu(e, lfsFileMenu(ui, repo, f, modified.has(f.path)))}
         >
           <span className="side-label">{f.path}</span>
-          {!f.present && <span className="lfs-tag lfs-tag-pointer">pointeur seul</span>}
+          {modified.has(f.path) && <span className="lfs-tag">modifié</span>}
+          {pointerOnly(f) && <span className="lfs-tag lfs-tag-pointer">pointeur seul</span>}
+          {fetched(f) && <span className="lfs-tag lfs-tag-pointer">non extrait</span>}
           {f.size !== null && <span className="lfs-size">{formatLfsSize(f.size)}</span>}
         </div>
       ))}

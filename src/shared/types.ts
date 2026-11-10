@@ -283,9 +283,9 @@ export interface ArborApi {
 
   // lfs
   /**
-   * git-lfs installé (version), motifs suivis ou exclus (`git lfs track --json` ; sans git-lfs, `.gitattributes`
-   * racine) et, parmi `paths` (fichiers du statut), ceux dont l'attribut `filter` vaut `lfs`. Ne lit jamais la liste
-   * des fichiers LFS (voir `lfsFiles`).
+   * git-lfs installé (version), motifs suivis ou exclus (lus dans le `.gitattributes` racine, sans git-lfs) et,
+   * parmi `paths` (fichiers du statut), ceux dont l'attribut `filter` vaut `lfs`. N'écrit rien et ne lit jamais la
+   * liste des fichiers LFS (voir `lfsFiles`).
    */
   lfsInfo(repo: string, paths: string[]): Promise<LfsInfo>;
   /** Fichiers LFS de HEAD et de l'index (`git lfs ls-files --json`), au plus 1 000. Coûteux : chargement à la demande. */
@@ -443,6 +443,8 @@ export interface LfsFile {
   oid: string;
   /** Le fichier de l'arbre de travail est le contenu ; false = pointeur seul (objet non récupéré ou non extrait). */
   present: boolean;
+  /** Objet présent dans le stockage local (`.git/lfs/objects`) ; null si git-lfs ne le dit pas. */
+  downloaded: boolean | null;
   /** Taille de l'objet en octets (null si git-lfs ne la donne pas). */
   size: number | null;
 }

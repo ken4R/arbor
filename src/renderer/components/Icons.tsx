@@ -90,3 +90,23 @@ export function IconReflogUndo() {
     </svg>
   );
 }
+
+// lfs
+
+/** Section LFS : boîte de stockage avec une flèche vers le bas (gros fichiers stockés à part). */
+export function IconLfs() {
+  return (
+    <svg {...s}>
+      <path d="M2.5 9.5v3.5h11V9.5M8 2.5v7M5 6.5l3 3 3-3" />
+    </svg>
+  );
+}
+
+/** Suivre un motif LFS (« + » de la section LFS) : astérisque de motif et signe plus. */
+export function IconLfsTrack() {
+  return (
+    <svg {...s} width={14} height={14}>
+      <path d="M5 3v6M2.4 4.5l5.2 3M2.4 7.5l5.2-3M11.5 8.5v5M9 11h5" />
+    </svg>
+  );
+}

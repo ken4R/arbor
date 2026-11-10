@@ -271,8 +271,9 @@ const READ_ONLY = new Set([
   'openSubmodule', // valide le chemin, n'écrit que la liste des récents
 
   // lfs
-  // `git lfs version`, `git lfs track` (liste) et check-attr : rien dans .git hors `<gitDir>/lfs/tmp`, non surveillé.
-  // `lfsFiles` reste hors de cette liste par prudence (git-lfs peut rafraîchir l'index).
+  // `lfsInfo` : `git lfs version`, check-attr et lecture du `.gitattributes` en Node ; n'écrit rien (jamais
+  // `git lfs track`, qui installe des hooks et écrit .git/config). `lfsFiles` reste hors de cette liste :
+  // `git lfs ls-files` n'écrit pas l'index mais ajoute `lfs.repositoryformatversion` à .git/config s'il manque.
   'lfsInfo',
 
   // état des onglets

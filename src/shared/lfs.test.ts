@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   formatLfsSize,
+  lfsIncludeArg,
   lfsIncludeError,
   lfsPathsFromCheckAttr,
   lfsPatternError,
@@ -9,8 +10,6 @@ import {
   parseLfsFiles,
   parseLfsFilesJson,
   parseLfsPointer,
-  parseLfsTrack,
-  parseLfsTrackJson,
   parseLfsVersion,
 } from './lfs';
 
@@ -29,53 +28,7 @@ describe('parseLfsVersion', () => {
   });
 });
 
-describe('parseLfsTrack (texte)', () => {
-  it('motifs suivis et exclus, sources, espaces encodés', () => {
-    const out = [
-      'Listing tracked patterns',
-      '    sub/*.png (sub/.gitattributes)',
-      '    a[[:space:]]b/*.dat (.gitattributes)',
-      '    quoted name.iso (.gitattributes)',
-      '    f(1).bin (.gitattributes)',
-      'Listing excluded patterns',
-      '    x.bin (.gitattributes)',
-      '',
-    ].join('\n');
-    expect(parseLfsTrack(out)).toEqual([
-      { pattern: 'sub/*.png', source: 'sub/.gitattributes', excluded: false },
-      { pattern: 'a[[:space:]]b/*.dat', source: '.gitattributes', excluded: false },
-      { pattern: 'quoted name.iso', source: '.gitattributes', excluded: false },
-      { pattern: 'f(1).bin', source: '.gitattributes', excluded: false },
-      { pattern: 'x.bin', source: '.gitattributes', excluded: true },
-    ]);
-  });
-  it('aucun motif', () => {
-    expect(parseLfsTrack('Listing tracked patterns\nListing excluded patterns\n')).toEqual([]);
-  });
-});
-
-describe('parseLfsTrackJson', () => {
-  it('tracked:false = exclusion', () => {
-    const out = JSON.stringify({
-      patterns: [
-        { pattern: '*.bin', source: '.gitattributes', lockable: false, tracked: true },
-        { pattern: 'x.bin', source: '.gitattributes', lockable: false, tracked: false },
-      ],
-    });
-    expect(parseLfsTrackJson(out)).toEqual([
-      { pattern: '*.bin', source: '.gitattributes', excluded: false },
-      { pattern: 'x.bin', source: '.gitattributes', excluded: true },
-    ]);
-  });
-  it('liste vide, null ou sortie illisible', () => {
-    expect(parseLfsTrackJson('{\n "patterns": []\n}\n')).toEqual([]);
-    expect(parseLfsTrackJson('{"patterns": null}')).toEqual([]);
-    expect(parseLfsTrackJson('Listing tracked patterns')).toBeNull();
-    expect(parseLfsTrackJson('{}')).toBeNull();
-  });
-});
-
-describe('parseGitattributesLfs (repli sans git-lfs)', () => {
+describe('parseGitattributesLfs', () => {
   it('suivis, exclusions, guillemets ; ignore commentaires, macros et autres filtres', () => {
     const text = [
       '# commentaire filter=lfs',
@@ -101,8 +54,8 @@ describe('parseLfsFiles / parseLfsFilesJson', () => {
   it('texte : * présent, - pointeur seul, chemins avec espaces et accents', () => {
     const out = `${OID_A} - assets/maquette.psd\n${OID_B} * é t"q.bin\nligne invalide\n`;
     expect(parseLfsFiles(out)).toEqual([
-      { path: 'assets/maquette.psd', oid: OID_A, present: false, size: null },
-      { path: 'é t"q.bin', oid: OID_B, present: true, size: null },
+      { path: 'assets/maquette.psd', oid: OID_A, present: false, downloaded: null, size: null },
+      { path: 'é t"q.bin', oid: OID_B, present: true, downloaded: null, size: null },
     ]);
   });
   it('JSON : checkout et taille', () => {
@@ -113,8 +66,8 @@ describe('parseLfsFiles / parseLfsFilesJson', () => {
       ],
     });
     expect(parseLfsFilesJson(out)).toEqual([
-      { path: 'assets/maquette.psd', oid: OID_A, present: false, size: 50000 },
-      { path: 'é t"q.bin', oid: OID_B, present: true, size: 5 },
+      { path: 'assets/maquette.psd', oid: OID_A, present: false, downloaded: false, size: 50000 },
+      { path: 'é t"q.bin', oid: OID_B, present: true, downloaded: true, size: 5 },
     ]);
   });
   it('JSON : aucun fichier (files: null) ou sortie illisible', () => {
@@ -136,7 +89,7 @@ describe('lfsPatternError', () => {
     for (const p of ['*.psd', 'assets/**/*.png', 'dir with space/*.mp4', 'f(1).bin']) expect(lfsPatternError(p)).toBeNull();
   });
   it('refuse vide, saut de ligne, option, commentaire, négation, espaces autour', () => {
-    for (const p of ['', '   ', 'a\nb', 'a\rb', '-weird', '--json', '#x', '!x', ' a', 'a ', 42, null]) expect(lfsPatternError(p)).not.toBeNull();
+    for (const p of ['', '   ', 'a\nb', 'a\rb', '-weird', '--json', '#x', '!x', ' a', 'a ', '[attr]bin', '"a b"', 42, null]) expect(lfsPatternError(p)).not.toBeNull();
   });
 });
 
@@ -145,6 +98,13 @@ describe('lfsIncludeError', () => {
     expect(lfsIncludeError('assets/maquette.psd')).toBeNull();
     expect(lfsIncludeError('dossier é/fichier (1).bin')).toBeNull();
     for (const p of ['a,b.bin', '*.bin', 'a?.bin', 'a[1].bin', 'a\\b', '!a', '#a', '', 'a\nb']) expect(lfsIncludeError(p)).not.toBeNull();
+  });
+});
+
+describe('lfsIncludeArg', () => {
+  it('ancre chaque chemin à la racine', () => {
+    expect(lfsIncludeArg(['x.bin'])).toBe('--include=/x.bin');
+    expect(lfsIncludeArg(['x.bin', 'sub dir/é.bin'])).toBe('--include=/x.bin,/sub dir/é.bin');
   });
 });
 

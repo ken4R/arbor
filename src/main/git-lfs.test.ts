@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
@@ -8,6 +8,7 @@ import {
   applyPatchSelection,
   diff,
   forgetLfsVersion,
+  GitError,
   isLfsMissing,
   lfsFiles,
   lfsInfo,
@@ -35,14 +36,24 @@ describe('translateGitError (lfs)', () => {
       'git-lfs filter-process: 1: git-lfs: not found\nfatal: the remote end hung up unexpectedly',
       'git-lfs filter-process: git-lfs: command not found\nfatal: the remote end hung up unexpectedly',
       "This repository is configured for Git LFS but 'git-lfs' was not found on your path.",
-      "error: external filter 'git-lfs filter-process' failed",
       "git: 'lfs' is not a git command. See 'git --help'.",
     ])
       expect(translateGitError(raw)).toMatch(/^git-lfs n'est pas installé/);
   });
+
+  it('filtre git-lfs présent mais en échec : message distinct, pas de repli « sans LFS »', () => {
+    for (const raw of [
+      "Error downloading object: a.bin (2c8b08d): Smudge error: Error downloading a.bin: object does not exist\nerror: external filter 'git-lfs filter-process' failed\nfatal: a.bin: smudge filter lfs failed",
+      'fatal: a.bin: smudge filter lfs failed',
+    ]) {
+      expect(translateGitError(raw)).toMatch(/^Le filtre LFS a échoué/);
+      expect(isLfsMissing(new GitError('', raw))).toBe(false);
+    }
+  });
 });
 
-describe.skipIf(!lfsInstalled)('LFS (git-lfs installé)', () => {
+// Délai élargi : git-lfs lance plusieurs processus git par appel (lent sur une machine chargée).
+describe.skipIf(!lfsInstalled)('LFS (git-lfs installé)', { timeout: 20_000 }, () => {
   let root: string;
   let dir: string;
   let remote: string;
@@ -93,8 +104,27 @@ describe.skipIf(!lfsInstalled)('LFS (git-lfs installé)', () => {
     const info = await lfsInfo(plain, ['a.bin']);
     expect(info.patterns).toEqual([]);
     expect(info.lfsPaths).toEqual([]);
-    // `git lfs track` aurait créé <gitDir>/lfs.
-    expect(() => readFileSync(join(plain, '.git', 'lfs'))).toThrow();
+    // `git lfs track` aurait créé <gitDir>/lfs et installé des hooks.
+    expect(existsSync(join(plain, '.git', 'lfs'))).toBe(false);
+    expect(readdirSync(join(plain, '.git', 'hooks')).filter((h) => !h.endsWith('.sample'))).toEqual([]);
+  });
+
+  it('lfsInfo : ouvrir un dépôt LFS sans hooks n\'en crée aucun et ne touche pas .git/config', async () => {
+    const bare = join(root, 'sans-hooks');
+    mkdirSync(bare);
+    run(bare, 'init', '-q');
+    writeFileSync(join(bare, '.gitattributes'), '*.bin filter=lfs diff=lfs merge=lfs -text\nx.bin -filter\n');
+    writeFileSync(join(bare, 'a.bin'), 'a');
+    const config = readFileSync(join(bare, '.git', 'config'), 'utf8');
+    const info = await lfsInfo(bare, ['a.bin', 'x.bin']);
+    expect(info.patterns).toEqual([
+      { pattern: '*.bin', source: '.gitattributes', excluded: false },
+      { pattern: 'x.bin', source: '.gitattributes', excluded: true },
+    ]);
+    expect(info.lfsPaths).toEqual(['a.bin']);
+    expect(readdirSync(join(bare, '.git', 'hooks')).filter((h) => !h.endsWith('.sample'))).toEqual([]);
+    expect(readFileSync(join(bare, '.git', 'config'), 'utf8')).toBe(config);
+    expect(existsSync(join(bare, '.git', 'lfs'))).toBe(false);
   });
 
   it('lfsFiles : chemins avec espaces et accents, taille, pointeur seul', async () => {
@@ -173,5 +203,58 @@ describe.skipIf(!lfsInstalled)('LFS (git-lfs installé)', () => {
       forgetLfsVersion();
       run(dir, 'checkout', '--', path);
     }
+  });
+
+  it('diff : -U3 imposé malgré diff.context=0, la carte reste reconnue', async () => {
+    const path = 'données é/modèle 1.bin';
+    run(dir, 'config', 'diff.context', '0');
+    writeFileSync(join(dir, path), 'W'.repeat(20000));
+    try {
+      const target = { kind: 'working' as const, path, staged: false };
+      const raw = await diff(dir, target);
+      expect(lfsPointerChange(raw)?.old?.size).toBe(20000);
+      await expect(applyPatchSelection(dir, target, raw, [{ hunk: 0 }], 'stage')).rejects.toThrow(/Fichier LFS/);
+    } finally {
+      run(dir, 'config', '--unset', 'diff.context');
+      run(dir, 'checkout', '--', path);
+    }
+  });
+
+  it('indexation partielle refusée pour un fichier brut devenu pointeur (garde par attribut)', async () => {
+    writeFileSync(join(dir, 'brut.dat'), 'ligne 1\nligne 2\n');
+    run(dir, 'add', 'brut.dat');
+    run(dir, 'commit', '-qm', 'brut');
+    writeFileSync(join(dir, '.gitattributes'), `${readFileSync(join(dir, '.gitattributes'), 'utf8')}*.dat filter=lfs diff=lfs merge=lfs -text\n`);
+    try {
+      const target = { kind: 'working' as const, path: 'brut.dat', staged: false };
+      const raw = await diff(dir, target);
+      expect(raw).toContain('+version https://git-lfs.github.com/spec/v1');
+      expect(lfsPointerChange(raw)).toBeNull(); // l'ancien côté n'est pas un pointeur
+      await expect(applyPatchSelection(dir, target, raw, [{ hunk: 0 }], 'stage')).rejects.toThrow(/Fichier LFS/);
+    } finally {
+      run(dir, 'checkout', '--', '.gitattributes');
+      run(dir, 'rm', '-q', 'brut.dat');
+      run(dir, 'commit', '-qm', 'retire brut');
+    }
+  });
+
+  it('lfsPull : un chemin est ancré à la racine (x.bin ne récupère pas sub/x.bin)', async () => {
+    mkdirSync(join(dir, 'sub'));
+    writeFileSync(join(dir, 'x.bin'), 'racine');
+    writeFileSync(join(dir, 'sub', 'x.bin'), 'sous-dossier');
+    run(dir, 'add', 'x.bin', 'sub/x.bin');
+    run(dir, 'commit', '-qm', 'deux x.bin');
+    run(dir, 'push', '-q', 'origin', 'main');
+    const lines = run(dir, 'lfs', 'ls-files', '-l').split('\n');
+    for (const p of ['x.bin', 'sub/x.bin']) {
+      const oid = lines.find((l) => l.endsWith(` ${p}`))!.split(' ')[0];
+      rmSync(join(dir, '.git', 'lfs', 'objects', oid.slice(0, 2), oid.slice(2, 4), oid));
+      writeFileSync(join(dir, p), run(dir, 'cat-file', 'blob', `HEAD:${p}`) + '\n');
+    }
+    await lfsPull(dir, ['x.bin']);
+    const files = (await lfsFiles(dir)).files;
+    expect(files.find((f) => f.path === 'x.bin')?.present).toBe(true);
+    expect(files.find((f) => f.path === 'sub/x.bin')?.present).toBe(false);
+    expect(readFileSync(join(dir, 'x.bin'), 'utf8')).toBe('racine');
   });
 });

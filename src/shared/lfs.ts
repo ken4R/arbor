@@ -9,45 +9,9 @@ export function parseLfsVersion(out: string): string | null {
 }
 
 /**
- * Motifs de `git lfs track` sans argument (texte) :
- * « Listing tracked patterns / ␣␣␣␣*.bin (.gitattributes) / Listing excluded patterns / ␣␣␣␣x.bin (.gitattributes) ».
- * La source est entre les dernières parenthèses de la ligne (un motif peut contenir des parenthèses).
- */
-export function parseLfsTrack(out: string): LfsPattern[] {
-  const result: LfsPattern[] = [];
-  let excluded: boolean | null = null;
-  for (const line of out.split(/\r?\n/)) {
-    if (/^Listing tracked patterns/.test(line)) excluded = false;
-    else if (/^Listing excluded patterns/.test(line)) excluded = true;
-    else if (excluded !== null && /^\s+\S/.test(line)) {
-      const m = line.trim().match(/^(.*\S)\s+\(([^()]*)\)$/);
-      if (m) result.push({ pattern: m[1], source: m[2], excluded });
-    }
-  }
-  return result;
-}
-
-/** Motifs de `git lfs track --json` (`{ patterns: [{ pattern, source, tracked }] }`) ; null si la sortie est illisible. */
-export function parseLfsTrackJson(out: string): LfsPattern[] | null {
-  let data: unknown;
-  try {
-    data = JSON.parse(out);
-  } catch {
-    return null;
-  }
-  const list = (data as { patterns?: unknown })?.patterns;
-  if (list === null) return [];
-  if (!Array.isArray(list)) return null;
-  return list.flatMap((p: { pattern?: unknown; source?: unknown; tracked?: unknown }) =>
-    typeof p?.pattern === 'string' && p.pattern !== ''
-      ? [{ pattern: p.pattern, source: typeof p.source === 'string' ? p.source : '.gitattributes', excluded: p.tracked === false }]
-      : [],
-  );
-}
-
-/**
- * Repli sans git-lfs : motifs du `.gitattributes` racine. `filter=lfs` = suivi ; `-filter`, `!filter` = exclusion
- * (comme `git lfs track`). Commentaires et macros (`[attr]…`) ignorés ; motif entre guillemets accepté.
+ * Motifs LFS du `.gitattributes` racine, lus sans git-lfs (`git lfs track`, même pour lister, installe des hooks et
+ * écrit `.git/config`). `filter=lfs` = suivi ; `-filter`, `!filter` = exclusion (comme `git lfs track`).
+ * Commentaires et macros (`[attr]…`) ignorés ; motif entre guillemets accepté.
  */
 export function parseGitattributesLfs(text: string, source = '.gitattributes'): LfsPattern[] {
   const result: LfsPattern[] = [];
@@ -80,7 +44,7 @@ const LS_FILES_LINE = /^([0-9a-f]{64}) ([*-]) (.*)$/;
 export function parseLfsFiles(out: string): LfsFile[] {
   return out.split('\n').flatMap((line) => {
     const m = line.match(LS_FILES_LINE);
-    return m ? [{ path: m[3], oid: m[1], present: m[2] === '*', size: null }] : [];
+    return m ? [{ path: m[3], oid: m[1], present: m[2] === '*', downloaded: null, size: null }] : [];
   });
 }
 
@@ -98,9 +62,9 @@ export function parseLfsFilesJson(out: string): LfsFile[] | null {
   const list = (data as { files?: unknown })?.files;
   if (list === null) return [];
   if (!Array.isArray(list)) return null;
-  return list.flatMap((f: { name?: unknown; size?: unknown; checkout?: unknown; oid?: unknown }) =>
+  return list.flatMap((f: { name?: unknown; size?: unknown; checkout?: unknown; downloaded?: unknown; oid?: unknown }) =>
     typeof f?.name === 'string' && typeof f.oid === 'string'
-      ? [{ path: f.name, oid: f.oid, present: f.checkout === true, size: typeof f.size === 'number' ? f.size : null }]
+      ? [{ path: f.name, oid: f.oid, present: f.checkout === true, downloaded: typeof f.downloaded === 'boolean' ? f.downloaded : null, size: typeof f.size === 'number' ? f.size : null }]
       : [],
   );
 }
@@ -116,7 +80,8 @@ export function lfsPathsFromCheckAttr(out: string): string[] {
 /**
  * Motif à suivre ou à ne plus suivre : message d'erreur en français, ou null s'il est acceptable. Refusés : vide,
  * saut de ligne ou caractère de contrôle (écrirait une autre ligne dans `.gitattributes`), `-` en tête (option), `#`
- * en tête (commentaire), `!` en tête (motif négatif interdit par Git dans `.gitattributes`).
+ * en tête (commentaire), `!` en tête (motif négatif interdit par Git dans `.gitattributes`), `[attr]` en tête
+ * (définition de macro) et `"` en tête (motif cité, relu autrement par Git et git-lfs).
  */
 export function lfsPatternError(pattern: unknown): string | null {
   if (typeof pattern !== 'string' || pattern.trim() === '') return 'Le motif est vide.';
@@ -124,6 +89,8 @@ export function lfsPatternError(pattern: unknown): string | null {
   if (pattern !== pattern.trim()) return 'Le motif ne doit pas commencer ni finir par une espace.';
   if (pattern.startsWith('-')) return 'Le motif ne doit pas commencer par « - ».';
   if (pattern.startsWith('#') || pattern.startsWith('!')) return 'Le motif ne doit pas commencer par « # » ni par « ! ».';
+  if (pattern.startsWith('[attr]')) return 'Le motif ne doit pas commencer par « [attr] » (définition de macro).';
+  if (pattern.startsWith('"')) return 'Le motif ne doit pas commencer par un guillemet.';
   return null;
 }
 
@@ -136,6 +103,14 @@ export function lfsIncludeError(path: string): string | null {
   if (/[,*?[\]\\]/.test(path) || path.startsWith('!') || path.startsWith('#'))
     return `« ${path} » contient un caractère que git-lfs lirait comme un motif : récupérez tous les fichiers LFS.`;
   return null;
+}
+
+/**
+ * Option `--include` de `git lfs pull` pour des chemins validés par `lfsIncludeError` : chaque chemin est ancré à la
+ * racine par `/` (sinon `x.bin` désignerait aussi `sub/x.bin`).
+ */
+export function lfsIncludeArg(paths: string[]): string {
+  return `--include=${paths.map((p) => `/${p}`).join(',')}`;
 }
 
 export interface LfsPointer {
