@@ -1,9 +1,9 @@
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { lfsPointerChange } from '../shared/lfs';
+import { lfsPointerChange, lfsPullArgs } from '../shared/lfs';
 import {
   applyPatchSelection,
   diff,
@@ -68,6 +68,48 @@ describe.skipIf(!lfsInstalled)('LFS (git-lfs installé)', { timeout: 20_000 }, (
     };
     return [out('lfs', 'version'), out('lfs', 'ls-files', '-l'), out('status', '--short')].join('\n');
   };
+  /** Fichiers d'un dossier (relatifs), ou « (absent) ». */
+  const listFiles = (d: string) => {
+    try {
+      return (readdirSync(d, { recursive: true }) as string[]).sort().join('\n') || '(vide)';
+    } catch {
+      return '(absent)';
+    }
+  };
+  /** Sortie complète (stdout + stderr, code) d'une commande git, sans lever d'erreur. */
+  const capture = (env: Record<string, string>, ...args: string[]) => {
+    const r = spawnSync('git', args, { cwd: dir, encoding: 'utf8', env: { ...process.env, ...env } });
+    return `$ git ${args.join(' ')} (code ${r.status})\n${r.stdout}${r.stderr}`;
+  };
+  /**
+   * Diagnostic d'un `lfsPull` sans effet : la même commande `git lfs pull` relancée avec traces (stdout + stderr),
+   * `git lfs env`, objets LFS du remote et locaux, état des fichiers.
+   */
+  const pullDiag = (paths: string[]) =>
+    [
+      capture({}, 'lfs', 'env'),
+      `objets LFS du remote (${remote}) :\n${listFiles(join(remote, 'lfs', 'objects'))}`,
+      `objets LFS locaux :\n${listFiles(join(dir, '.git', 'lfs', 'objects'))}`,
+      lfsState(),
+      ...lfsPullArgs(paths).map((a) => {
+        const out = capture({}, '--literal-pathspecs', 'lfs', 'pull', ...a);
+        const traced = capture({ GIT_TRACE: '1', GIT_TRANSFER_TRACE: '1' }, '--literal-pathspecs', 'lfs', 'pull', ...a);
+        return `${out}\n--- avec traces (fin) ---\n${traced.slice(-8000)}`;
+      }),
+    ].join('\n\n');
+  /** Vérifie le contenu d'un fichier après `lfsPull(paths)` ; en cas d'échec, message = diagnostic complet. */
+  const expectPulled = (rel: string, expected: string, paths: string[]) => {
+    const actual = readFileSync(join(dir, rel), 'utf8');
+    if (actual !== expected) expect(actual, pullDiag(paths)).toBe(expected);
+  };
+  /** Pousse `main` et ses objets LFS vers le remote nu, puis vérifie que les objets y sont (pas de copie implicite). */
+  const pushWithLfs = () => {
+    run(dir, 'push', '-q', 'origin', 'main');
+    run(dir, 'lfs', 'push', '--all', 'origin', 'main');
+    const oids = run(dir, 'lfs', 'ls-files', '-l').split('\n').map((l) => l.split(' ')[0]);
+    const onRemote = listFiles(join(remote, 'lfs', 'objects'));
+    for (const oid of oids) expect(onRemote.includes(oid), `objet ${oid} absent du remote\n${onRemote}\n${capture({}, 'lfs', 'env')}`).toBe(true);
+  };
 
   beforeAll(() => {
     // Diagnostic minimal : les sorties de git-lfs varient selon les versions.
@@ -89,7 +131,7 @@ describe.skipIf(!lfsInstalled)('LFS (git-lfs installé)', { timeout: 20_000 }, (
     run(dir, 'add', '.');
     run(dir, 'commit', '-qm', 'init');
     run(dir, 'remote', 'add', 'origin', remote);
-    run(dir, 'push', '-q', 'origin', 'main');
+    pushWithLfs();
   });
 
   afterAll(() => rmSync(root, { recursive: true, force: true }));
@@ -189,7 +231,7 @@ describe.skipIf(!lfsInstalled)('LFS (git-lfs installé)', { timeout: 20_000 }, (
     await expect(lfsPull(dir, ['lisez-moi.txt'])).rejects.toThrow(/n'est pas un fichier LFS/);
     await expect(lfsPull(dir, [])).rejects.toThrow();
     await lfsPull(dir, [path]);
-    expect(readFileSync(join(dir, path), 'utf8'), lfsState()).toBe('B'.repeat(300));
+    expectPulled(path, 'B'.repeat(300), [path]);
     expect((await lfsFiles(dir)).files.find((f) => f.path === path)?.present, lfsState()).toBe(true);
   });
 
@@ -265,7 +307,7 @@ describe.skipIf(!lfsInstalled)('LFS (git-lfs installé)', { timeout: 20_000 }, (
     writeFileSync(join(dir, 'a', 'sub', 'x.bin'), 'profond');
     run(dir, 'add', 'x.bin', 'sub/x.bin', 'a/sub/x.bin');
     run(dir, 'commit', '-qm', 'trois x.bin');
-    run(dir, 'push', '-q', 'origin', 'main');
+    pushWithLfs();
     const lines = run(dir, 'lfs', 'ls-files', '-l').split('\n');
     for (const p of ['x.bin', 'sub/x.bin', 'a/sub/x.bin']) {
       const oid = lines.find((l) => l.endsWith(` ${p}`))!.split(' ')[0];
@@ -274,14 +316,14 @@ describe.skipIf(!lfsInstalled)('LFS (git-lfs installé)', { timeout: 20_000 }, (
     }
     run(dir, 'add', '--', 'x.bin', 'sub/x.bin', 'a/sub/x.bin'); // index rafraîchi : pointeurs non modifiés
     await lfsPull(dir, ['x.bin']);
-    expect(readFileSync(join(dir, 'x.bin'), 'utf8'), lfsState()).toBe('racine');
+    expectPulled('x.bin', 'racine', ['x.bin']);
     expect(readFileSync(join(dir, 'sub', 'x.bin'), 'utf8'), lfsState()).toMatch(/^version https:\/\/git-lfs/);
     const files = (await lfsFiles(dir)).files;
     expect(files.find((f) => f.path === 'x.bin')?.present, lfsState()).toBe(true);
     expect(files.find((f) => f.path === 'sub/x.bin')?.present, lfsState()).toBe(false);
     // Chemin avec dossier : `sub/x.bin` est récupéré, pas `a/sub/x.bin`.
     await lfsPull(dir, ['sub/x.bin']);
-    expect(readFileSync(join(dir, 'sub', 'x.bin'), 'utf8'), lfsState()).toBe('sous-dossier');
+    expectPulled('sub/x.bin', 'sous-dossier', ['sub/x.bin']);
     expect(readFileSync(join(dir, 'a', 'sub', 'x.bin'), 'utf8'), lfsState()).toMatch(/^version https:\/\/git-lfs/);
   });
 });
