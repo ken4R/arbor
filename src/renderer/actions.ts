@@ -338,7 +338,9 @@ export function lfsTrackAction(ui: Ui, repo: string, initial = '') {
     message:
       'Les nouveaux fichiers correspondants seront stockés dans LFS. Les fichiers déjà suivis qui correspondent apparaîtront ' +
       'modifiés et seront convertis en LFS s\'ils sont indexés (leurs versions déjà commitées restent dans Git). ' +
-      'La règle est ajoutée au .gitattributes racine, à commiter.',
+      'La règle est ajoutée au .gitattributes racine, à commiter. ' +
+      'Git LFS installe aussi ses hooks dans ce dépôt (pre-push, post-checkout, post-commit, post-merge) : ' +
+      'sans eux, les fichiers LFS ne seraient pas envoyés au push.',
     label: 'Motif (ex. *.psd, assets/**/*.png)',
     initial,
     confirm: 'Suivre',
