@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
-import { existsSync, realpathSync } from 'node:fs';
+import { existsSync, lstatSync, realpathSync } from 'node:fs';
 import { chmod, lstat, mkdtemp, readFile as fsReadFile, realpath, rename, rm, stat, unlink, writeFile as fsWriteFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve as resolvePath, sep } from 'node:path';
@@ -1895,6 +1895,19 @@ function isInitializedSync(repo: string, rootReal: string | null, path: string):
   }
 }
 
+/** Vrai si un des éléments de `<repo>/<chemin>` (dossiers intermédiaires compris) est un lien symbolique. */
+export function hasSymlinkComponent(repo: string, path: string): boolean {
+  const parts = path.split('/');
+  for (let i = 1; i <= parts.length; i++) {
+    try {
+      if (lstatSync(join(repo, ...parts.slice(0, i))).isSymbolicLink()) return true;
+    } catch {
+      return false; // absent : rien plus loin
+    }
+  }
+  return false;
+}
+
 /**
  * Sous-modules déclarés dans `.gitmodules` (aucun lancement de `git` sans ce fichier). `changed` (facultatif, envoyé
  * par le rendu) : chemins présents dans le statut du dépôt ; le `status` des sous-modules n'est lancé que pour eux
@@ -1906,7 +1919,10 @@ export async function submodules(repo: string, changed?: unknown): Promise<Submo
   const config = await git(repo, ['config', '-z', '-f', '.gitmodules', '--get-regexp', '^submodule\\.'], { okCodes: [1] });
   const entries = parseGitmodules(config);
   if (entries.length === 0) return [];
-  const paths = entries.map((e) => e.path);
+  // Un chemin qui passe par un lien symbolique n'est jamais confié à `git` : les versions récentes refusent toute la
+  // commande (« expected submodule path '…' not to be a symbolic link »). Ces entrées restent sans index : `missing`.
+  const paths = entries.map((e) => e.path).filter((p) => !hasSymlinkComponent(repo, p));
+  if (paths.length === 0) return buildSubmodules(entries, [], new Map(), () => false);
   const hint = Array.isArray(changed) ? new Set(changed.filter((p): p is string => typeof p === 'string')) : null;
   const statusPaths = hint ? paths.filter((p) => hint.has(p)) : paths;
   const [ls, st] = await Promise.all([
