@@ -55,6 +55,12 @@ function subscribe(l: () => void) {
   return () => listeners.delete(l);
 }
 
+/** Prévient (hors React) de tout changement de recherche, pour l'enregistrement de la session ; renvoie le désabonnement. */
+export function subscribeSearch(l: () => void): () => void {
+  subscribe(l);
+  return () => void listeners.delete(l);
+}
+
 export function useSearch(repo: string): [SearchState, (patch: Partial<SearchState>) => void] {
   const state = useSyncExternalStore(subscribe, () => getSearch(repo));
   const update = useCallback((patch: Partial<SearchState>) => setSearch(repo, patch), [repo]);

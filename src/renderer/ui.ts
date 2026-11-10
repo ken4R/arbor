@@ -10,6 +10,8 @@ export interface Ui {
    */
   run(label: string, fn: () => Promise<unknown>, success?: string, opts?: RunOptions): Promise<boolean>;
   openMenu(e: React.MouseEvent, items: MenuItem[]): void;
+  /** Ouvre un menu à une position de la fenêtre (ouverture au clavier : Maj+F10, touche Menu). */
+  openMenuAt(x: number, y: number, items: MenuItem[]): void;
   ask(p: PromptState): void;
   /**
    * Ouvre un dialogue spécifique (plusieurs champs) : `render(close)` est appelé une fois, son résultat est monté

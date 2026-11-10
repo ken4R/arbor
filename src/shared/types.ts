@@ -1,6 +1,7 @@
 import type { FinalNewlines, MergeBlock } from './merge3';
-import type { Preferences } from './prefs';
+import type { Preferences, PreferencesPatch } from './prefs';
 import type { RebaseProgress, RebaseStep } from './rebase';
+import type { PersistedView } from './session';
 
 export interface Commit {
   sha: string;
@@ -206,12 +207,12 @@ export interface ArborApi {
   /** Préférences de l'utilisateur (`userData/prefs.json`), normalisées. */
   getPreferences(): Promise<Preferences>;
   /** Fusionne un correctif dans les préférences, les enregistre et renvoie le résultat normalisé. */
-  setPreferences(patch: Partial<Preferences>): Promise<Preferences>;
+  setPreferences(patch: PreferencesPatch): Promise<Preferences>;
   /** Onglets de la session précédente (`userData/session.json`) ; dépôts supprimés écartés, dépôts inaccessibles gardés
    * par le processus principal pour un prochain lancement (voir `shared/session.ts`), récents inchangés. */
-  restoreSession(): Promise<{ repos: string[]; active: number }>;
-  /** Enregistre les onglets ouverts (seuls les dépôts ouverts dans Arbor sont retenus). */
-  saveSession(repos: string[], active: number): Promise<void>;
+  restoreSession(): Promise<{ repos: string[]; active: number; views: Record<string, PersistedView> }>;
+  /** Enregistre les onglets ouverts (seuls les dépôts ouverts dans Arbor sont retenus) et leur état d'affichage. */
+  saveSession(repos: string[], active: number, views?: Record<string, PersistedView>): Promise<void>;
   /** Commits réécrits par un rebase interactif sur `base` ; `ancestorOnly` : `base` doit être un ancêtre de HEAD. */
   rebasePlan(repo: string, base: string, ancestorOnly: boolean): Promise<RebasePlan>;
   /**
@@ -260,6 +261,22 @@ export interface ArborApi {
   undoLast(repo: string, expectedHead: string, expectedTarget: string): Promise<void>;
 
   // glisser-déposer
+  /**
+   * Avance `branch` (non extraite, encore à `expectedOld`) jusqu'à la branche `sourceRef` (référence complète, encore à
+   * `expectedSource`) sans checkout ; refus si pas d'avance rapide.
+   */
+  fastForwardBranch(repo: string, branch: string, expectedOld: string, sourceRef: string, expectedSource: string): Promise<void>;
+  /**
+   * Fusionne `sourceRef` (référence complète) dans `target` : branche courante encore à `expectedTarget`, ou extraite
+   * d'abord si `checkoutFirst`.
+   */
+  mergeInto(repo: string, target: string, expectedTarget: string, sourceRef: string, checkoutFirst: boolean): Promise<void>;
+  /** `git rebase <onto> <branch>` (`onto` : SHA ou référence complète) : `branch` est extraite et le reste ; `autostash` met de côté les modifications locales. */
+  rebaseBranch(repo: string, branch: string, onto: string, autostash: boolean): Promise<void>;
+  /** Pousse la branche locale vers la branche du même nom sur `remote` (`-u` si `setUpstream`), jamais forcé. */
+  pushBranch(repo: string, remote: string, branch: string, setUpstream: boolean): Promise<void>;
+  /** Déplace `branch` (non extraite, encore à `expectedOld`) sur le commit `sha` (destructif, confirmé par le rendu). */
+  moveBranch(repo: string, branch: string, expectedOld: string, sha: string): Promise<void>;
 
   // sous-modules
   /**
