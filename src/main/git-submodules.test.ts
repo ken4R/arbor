@@ -361,7 +361,10 @@ describe('sous-modules : chemins piégés et changement de type', () => {
     let ext = (await submodules(dir)).find((s) => s.path === 'ext')!;
     expect([ext.state, ext.initialized]).toEqual(['missing', false]);
     await expect(submoduleRoot(dir, 'ext')).rejects.toThrow(/Aucun commit attendu/);
+    // Les git récents refusent d'écrire un gitlink sur un lien symbolique : gitlink d'abord, puis lien remis en place.
+    rmSync(join(dir, 'ext'));
     run(dir, 'update-index', '--add', '--cacheinfo', `160000,${shas[0]},ext`);
+    symlinkSync('../autre', join(dir, 'ext'));
     ext = (await submodules(dir)).find((s) => s.path === 'ext')!;
     expect([ext.state, ext.initialized]).toEqual(['uninitialized', false]);
     await expect(submoduleRoot(dir, 'ext')).rejects.toThrow(/n'est pas initialisé/);
