@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { Commit, RepoSnapshot } from '../../shared/types';
 import type { GraphRow } from '../graph';
 import type { Selection } from '../App';
@@ -8,6 +8,11 @@ import { fullDate, hashColor, initials, laneColor, relativeDate } from '../util'
 import { isShaQuery, matchNormalized, normalize, normalizeCommit, useSearch } from '../search';
 import { SearchBar } from './SearchBar';
 import { Icon } from './Icons';
+import { anchorFor, reanchor, scrollTopFor } from '../scroll';
+import type { ScrollAnchor } from '../../shared/session';
+// glisser-déposer
+import { autoScrollOnDrag, dragDisabledReason, dropTargetProps, isRefDrag, startRefDrag } from '../refDrop';
+import { useTabsBusy } from '../tabs';
 
 const ROW_H = 30;
 const LANE_W = 16;
@@ -20,9 +25,13 @@ interface Props {
   rows: GraphRow[];
   selection: Selection;
   onSelect: (s: Selection) => void;
+  /** Position de défilement à restaurer au montage (changement d'onglet, fermeture d'un diff, redémarrage). */
+  initialAnchor?: ScrollAnchor | null;
+  /** Position de défilement courante, au plus une fois par image (et au démontage si elle a changé). */
+  onAnchor?: (a: ScrollAnchor) => void;
 }
 
-export function GraphView({ snap, rows, selection, onSelect }: Props) {
+export function GraphView({ snap, rows, selection, onSelect, initialAnchor, onAnchor }: Props) {
   const ui = useUi();
   const scroller = useRef<HTMLDivElement>(null);
   const [scrollTop, setScrollTop] = useState(0);
@@ -72,9 +81,57 @@ export function GraphView({ snap, rows, selection, onSelect }: Props) {
 
   const selectedIndex = selection.kind === 'wip' ? 0 : snap.commits.findIndex((c) => c.sha === selection.sha) + offset;
 
+  // état des onglets : position restaurée au montage, avant le premier affichage ; elle l'emporte alors sur
+  // « défiler jusqu'à la sélection » (premier passage sauté), y compris si la sélection est hors de vue.
+  const anchorRestored = useRef(false);
+  useLayoutEffect(() => {
+    const el = scroller.current;
+    if (!el || !initialAnchor) return;
+    el.scrollTop = scrollTopFor(snap.commits, initialAnchor, ROW_H);
+    setScrollTop(el.scrollTop);
+    anchorRestored.current = true;
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  // Ancrage remonté au plus une fois par image ; le dernier défilement non transmis l'est au démontage (l'élément
+  // n'est alors plus accessible : on garde sa dernière position).
+  const anchorFrame = useRef(0);
+  const lastScrollTop = useRef(0);
+  const anchorSource = useRef({ snap, onAnchor });
+  anchorSource.current = { snap, onAnchor };
+  const reportAnchor = () => {
+    anchorFrame.current = 0;
+    const { snap: s, onAnchor: cb } = anchorSource.current;
+    cb?.(anchorFor(s.commits, lastScrollTop.current, ROW_H));
+  };
+  useEffect(
+    () => () => {
+      if (!anchorFrame.current) return;
+      cancelAnimationFrame(anchorFrame.current);
+      reportAnchor();
+    },
+    [], // eslint-disable-line react-hooks/exhaustive-deps
+  );
+
+  // Commits changés sous la vue (rafraîchissement) : la première ligne visible reste en place.
+  const prevCommits = useRef(snap.commits);
+  useLayoutEffect(() => {
+    const prev = prevCommits.current;
+    prevCommits.current = snap.commits;
+    const el = scroller.current;
+    if (!el || prev === snap.commits) return;
+    const next = reanchor(prev, snap.commits, el.scrollTop, ROW_H);
+    if (next === el.scrollTop) return;
+    el.scrollTop = next;
+    setScrollTop(el.scrollTop);
+    lastScrollTop.current = el.scrollTop;
+  }, [snap.commits]);
+
   // Fait défiler jusqu'à la ligne sélectionnée si elle est hors de vue.
   useEffect(() => {
     const el = scroller.current;
+    if (anchorRestored.current) {
+      anchorRestored.current = false;
+      return;
+    }
     if (!el || selectedIndex < 0) return;
     const top = selectedIndex * ROW_H;
     if (top < el.scrollTop) el.scrollTop = top;
@@ -123,7 +180,19 @@ export function GraphView({ snap, rows, selection, onSelect }: Props) {
           )}
         </span>
       </div>
-      <div className="graph-scroll" ref={scroller} tabIndex={0} onKeyDown={onKey} onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}>
+      <div
+        className="graph-scroll"
+        ref={scroller}
+        tabIndex={0}
+        onKeyDown={onKey}
+        onScroll={(e) => {
+          setScrollTop(e.currentTarget.scrollTop);
+          lastScrollTop.current = e.currentTarget.scrollTop;
+          if (onAnchor && !anchorFrame.current) anchorFrame.current = requestAnimationFrame(reportAnchor);
+        }}
+        // glisser-déposer : défilement automatique près des bords.
+        onDragOverCapture={(e) => isRefDrag(e) && autoScrollOnDrag(e.currentTarget, e.clientY, ROW_H / 2)}
+      >
         <div style={{ height: total * ROW_H, position: 'relative' }}>
           {visible.map((i) => {
             const style = { top: i * ROW_H, gridTemplateColumns: `${graphCol}px 1fr 160px 120px` };
@@ -154,6 +223,7 @@ export function GraphView({ snap, rows, selection, onSelect }: Props) {
                 style={style}
                 onClick={() => onSelect({ kind: 'commit', sha: c.sha })}
                 onContextMenu={(e) => ui.openMenu(e, commitMenu(ui, snap, c))}
+                {...dropTargetProps(ui, snap, { kind: 'commit', sha: c.sha })}
               >
                 <RowGraph row={row} width={graphCol} commit={c} dashedTop={idx === 0 && headIndex === 0} />
                 <span className="row-msg">
@@ -211,6 +281,8 @@ function RowGraph({ row, width, commit, dashedTop }: { row: GraphRow; width: num
 
 function RefBadges({ commit, snap, color }: { commit: Commit; snap: RepoSnapshot; color: string }) {
   const ui = useUi();
+  // glisser-déposer : badges de branche glissables (sauf opération Git en cours ou dépôt vide).
+  const draggable = !useTabsBusy() && !dragDisabledReason(snap);
   const isHead = commit.refs.some((r) => r.type === 'head');
   const refs = commit.refs.filter((r) => r.type !== 'head');
   if (!refs.length && !isHead) return null;
@@ -223,9 +295,13 @@ function RefBadges({ commit, snap, color }: { commit: Commit; snap: RepoSnapshot
         if (r.type === 'remote' && localNames.has(r.name.split('/').slice(1).join('/'))) return null;
         const synced = r.type === 'local' && refs.some((o) => o.type === 'remote' && o.name.split('/').slice(1).join('/') === r.name);
         const current = r.type === 'local' && r.name === snap.status.branch;
+        const branch = r.type === 'local' || r.type === 'remote';
         return (
           <span
             key={r.type + r.name}
+            draggable={branch && draggable}
+            onDragStart={branch ? (e) => startRefDrag(e, { name: r.name, remote: r.type === 'remote' }) : undefined}
+            {...(branch ? dropTargetProps(ui, snap, { kind: 'branch', name: r.name, remote: r.type === 'remote' }) : {})}
             className={`ref ref-${r.type}${current ? ' ref-current' : ''}`}
             style={r.type === 'tag' ? undefined : { borderColor: color, ...(current ? { background: color } : {}) }}
             onDoubleClick={(e) => {

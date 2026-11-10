@@ -418,7 +418,10 @@ code {
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: 240px 1fr 340px;
+  /* Largeurs réglées par les séparateurs (préférence `layout`, voir « état des onglets » en fin de fichier) ;
+     colonnes 2 et 4 = séparateurs (largeur nulle). Fenêtre étroite : les panneaux cèdent, le centre garde son minimum. */
+  --center-min: 320px;
+  grid-template-columns: minmax(0, var(--sidebar-w, 240px)) 0 minmax(var(--center-min), 1fr) 0 minmax(0, var(--right-w, 340px));
 }
 .main > * {
   min-height: 0;
@@ -2510,6 +2513,106 @@ tr.cf-marker {
 }
 
 /* glisser-déposer */
+.ref[draggable='true'],
+.side-item[draggable='true'] {
+  cursor: grab;
+}
+.side-item:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+/* Cible survolée : dépôt possible (contour et fond) ou refusé (contour pointillé). */
+.drop-ok {
+  outline: 2px solid var(--drop-target);
+  outline-offset: -2px;
+  background: var(--drop-target-bg);
+}
+.ref.drop-ok {
+  outline-offset: 1px;
+}
+.drop-no {
+  outline: 1px dashed var(--text-faint);
+  outline-offset: -1px;
+  cursor: no-drop;
+}
+.ref.drop-no {
+  outline-offset: 1px;
+}
+.remote-drop.drop-ok,
+.remote-drop.drop-no {
+  border-radius: var(--radius);
+}
+.menu-item:focus-visible {
+  outline: none;
+  background: var(--accent);
+  color: var(--on-accent);
+}
+.menu-item.danger:focus-visible {
+  background: var(--danger);
+  color: var(--on-danger);
+}
+.menu-hint {
+  display: block;
+  font-size: 11px;
+  color: var(--text-faint);
+  white-space: normal;
+  max-width: 340px;
+}
+.ref-action-dialog {
+  width: 520px;
+}
+.ref-action-dialog select {
+  font: inherit;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 5px 6px;
+}
+.ref-action-dialog select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.ref-action-commit {
+  color: var(--text-dim);
+}
+.ref-action-error {
+  color: var(--warn);
+}
+.ref-action-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.ref-action {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  text-align: left;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-3);
+}
+.ref-action:hover:not(:disabled),
+.ref-action:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  background: var(--drop-target-bg);
+}
+.ref-action.danger {
+  color: var(--danger);
+}
+.ref-action.danger:hover:not(:disabled),
+.ref-action.danger:focus-visible {
+  border-color: var(--danger);
+}
+.ref-action small {
+  font-size: 11px;
+  color: var(--text-faint);
+}
 
 /* sous-modules */
 /* Carte de diff générique (sous-module, LFS…) : remplace les blocs d'un diff sans lignes à indexer. */
@@ -2650,3 +2753,41 @@ tr.cf-marker {
 }
 
 /* état des onglets */
+/* Séparateurs : éléments de grille de largeur nulle (toujours alignés sur la vraie largeur des panneaux) ; zone de
+   saisie de 6 px à leur droite, hors des barres de défilement (barre latérale à gauche, graphe au bord droit du centre). */
+.pane-sep {
+  position: relative;
+  z-index: 5;
+  width: 0;
+  touch-action: none;
+  outline: none;
+}
+.main > .pane-sep {
+  overflow: visible;
+}
+.pane-sep::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 6px;
+  cursor: col-resize;
+}
+.pane-sep::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 1px;
+  background: transparent;
+  pointer-events: none;
+  transition: background 0.12s;
+}
+.pane-sep:hover::after,
+.pane-sep.active::after,
+.pane-sep:focus-visible::after {
+  width: 3px;
+  background: var(--accent);
+}

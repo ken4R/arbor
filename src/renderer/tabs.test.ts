@@ -6,6 +6,7 @@ import {
   cycleTab,
   displacedTab,
   fromSession,
+  withCollapsed,
   hasDraft,
   openInTabs,
   popClosed,
@@ -189,7 +190,7 @@ describe('ouverture pendant une opération', () => {
 describe('onglets fermés', () => {
   const entry = (repo: string, summary = ''): ClosedTab => ({
     repo,
-    state: { selection: { kind: 'wip' }, diffTarget: null, fileView: null, draft: { summary, description: '', amend: false } },
+    state: { selection: { kind: 'wip' }, diffTarget: null, fileView: null, draft: { summary, description: '', amend: false }, view: { graph: null, collapsed: {}, filter: '' } },
   });
 
   it('empile sans doublon et dans la limite', () => {
@@ -226,5 +227,16 @@ describe('tabTitles', () => {
     expect(tabTitles(['/a/projet', '/b/projet', '/c/autre'])).toEqual(['a/projet', 'b/projet', 'autre']);
     expect(tabTitles(['/a/x/projet', '/b/x/projet'])).toEqual(['a/x/projet', 'b/x/projet']);
     expect(tabTitles(['/projet', '/a/projet'])).toEqual(['projet', 'a/projet']);
+  });
+});
+
+describe('sections repliées', () => {
+  it('n’enregistre que les sections qui diffèrent de leur état par défaut', () => {
+    let c = withCollapsed({}, 'tags', false, true); // Tags (repliée par défaut) dépliée
+    expect(c).toEqual({ tags: false });
+    c = withCollapsed(c, 'local', true, false);
+    expect(c).toEqual({ tags: false, local: true });
+    c = withCollapsed(c, 'tags', true, true); // retour au défaut
+    expect(c).toEqual({ local: true });
   });
 });
