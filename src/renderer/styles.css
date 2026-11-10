@@ -2589,5 +2589,64 @@ tr.cf-marker {
 
 
 /* lfs */
+.diff-card-lfs {
+  border-left-color: var(--badge-lfs);
+}
+.diff-card-lfs .diff-card-note {
+  color: var(--text-dim);
+}
+.file-badge-lfs {
+  flex-shrink: 0;
+  font-size: 10px;
+  padding: 0 5px;
+  border-radius: 4px;
+  border: 1px solid var(--badge-lfs);
+  color: var(--badge-lfs);
+  white-space: nowrap;
+}
+.lfs-banner {
+  margin: 8px;
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  background: var(--warn-bg-soft);
+  border: 1px solid var(--warn-border);
+  font-size: 12px;
+}
+.lfs-warning {
+  margin: 2px 8px 6px 24px;
+  font-size: 11px;
+  color: var(--warn);
+}
+.lfs-subhead {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 6px 8px 2px 24px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-faint);
+}
+.lfs-subhead-note {
+  margin-left: auto;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--badge-lfs);
+}
+.lfs-tag {
+  flex-shrink: 0;
+  font-size: 10px;
+  color: var(--text-faint);
+}
+.lfs-tag-pointer {
+  color: var(--badge-lfs);
+}
+.lfs-size {
+  flex-shrink: 0;
+  font-size: 10px;
+  color: var(--text-faint);
+}
 
 /* état des onglets */

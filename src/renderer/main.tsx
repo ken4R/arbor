@@ -28,6 +28,8 @@ import './commands/tags';
 import './commands/reflog';
 // sous-modules
 import './commands/submodules';
+// lfs
+import './commands/lfs';
 
 // Préférences enregistrées lues dès le démarrage (et migration des anciennes clés localStorage).
 void loadPreferences();

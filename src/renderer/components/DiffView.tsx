@@ -11,6 +11,7 @@ import { openSubmoduleTab, resetSubmoduleAction } from '../actions';
 import type { SubmoduleChange } from '../../shared/diff';
 import type { Submodule } from '../../shared/types';
 import { useSubmodule } from '../submodules';
+import { formatLfsSize, lfsPointerChange, type LfsPointer, type LfsPointerChange } from '../../shared/lfs';
 
 type Mode = DiffMode;
 
@@ -87,7 +88,16 @@ function PatchView({ repo, target, onClose, reloadKey }: { repo: string; target:
       ? { old: sub.expected, new: sub.expected, dirty: true }
       : null;
   const change = diff?.submodule ?? untrackedOnly;
-  const card = change ? submoduleCard(ui, repo, target, change, sub) : null;
+  // lfs : diff de pointeurs LFS (`--no-textconv`) → carte « Fichier LFS : taille → taille » ; « Voir le pointeur »
+  // affiche les blocs du pointeur sous la carte (sans indexation partielle).
+  const lfsChange = useMemo(() => (raw ? lfsPointerChange(raw) : null), [raw]);
+  const [pointerShownFor, setPointerShownFor] = useState<string | null>(null);
+  const showPointer = pointerShownFor === targetKey;
+  const card = change
+    ? submoduleCard(ui, repo, target, change, sub)
+    : lfsChange
+      ? lfsCard(lfsChange, showPointer, () => setPointerShownFor(showPointer ? null : targetKey))
+      : null;
   const editable = target.kind === 'working' && !target.untracked && !target.conflict && !target.oldPath && !!diff && !diff.binary && !card;
   const staged = target.kind === 'working' && target.staged;
   const linesSelectable = editable && mode === 'unified' && !diff?.newFile && !diff?.deletedFile;
@@ -222,7 +232,7 @@ function PatchView({ repo, target, onClose, reloadKey }: { repo: string; target:
         {linesSelectable && diff && diff.hunks.length > 0 && nSel === 0 && (
           <div className="patch-hint">Cliquez sur le numéro d'une ligne modifiée pour la sélectionner (Maj+clic : plage).</div>
         )}
-        {!card && diff?.hunks.map((h, i) => (
+        {(!card || (lfsChange && showPointer)) && diff?.hunks.map((h, i) => (
           <div className="hunk" key={i}>
             <div className="hunk-head">
               <span className="hunk-range">{h.header}</span>
@@ -382,6 +392,33 @@ function submoduleCard(ui: ReturnType<typeof useUi>, repo: string, target: DiffT
       afterTitle={change.new ?? undefined}
       notes={notes}
       actions={actions}
+    />
+  );
+}
+
+// lfs
+
+/** Carte d'un diff de pointeurs LFS : tailles avant et après, empreintes (oid), affichage du pointeur brut. */
+function lfsCard(change: LfsPointerChange, showPointer: boolean, togglePointer: () => void) {
+  const size = (p: LfsPointer | null) => (p ? formatLfsSize(p.size) : null);
+  const oid = (p: LfsPointer) => `${p.oid.slice(0, 8)}…`;
+  const notes: string[] = [];
+  if (change.old && change.new) {
+    notes.push(`oid ${oid(change.old)} → ${oid(change.new)}`);
+    if (change.old.size === change.new.size && change.old.oid !== change.new.oid) notes.push('Même taille, contenu différent.');
+  } else if (change.new) notes.push(`Nouveau fichier stocké dans LFS (oid ${oid(change.new)}).`);
+  else if (change.old) notes.push(`Fichier LFS supprimé (oid ${oid(change.old)}).`);
+  notes.push('Git ne stocke que le pointeur : le contenu n\'est pas comparé ligne à ligne.');
+  return (
+    <DiffCard
+      kind="lfs"
+      label="Fichier LFS"
+      before={size(change.old)}
+      after={size(change.new)}
+      beforeTitle={change.old ? `oid sha256:${change.old.oid}` : undefined}
+      afterTitle={change.new ? `oid sha256:${change.new.oid}` : undefined}
+      notes={notes}
+      actions={[{ label: showPointer ? 'Masquer le pointeur' : 'Voir le pointeur', onClick: togglePointer }]}
     />
   );
 }

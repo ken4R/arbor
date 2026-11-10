@@ -271,6 +271,9 @@ const READ_ONLY = new Set([
   'openSubmodule', // valide le chemin, n'écrit que la liste des récents
 
   // lfs
+  // `git lfs version`, `git lfs track` (liste) et check-attr : rien dans .git hors `<gitDir>/lfs/tmp`, non surveillé.
+  // `lfsFiles` reste hors de cette liste par prudence (git-lfs peut rafraîchir l'index).
+  'lfsInfo',
 
   // état des onglets
 ]);
@@ -380,6 +383,11 @@ const handlers: Record<string, (...args: any[]) => Promise<unknown>> = {
   openSubmodule: async (repo: string, path: unknown) => openRepo(await g.submoduleRoot(repo, path)),
 
   // lfs
+  lfsInfo: (repo: string, paths: unknown) => g.lfsInfo(repo, paths),
+  lfsFiles: g.lfsFiles,
+  lfsTrack: (repo: string, pattern: unknown, untrack: unknown) => g.lfsTrack(repo, pattern, untrack),
+  lfsFetch: g.lfsFetch,
+  lfsPull: (repo: string, paths: unknown) => g.lfsPull(repo, paths),
 
   // état des onglets
 };
