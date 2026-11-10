@@ -2038,6 +2038,22 @@ import {
 /** Filtre LFS neutralisé : les fichiers sont comparés tels quels à l'index (lecture seule, git-lfs absent). */
 const LFS_FILTER_OFF = ['-c', 'filter.lfs.process=', '-c', 'filter.lfs.clean=', '-c', 'filter.lfs.smudge=', '-c', 'filter.lfs.required=false'];
 
+/**
+ * Arguments et environnement de `git lfs <args>`. Jamais `--literal-pathspecs` ici, et `GIT_LITERAL_PATHSPECS`
+ * forcé à 0 (au cas où il viendrait de l'environnement) : la variable se propage aux `git` lancés par git-lfs, qui
+ * utilise des pathspecs magiques (git-lfs 3.8 : `git ls-files ':(top,attr:filter=lfs)'`) ; rendues littérales,
+ * elles ne trouvent aucun fichier et `git lfs pull` réussit sans rien récupérer. Les chemins passés à git-lfs
+ * (`--include`, motif après `--`) sont validés en amont et ne sont pas des pathspecs Git.
+ */
+export function lfsCommand(args: string[]): { args: string[]; env: Record<string, string> } {
+  return { args: ['lfs', ...args], env: { GIT_LITERAL_PATHSPECS: '0' } };
+}
+
+function lfs(repo: string, args: string[]): Promise<string> {
+  const c = lfsCommand(args);
+  return git(repo, c.args, { env: c.env });
+}
+
 /** Erreur due à un git-lfs introuvable. */
 export function isLfsMissing(e: unknown): boolean {
   return e instanceof GitError && LFS_MISSING.test(e.stderr);
@@ -2065,7 +2081,7 @@ export function forgetLfsVersion() {
 export async function lfsVersion(repo: string): Promise<{ installed: boolean; version: string | null }> {
   const c = lfsVersionCache;
   if (c && (c.installed || Date.now() - c.at < LFS_RECHECK_MS)) return c;
-  const out = await git(repo, ['lfs', 'version']).catch(() => null);
+  const out = await lfs(repo, ['version']).catch(() => null);
   lfsVersionCache = { installed: out !== null, version: out === null ? null : parseLfsVersion(out), at: Date.now() };
   return lfsVersionCache;
 }
@@ -2107,8 +2123,8 @@ const LFS_FILES_MAX = 1000;
 
 async function allLfsFiles(repo: string) {
   await requireLfs(repo);
-  const json = await git(repo, ['lfs', 'ls-files', '--json']).catch(() => null);
-  return (json === null ? null : parseLfsFilesJson(json)) ?? parseLfsFiles(await git(repo, ['lfs', 'ls-files', '-l']));
+  const json = await lfs(repo, ['ls-files', '--json']).catch(() => null);
+  return (json === null ? null : parseLfsFilesJson(json)) ?? parseLfsFiles(await lfs(repo, ['ls-files', '-l']));
 }
 
 export async function lfsFiles(repo: string): Promise<LfsFiles> {
@@ -2126,12 +2142,12 @@ export async function lfsTrack(repo: string, pattern: unknown, untrack: unknown)
     const known = (await lfsPatterns(repo)).some((x) => x.pattern === p && x.source === '.gitattributes' && !x.excluded);
     if (!known) throw new GitError(`« ${p} » n'est pas un motif suivi du .gitattributes racine.`, '');
   }
-  await git(repo, ['lfs', untrack === true ? 'untrack' : 'track', '--', p]);
+  await lfs(repo, [untrack === true ? 'untrack' : 'track', '--', p]);
 }
 
 export async function lfsFetch(repo: string) {
   await requireLfs(repo);
-  await git(repo, ['lfs', 'fetch']);
+  await lfs(repo, ['fetch']);
 }
 
 /** Nombre maximal de fichiers récupérés un par un (au-delà, tout récupérer). */
@@ -2140,7 +2156,7 @@ const LFS_PULL_MAX = 100;
 export async function lfsPull(repo: string, paths: unknown) {
   await requireLfs(repo);
   if (paths === null) {
-    await git(repo, ['lfs', 'pull']);
+    await lfs(repo, ['pull']);
     return;
   }
   if (!Array.isArray(paths) || paths.length === 0 || paths.length > LFS_PULL_MAX || !paths.every((p) => typeof p === 'string'))
@@ -2153,5 +2169,5 @@ export async function lfsPull(repo: string, paths: unknown) {
   const known = new Set((await allLfsFiles(repo)).map((f) => f.path));
   const unknown = (paths as string[]).find((p) => !known.has(p));
   if (unknown !== undefined) throw new GitError(`« ${unknown} » n'est pas un fichier LFS de ce dépôt.`, '');
-  for (const args of lfsPullArgs(paths as string[])) await git(repo, ['--literal-pathspecs', 'lfs', 'pull', ...args]);
+  for (const args of lfsPullArgs(paths as string[])) await lfs(repo, ['pull', ...args]);
 }

@@ -8,6 +8,7 @@ import {
   applyPatchSelection,
   diff,
   forgetLfsVersion,
+  lfsCommand,
   GitError,
   isLfsMissing,
   lfsFiles,
@@ -53,6 +54,23 @@ describe('translateGitError (lfs)', () => {
 });
 
 // Délai élargi : git-lfs lance plusieurs processus git par appel (lent sur une machine chargée).
+describe('lfsCommand (pathspecs littérales jamais transmises à git-lfs)', () => {
+  it('ni --literal-pathspecs ni GIT_LITERAL_PATHSPECS=1 pour git lfs', () => {
+    for (const args of [['pull', ...lfsPullArgs(['x.bin', 'sub/x.bin']).flat()], ['ls-files', '--json'], ['fetch']]) {
+      const c = lfsCommand(args);
+      expect(c.args[0]).toBe('lfs');
+      expect(c.args).not.toContain('--literal-pathspecs');
+      expect(c.env.GIT_LITERAL_PATHSPECS).toBe('0');
+    }
+  });
+
+  it('git.ts : toute commande git-lfs passe par lfsCommand (aucun `git(…, [… \'lfs\'`)', () => {
+    const src = readFileSync(join(__dirname, 'git.ts'), 'utf8');
+    expect(src).not.toMatch(/git\(\s*\w+\s*,\s*\[[^\]]*'lfs'/);
+    expect(src).not.toMatch(/'--literal-pathspecs',\s*'lfs'/);
+  });
+});
+
 describe.skipIf(!lfsInstalled)('LFS (git-lfs installé)', { timeout: 20_000 }, () => {
   let root: string;
   let dir: string;
@@ -230,7 +248,15 @@ describe.skipIf(!lfsInstalled)('LFS (git-lfs installé)', { timeout: 20_000 }, (
     await expect(lfsPull(dir, ['a,b.bin'])).rejects.toThrow(/motif/);
     await expect(lfsPull(dir, ['lisez-moi.txt'])).rejects.toThrow(/n'est pas un fichier LFS/);
     await expect(lfsPull(dir, [])).rejects.toThrow();
-    await lfsPull(dir, [path]);
+    // GIT_LITERAL_PATHSPECS hérité de l'environnement : neutralisé pour git-lfs (sinon, en 3.8, rien n'est récupéré).
+    const saved = process.env.GIT_LITERAL_PATHSPECS;
+    process.env.GIT_LITERAL_PATHSPECS = '1';
+    try {
+      await lfsPull(dir, [path]);
+    } finally {
+      if (saved === undefined) delete process.env.GIT_LITERAL_PATHSPECS;
+      else process.env.GIT_LITERAL_PATHSPECS = saved;
+    }
     expectPulled(path, 'B'.repeat(300), [path]);
     expect((await lfsFiles(dir)).files.find((f) => f.path === path)?.present, lfsState()).toBe(true);
   });
