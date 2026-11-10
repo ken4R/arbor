@@ -257,25 +257,31 @@ describe.skipIf(!lfsInstalled)('LFS (git-lfs installé)', { timeout: 20_000 }, (
     }
   });
 
-  it('lfsPull : un chemin est ancré à la racine (x.bin ne récupère pas sub/x.bin)', async () => {
+  it('lfsPull : seul le chemin demandé est récupéré, jamais un homonyme (racine ou sous-dossier)', async () => {
+    mkdirSync(join(dir, 'a', 'sub'), { recursive: true });
     mkdirSync(join(dir, 'sub'));
     writeFileSync(join(dir, 'x.bin'), 'racine');
     writeFileSync(join(dir, 'sub', 'x.bin'), 'sous-dossier');
-    run(dir, 'add', 'x.bin', 'sub/x.bin');
-    run(dir, 'commit', '-qm', 'deux x.bin');
+    writeFileSync(join(dir, 'a', 'sub', 'x.bin'), 'profond');
+    run(dir, 'add', 'x.bin', 'sub/x.bin', 'a/sub/x.bin');
+    run(dir, 'commit', '-qm', 'trois x.bin');
     run(dir, 'push', '-q', 'origin', 'main');
     const lines = run(dir, 'lfs', 'ls-files', '-l').split('\n');
-    for (const p of ['x.bin', 'sub/x.bin']) {
+    for (const p of ['x.bin', 'sub/x.bin', 'a/sub/x.bin']) {
       const oid = lines.find((l) => l.endsWith(` ${p}`))!.split(' ')[0];
       rmSync(join(dir, '.git', 'lfs', 'objects', oid.slice(0, 2), oid.slice(2, 4), oid));
       writeFileSync(join(dir, p), run(dir, 'cat-file', 'blob', `HEAD:${p}`) + '\n');
     }
-    run(dir, 'add', '--', 'x.bin', 'sub/x.bin'); // index rafraîchi : pointeurs non modifiés
+    run(dir, 'add', '--', 'x.bin', 'sub/x.bin', 'a/sub/x.bin'); // index rafraîchi : pointeurs non modifiés
     await lfsPull(dir, ['x.bin']);
     expect(readFileSync(join(dir, 'x.bin'), 'utf8'), lfsState()).toBe('racine');
     expect(readFileSync(join(dir, 'sub', 'x.bin'), 'utf8'), lfsState()).toMatch(/^version https:\/\/git-lfs/);
     const files = (await lfsFiles(dir)).files;
     expect(files.find((f) => f.path === 'x.bin')?.present, lfsState()).toBe(true);
     expect(files.find((f) => f.path === 'sub/x.bin')?.present, lfsState()).toBe(false);
+    // Chemin avec dossier : `sub/x.bin` est récupéré, pas `a/sub/x.bin`.
+    await lfsPull(dir, ['sub/x.bin']);
+    expect(readFileSync(join(dir, 'sub', 'x.bin'), 'utf8'), lfsState()).toBe('sous-dossier');
+    expect(readFileSync(join(dir, 'a', 'sub', 'x.bin'), 'utf8'), lfsState()).toMatch(/^version https:\/\/git-lfs/);
   });
 });

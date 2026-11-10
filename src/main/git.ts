@@ -2024,7 +2024,7 @@ export async function submoduleSync(repo: string) {
 
 import type { LfsFiles, LfsInfo, LfsPattern } from '../shared/types';
 import {
-  lfsIncludeArg,
+  lfsPullArgs,
   lfsIncludeError,
   lfsPointerChange,
   lfsPathsFromCheckAttr,
@@ -2153,5 +2153,5 @@ export async function lfsPull(repo: string, paths: unknown) {
   const known = new Set((await allLfsFiles(repo)).map((f) => f.path));
   const unknown = (paths as string[]).find((p) => !known.has(p));
   if (unknown !== undefined) throw new GitError(`« ${unknown} » n'est pas un fichier LFS de ce dépôt.`, '');
-  await git(repo, ['--literal-pathspecs', 'lfs', 'pull', lfsIncludeArg(paths as string[])]);
+  for (const args of lfsPullArgs(paths as string[])) await git(repo, ['--literal-pathspecs', 'lfs', 'pull', ...args]);
 }

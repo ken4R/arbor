@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   formatLfsSize,
-  lfsIncludeArg,
+  lfsPullArgs,
   lfsIncludeError,
   lfsPathsFromCheckAttr,
   lfsPatternError,
@@ -101,10 +101,16 @@ describe('lfsIncludeError', () => {
   });
 });
 
-describe('lfsIncludeArg', () => {
-  it('ancre chaque chemin à la racine', () => {
-    expect(lfsIncludeArg(['x.bin'])).toBe('--include=/x.bin');
-    expect(lfsIncludeArg(['x.bin', 'sub dir/é.bin'])).toBe('--include=/x.bin,/sub dir/é.bin');
+describe('lfsPullArgs', () => {
+  it('fichier à la racine : homonymes des sous-dossiers exclus', () => {
+    expect(lfsPullArgs(['x.bin'])).toEqual([['--include=x.bin', '--exclude=*/**/x.bin']]);
+  });
+  it('chemin avec un dossier : déjà ancré, sans exclusion ; lancements séparés si les deux sont demandés', () => {
+    expect(lfsPullArgs(['sub dir/é.bin'])).toEqual([['--include=sub dir/é.bin']]);
+    expect(lfsPullArgs(['x.bin', 'sub/x.bin', 'y.bin'])).toEqual([
+      ['--include=sub/x.bin'],
+      ['--include=x.bin,y.bin', '--exclude=*/**/x.bin,*/**/y.bin'],
+    ]);
   });
 });
 

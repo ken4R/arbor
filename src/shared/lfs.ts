@@ -106,11 +106,20 @@ export function lfsIncludeError(path: string): string | null {
 }
 
 /**
- * Option `--include` de `git lfs pull` pour des chemins validés par `lfsIncludeError` : chaque chemin est ancré à la
- * racine par `/` (sinon `x.bin` désignerait aussi `sub/x.bin`).
+ * Options de `git lfs pull` (un lancement par élément) pour des chemins validés par `lfsIncludeError`, sans récupérer
+ * d'homonyme, selon les règles des motifs gitignore suivies par git-lfs. Le préfixe `/` n'est pas utilisable : accepté
+ * par git-lfs 3.4, il ne désigne plus rien en 3.8.
+ * - Chemin avec un `/` : déjà ancré à la racine (une barre au milieu du motif l'ancre).
+ * - Fichier à la racine : `nom` désigne tous les fichiers de ce nom ; `*\/**\/nom` (au moins un dossier) exclut ceux
+ *   des sous-dossiers. Lancement séparé, pour que cette exclusion n'écarte pas un chemin demandé dans un sous-dossier.
  */
-export function lfsIncludeArg(paths: string[]): string {
-  return `--include=${paths.map((p) => `/${p}`).join(',')}`;
+export function lfsPullArgs(paths: string[]): string[][] {
+  const nested = paths.filter((p) => p.includes('/'));
+  const root = paths.filter((p) => !p.includes('/'));
+  const runs: string[][] = [];
+  if (nested.length) runs.push([`--include=${nested.join(',')}`]);
+  if (root.length) runs.push([`--include=${root.join(',')}`, `--exclude=${root.map((p) => `*/**/${p}`).join(',')}`]);
+  return runs;
 }
 
 export interface LfsPointer {
