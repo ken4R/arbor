@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { MISSING_LIMIT, normalizeSession } from './session';
+import { COLLAPSED_LIMIT, MISSING_LIMIT, VIEW_TEXT_LIMIT, normalizeSession, normalizeView } from './session';
 
 describe('normalizeSession', () => {
   it('donne une session vide pour une entrée invalide', () => {
     for (const d of [undefined, null, 42, 'x', [], { repos: 'a' }]) {
-      expect(normalizeSession(d)).toEqual({ repos: [], active: 0, missing: [] });
+      expect(normalizeSession(d)).toEqual({ repos: [], active: 0, missing: [], views: {} });
     }
   });
 
@@ -40,5 +40,66 @@ describe('normalizeSession', () => {
 
   it('n’applique pas le filtre aux dépôts indisponibles', () => {
     expect(normalizeSession({ repos: [], missing: ['/m'] }, () => false).missing).toEqual(['/m']);
+  });
+});
+
+describe('normalizeSession : états d’affichage', () => {
+  const view = {
+    v: 1,
+    selection: 'abc1234',
+    graph: { sha: 'def5678', offset: 12 },
+    collapsed: { tags: false, 'remote:origin': true },
+    filter: 'feat',
+    search: { open: true, field: 'author', text: 'Léa' },
+  };
+
+  it('garde un état valide, seulement pour les dépôts retenus ou indisponibles', () => {
+    const s = normalizeSession(
+      { repos: ['/a', '/x'], active: 0, missing: ['/m'], views: { '/a': view, '/x': view, '/m': view, '/autre': view } },
+      (p) => p !== '/x',
+    );
+    expect(s.views).toEqual({ '/a': view, '/m': view });
+    expect(Object.getPrototypeOf(s.views)).toBeNull();
+  });
+
+  it('ignore les chemins non absolus', () => {
+    const s = normalizeSession({ repos: ['relatif', 'C:\\depot', '/a'], views: { relatif: view, 'C:\\depot': view, '/a': view } });
+    expect(Object.keys(s.views)).toEqual(['C:\\depot', '/a']);
+  });
+
+  it('ignore des vues invalides ou d’une autre version', () => {
+    expect(normalizeSession({ repos: ['/a'], views: [view] }).views).toEqual({});
+    expect(normalizeSession({ repos: ['/a'], views: { '/a': { ...view, v: 2 } } }).views).toEqual({});
+    expect(normalizeSession({ repos: ['/a'], views: { '/a': 'x' } }).views).toEqual({});
+    // Clé héritée du prototype : jamais lue.
+    expect(normalizeSession({ repos: ['toString'], views: {} }).views).toEqual({});
+  });
+
+  it('retire les champs inconnus et remplace les valeurs invalides', () => {
+    const v = normalizeView({ ...view, draft: 'secret', selection: 'ZZZ', search: { open: 'oui', field: 'tout', text: 3, extra: 1 } });
+    expect(v).toEqual({ ...view, selection: null, search: { open: false, field: 'all', text: '' } });
+    expect(v && 'draft' in v).toBe(false);
+  });
+
+  it('valide l’ancrage du défilement', () => {
+    expect(normalizeView({ ...view, graph: { sha: null, offset: 7.6 } })?.graph).toEqual({ sha: null, offset: 8 });
+    expect(normalizeView({ ...view, graph: { sha: 'pas-un-sha', offset: 0 } })?.graph).toBeNull();
+    expect(normalizeView({ ...view, graph: { sha: 'abcd', offset: Number.NaN } })?.graph).toBeNull();
+    expect(normalizeView({ ...view, graph: { sha: 'abcd', offset: -5 } })?.graph).toEqual({ sha: 'abcd', offset: 0 });
+    expect(normalizeView({ ...view, graph: { sha: 'abcd', offset: 1e9 } })?.graph?.offset).toBe(1000);
+    expect(normalizeView({ ...view, graph: { sha: 'a'.repeat(65), offset: 0 } })?.graph).toBeNull();
+  });
+
+  it('borne les textes et le nombre de sections', () => {
+    const long = 'x'.repeat(VIEW_TEXT_LIMIT + 50);
+    const collapsed = Object.fromEntries(Array.from({ length: COLLAPSED_LIMIT + 10 }, (_, i) => [`s${i}`, true]));
+    const v = normalizeView({ ...view, filter: long, search: { ...view.search, text: long }, collapsed: { ...collapsed, bad: 'oui', [long]: true } });
+    expect(v?.filter).toHaveLength(VIEW_TEXT_LIMIT);
+    expect(v?.search.text).toHaveLength(VIEW_TEXT_LIMIT);
+    expect(Object.keys(v!.collapsed)).toHaveLength(COLLAPSED_LIMIT);
+    // Les dernières clés sont gardées.
+    expect(v!.collapsed[`s${COLLAPSED_LIMIT + 9}`]).toBe(true);
+    expect(v!.collapsed.s0).toBeUndefined();
+    expect(v!.collapsed.bad).toBeUndefined();
   });
 });
