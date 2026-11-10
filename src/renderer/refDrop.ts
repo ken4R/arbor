@@ -132,6 +132,11 @@ export function refActionMenu(ui: Ui, snap: RepoSnapshot, actions: RefAction[]):
   return items;
 }
 
+/** Référence complète d'une branche (jamais le nom court, ambigu avec un tag ou une branche locale `origin/x`). */
+export function fullRef(r: DragRef): string {
+  return `${r.remote ? 'refs/remotes/' : 'refs/heads/'}${r.name}`;
+}
+
 /** SHA de la branche locale d'après l'instantané, ou erreur (la branche a disparu entre-temps). */
 function localSha(snap: RepoSnapshot, name: string): string {
   const b = findBranch(snap, name, false);
@@ -144,32 +149,32 @@ export function runRefAction(ui: Ui, snap: RepoSnapshot, a: RefAction): void {
   if (a.disabledReason) return;
   const repo = snap.path;
   const src = a.source.name;
+  const srcRef = fullRef(a.source);
   const tgt = a.target;
+  // Les SHA affichés accompagnent chaque action : le processus principal refuse si une branche a bougé entre-temps.
   switch (a.id) {
     case 'merge':
-      void ui.run('Fusion…', () => api.merge(repo, src), 'Fusion terminée');
-      return;
-    case 'fastForward': {
-      if (tgt.kind !== 'branch') return;
-      void ui.run('Avance rapide…', async () => api.fastForwardBranch(repo, tgt.name, localSha(snap, tgt.name), src), `${q(tgt.name)} avancée jusqu'à ${q(src)}`);
-      return;
-    }
     case 'checkoutMerge': {
       if (tgt.kind !== 'branch') return;
+      const checkoutFirst = a.id === 'checkoutMerge';
       void ui.run(
-        `Checkout de ${tgt.name} puis fusion…`,
-        async () => {
-          await api.checkout(repo, tgt.name);
-          await api.merge(repo, src);
-        },
+        checkoutFirst ? `Checkout de ${tgt.name} puis fusion…` : 'Fusion…',
+        async () => api.mergeInto(repo, tgt.name, localSha(snap, tgt.name), srcRef, checkoutFirst),
         'Fusion terminée',
       );
       return;
     }
+    case 'fastForward': {
+      if (tgt.kind !== 'branch') return;
+      const srcSha = findBranch(snap, src, a.source.remote)?.sha;
+      if (!srcSha) return;
+      void ui.run('Avance rapide…', async () => api.fastForwardBranch(repo, tgt.name, localSha(snap, tgt.name), srcRef, srcSha), `${q(tgt.name)} avancée jusqu'à ${q(src)}`);
+      return;
+    }
     case 'rebase': {
-      const onto = tgt.kind === 'branch' ? tgt.name : tgt.kind === 'commit' ? tgt.sha : null;
+      const onto = tgt.kind === 'branch' ? fullRef(tgt) : tgt.kind === 'commit' ? tgt.sha : null;
       if (!onto) return;
-      const ontoLabel = tgt.kind === 'branch' ? q(tgt.name) : onto.slice(0, 7);
+      const ontoLabel = tgt.kind === 'commit' ? tgt.sha.slice(0, 7) : q(onto.replace(/^refs\/heads\//, ''));
       const current = snap.status.branch === src;
       ui.ask({
         title: `Rebaser ${q(src)} sur ${ontoLabel}`,
@@ -184,12 +189,12 @@ export function runRefAction(ui: Ui, snap: RepoSnapshot, a: RefAction): void {
       return;
     }
     case 'rebaseInteractive':
-      if (tgt.kind === 'branch') openRebaseDialog(ui, snap, tgt.name, q(tgt.name));
+      if (tgt.kind === 'branch') openRebaseDialog(ui, snap, fullRef(tgt), q(tgt.name));
       return;
     case 'checkoutRebaseInteractive': {
       if (tgt.kind !== 'branch') return;
       // Le planificateur ne travaille que sur HEAD : checkout d'abord, puis le dialogue (qui relit le dépôt).
-      void ui.run(`Checkout de ${src}…`, () => api.checkout(repo, src)).then((ok) => ok && openRebaseDialog(ui, snap, tgt.name, q(tgt.name)));
+      void ui.run(`Checkout de ${src}…`, () => api.checkout(repo, src)).then((ok) => ok && openRebaseDialog(ui, snap, fullRef(tgt), q(tgt.name)));
       return;
     }
     case 'move': {
@@ -238,7 +243,11 @@ export function isRefDrag(e: { dataTransfer: DataTransfer | null }): boolean {
 /** Début du glisser d'une branche (à appeler dans `onDragStart` de la source). */
 export function startRefDrag(e: React.DragEvent, ref: DragRef) {
   e.stopPropagation();
+  // Un glisser précédent mal terminé (source démontée) ne laisse ni surlignage ni source.
+  setHover(null, false, false);
   dragged = ref;
+  // `dragend` arrive sur la source même démontée de la page (badge virtualisé) : il n'atteint alors plus window.
+  e.currentTarget.addEventListener('dragend', endRefDrag, { once: true });
   e.dataTransfer.setData(REF_MIME, JSON.stringify(ref));
   e.dataTransfer.setData('text/plain', ref.name);
   e.dataTransfer.effectAllowed = 'move';
@@ -276,7 +285,8 @@ export function dropTargetProps(ui: Ui, snap: RepoSnapshot, target: DropTarget) 
       if (!isRefDrag(e)) return;
       e.stopPropagation();
       const el = e.currentTarget as HTMLElement;
-      let allowed = hover && hover.el === el ? hover.allowed : null;
+      // Cache par cible, vidé si React a réécrit `className` (rafraîchissement pendant le survol).
+      let allowed = hover && hover.el === el && (el.classList.contains('drop-ok') || el.classList.contains('drop-no')) ? hover.allowed : null;
       if (allowed === null) {
         const actions = dropActions(snap, dragged!, target);
         allowed = actions.length > 0;

@@ -9,9 +9,25 @@ export interface MenuState {
   items: MenuItem[];
 }
 
-/** Touche qui ouvre un menu contextuel au clavier : touche Menu ou Maj+F10. */
+/**
+ * Maj+F10 au clavier (à traiter dans `onKeyDown`, avec `preventDefault`, qui supprime l'événement `contextmenu`
+ * natif). La touche Menu n'est pas traitée ici : selon le système, son `contextmenu` arrive au relâchement (Windows),
+ * on la laisse passer par `onContextMenu` (voir `menuAnchor`) pour éviter un double menu.
+ */
 export function isMenuKey(e: React.KeyboardEvent): boolean {
-  return e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10');
+  return e.shiftKey && e.key === 'F10';
+}
+
+/**
+ * Point d'ouverture d'un menu contextuel : celui du pointeur, ou, pour un `contextmenu` venu du clavier (touche
+ * Menu : pas de type de pointeur ou coordonnées nulles), sous l'élément.
+ */
+export function menuAnchor(e: React.MouseEvent): { x: number; y: number } {
+  const pointer = (e.nativeEvent as PointerEvent).pointerType;
+  const keyboard = pointer === '' || (e.clientX === 0 && e.clientY === 0);
+  if (!keyboard) return { x: e.clientX, y: e.clientY };
+  const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+  return { x: r.left + 16, y: r.bottom };
 }
 
 /**

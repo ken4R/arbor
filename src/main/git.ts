@@ -878,6 +878,46 @@ async function requireNotCheckedOut(repo: string, branch: string, currentHint: s
   if (path) throw new GitError(`La branche est extraite dans un autre worktree (${path}) : faites l'opération depuis ce worktree.`, '');
 }
 
+/**
+ * Référence complète de branche envoyée par le rendu (`refs/heads/x` ou `refs/remotes/o/x`, jamais un nom court
+ * ambigu avec un tag ou une branche locale `o/x`) : nom vérifié, existence vérifiée. Renvoie son SHA et son nom court.
+ */
+async function branchRef(repo: string, ref: string): Promise<{ sha: string; short: string; remote: boolean }> {
+  const m = /^refs\/(heads|remotes)\/(.+)$/.exec(ref);
+  if (!m) throw new GitError(`« ${ref} » n'est pas une référence de branche complète.`, '');
+  const remote = m[1] === 'remotes';
+  const valid = !m[2].startsWith('-') && (await git(repo, ['check-ref-format', ref]).then(() => true, () => false));
+  if (!valid) throw new GitError(`« ${ref} » n'est pas une référence de branche valide.`, '');
+  const sha = (await git(repo, ['rev-parse', '--verify', '-q', '--end-of-options', `${ref}^{commit}`], { okCodes: [1] })).trim();
+  if (!sha) throw new GitError(`La branche « ${m[2]} » n'existe pas (ou plus) : rafraîchissez.`, '');
+  return { sha, short: m[2], remote };
+}
+
+/**
+ * Fusionne la branche `source` (référence complète) dans `target`. `checkoutFirst` faux : `target` doit être la
+ * branche courante, encore au SHA affiché `expectedTarget` ; vrai : `target` (encore à `expectedTarget`) est extraite
+ * d'abord. Message de fusion identique à celui de Git pour un nom court.
+ */
+export async function mergeInto(repo: string, target: string, expectedTarget: string, source: string, checkoutFirst: boolean) {
+  assertSha(expectedTarget);
+  await requireCleanState(repo);
+  const src = await branchRef(repo, source);
+  if (checkoutFirst) {
+    const sha = await localBranchSha(repo, target);
+    if (sha !== expectedTarget) throw new GitError(`La branche « ${target} » a changé depuis l'affichage : rafraîchissez.`, '');
+    // `git checkout <nom>` préfère toujours refs/heads/<nom> (tag ou branche distante homonymes ignorés).
+    await git(repo, ['checkout', target]);
+  } else {
+    await checkRefName(repo, 'branch', target);
+    const head = (await git(repo, ['symbolic-ref', '-q', 'HEAD'], { okCodes: [1] })).trim();
+    const sha = (await git(repo, ['rev-parse', '--verify', '-q', 'HEAD'], { okCodes: [1] })).trim();
+    if (head !== `refs/heads/${target}` || sha !== expectedTarget) throw new GitError('La branche courante a changé : rafraîchissez.', '');
+  }
+  const dest = ['main', 'master'].includes(target) ? '' : ` into ${target}`;
+  const message = `Merge ${src.remote ? 'remote-tracking branch' : 'branch'} '${src.short}'${dest}`;
+  await git(repo, ['merge', '--no-edit', '-m', message, '--end-of-options', source]);
+}
+
 /** Résout une révision (nom de branche, SHA) en SHA de commit. */
 async function commitSha(repo: string, rev: string): Promise<string> {
   const sha = (await git(repo, ['rev-parse', '--verify', '-q', '--end-of-options', `${rev}^{commit}`], { okCodes: [1] })).trim();
@@ -886,16 +926,19 @@ async function commitSha(repo: string, rev: string): Promise<string> {
 }
 
 /**
- * Avance `branch` (non extraite) jusqu'à `source` sans checkout, si c'est une avance rapide. `expectedOld` : SHA
- * affiché ; la mise à jour est atomique (`update-ref <nouveau> <ancien>`) et inscrite au reflog.
+ * Avance `branch` (non extraite) jusqu'à la branche `sourceRef` (référence complète) sans checkout, si c'est une
+ * avance rapide. `expectedOld`, `expectedSource` : SHA affichés ; la mise à jour est atomique
+ * (`update-ref <nouveau> <ancien>`) et inscrite au reflog.
  */
-export async function fastForwardBranch(repo: string, branch: string, expectedOld: string, source: string) {
+export async function fastForwardBranch(repo: string, branch: string, expectedOld: string, sourceRef: string, expectedSource: string) {
   assertSha(expectedOld);
+  assertSha(expectedSource);
   await requireCleanState(repo);
   const old = await localBranchSha(repo, branch);
   if (old !== expectedOld) throw new GitError(`La branche « ${branch} » a changé depuis l'affichage : rafraîchissez.`, '');
   await requireNotCheckedOut(repo, branch, 'utilisez « Fusionner ».');
-  const to = await commitSha(repo, source);
+  const { sha: to, short: source } = await branchRef(repo, sourceRef);
+  if (to !== expectedSource) throw new GitError(`La branche « ${source} » a changé depuis l'affichage : rafraîchissez.`, '');
   if (to === old) throw new GitError(`« ${branch} » est déjà à jour avec « ${source} ».`, '');
   const base = (await git(repo, ['merge-base', old, to], { okCodes: [1] })).trim();
   if (base === to) throw new GitError(`« ${branch} » contient déjà « ${source} ».`, '');
@@ -905,12 +948,14 @@ export async function fastForwardBranch(repo: string, branch: string, expectedOl
 
 /**
  * Rebase de `branch` sur `onto` (`git rebase <onto> <branch>`) : la branche est extraite d'abord et reste extraite
- * à la fin. `autostash` faux : `--no-autostash` explicite (la configuration de l'utilisateur ne décide pas).
+ * à la fin. `onto` : SHA ou référence complète (`refs/heads/…`, `refs/remotes/…`) ; `git rebase` prend `<branch>`
+ * dans refs/heads en priorité. `autostash` faux : `--no-autostash` explicite (la configuration de l'utilisateur ne décide pas).
  */
 export async function rebaseBranch(repo: string, branch: string, onto: string, autostash: boolean) {
   await requireCleanState(repo);
   await localBranchSha(repo, branch);
-  await commitSha(repo, onto);
+  if (onto.startsWith('refs/')) await branchRef(repo, onto);
+  else assertSha(onto);
   await git(repo, ['rebase', autostash ? '--autostash' : '--no-autostash', '--end-of-options', onto, branch]);
 }
 

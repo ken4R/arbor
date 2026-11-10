@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { fastForwardBranch, moveBranch, pushBranch, rebaseBranch, translateGitError } from './git';
+import { fastForwardBranch, mergeInto, moveBranch, pushBranch, rebaseBranch, translateGitError } from './git';
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -48,7 +48,7 @@ describe('fastForwardBranch', () => {
   it('avance une branche non extraite sans checkout, inscrit au reflog', async () => {
     const { dir, sh, rev } = repo();
     const old = rev('derriere');
-    await fastForwardBranch(dir, 'derriere', old, 'devant');
+    await fastForwardBranch(dir, 'derriere', old, 'refs/heads/devant', rev('devant'));
     expect(rev('derriere')).toBe(rev('devant'));
     expect(sh('symbolic-ref', '--short', 'HEAD')).toBe('main');
     expect(sh('reflog', '-1', '--format=%gs', 'refs/heads/derriere')).toBe('merge devant: Fast-forward');
@@ -56,34 +56,94 @@ describe('fastForwardBranch', () => {
 
   it("refuse quand il n'y a pas d'avance rapide", async () => {
     const { dir, rev } = repo();
-    await expect(fastForwardBranch(dir, 'diverge', rev('diverge'), 'devant')).rejects.toThrow(/Pas d'avance rapide possible/);
-    await expect(fastForwardBranch(dir, 'devant', rev('devant'), 'derriere')).rejects.toThrow(/contient déjà/);
+    await expect(fastForwardBranch(dir, 'diverge', rev('diverge'), 'refs/heads/devant', rev('devant'))).rejects.toThrow(/Pas d'avance rapide possible/);
+    await expect(fastForwardBranch(dir, 'devant', rev('devant'), 'refs/heads/derriere', rev('derriere'))).rejects.toThrow(/contient déjà/);
   });
 
   it("refuse si la branche a changé depuis l'affichage", async () => {
     const { dir, rev } = repo();
-    await expect(fastForwardBranch(dir, 'derriere', rev('diverge'), 'devant')).rejects.toThrow(/a changé depuis l'affichage/);
+    await expect(fastForwardBranch(dir, 'derriere', rev('diverge'), 'refs/heads/devant', rev('devant'))).rejects.toThrow(/a changé depuis l'affichage/);
     expect(rev('derriere')).toBe(rev('main'));
   });
 
   it('refuse la branche courante et une branche extraite dans un autre worktree', async () => {
     const { dir, sh, rev } = repo();
-    await expect(fastForwardBranch(dir, 'main', rev('main'), 'devant')).rejects.toThrow(/branche courante/);
+    await expect(fastForwardBranch(dir, 'main', rev('main'), 'refs/heads/devant', rev('devant'))).rejects.toThrow(/branche courante/);
     const wt = join(tmp('arbor-branches-wt-'), 'wt');
     sh('worktree', 'add', '-q', wt, 'derriere');
-    await expect(fastForwardBranch(dir, 'derriere', rev('derriere'), 'devant')).rejects.toThrow(/extraite dans un autre worktree/);
+    await expect(fastForwardBranch(dir, 'derriere', rev('derriere'), 'refs/heads/devant', rev('devant'))).rejects.toThrow(/extraite dans un autre worktree/);
   });
 
   it('refuse un nom invalide', async () => {
     const { dir, rev } = repo();
-    await expect(fastForwardBranch(dir, '--force', rev('main'), 'devant')).rejects.toThrow(/n'est pas un nom de branche valide/);
+    await expect(fastForwardBranch(dir, '--force', rev('main'), 'refs/heads/devant', rev('devant'))).rejects.toThrow(/n'est pas un nom de branche valide/);
+  });
+});
+
+describe('fastForwardBranch : source vérifiée', () => {
+  it('refuse un nom court et une source qui a bougé depuis l’affichage', async () => {
+    const { dir, rev } = repo();
+    await expect(fastForwardBranch(dir, 'derriere', rev('derriere'), 'devant', rev('devant'))).rejects.toThrow(/référence de branche complète/);
+    await expect(fastForwardBranch(dir, 'derriere', rev('derriere'), 'refs/heads/devant', rev('main'))).rejects.toThrow(/« devant » a changé/);
+    expect(rev('derriere')).toBe(rev('main'));
+  });
+
+  it('tag homonyme : la branche est utilisée, pas le tag', async () => {
+    const { dir, sh, rev } = repo();
+    sh('tag', 'devant', 'diverge');
+    await fastForwardBranch(dir, 'derriere', rev('derriere'), 'refs/heads/devant', rev('refs/heads/devant'));
+    expect(rev('refs/heads/derriere')).toBe(rev('refs/heads/devant'));
+  });
+});
+
+describe('mergeInto', () => {
+  it('fusionne dans la branche courante, avec le message habituel de Git', async () => {
+    const { dir, sh, rev } = repo();
+    await mergeInto(dir, 'main', rev('main'), 'refs/heads/diverge', false);
+    expect(sh('log', '-1', '--format=%s')).toBe("Merge branch 'diverge'");
+    expect(sh('rev-parse', 'HEAD^2')).toBe(rev('diverge'));
+  });
+
+  it('refuse si la branche courante a changé (autre branche ou autre SHA)', async () => {
+    const { dir, sh, rev } = repo();
+    await expect(mergeInto(dir, 'devant', rev('devant'), 'refs/heads/diverge', false)).rejects.toThrow(/La branche courante a changé/);
+    await expect(mergeInto(dir, 'main', rev('diverge'), 'refs/heads/diverge', false)).rejects.toThrow(/La branche courante a changé/);
+    expect(sh('rev-list', '--count', 'main')).toBe('2');
+  });
+
+  it('bascule puis fusionne (message « into » hors de main)', async () => {
+    const { dir, sh, rev } = repo();
+    await mergeInto(dir, 'devant', rev('devant'), 'refs/heads/diverge', true);
+    expect(sh('symbolic-ref', '--short', 'HEAD')).toBe('devant');
+    expect(sh('log', '-1', '--format=%s')).toBe("Merge branch 'diverge' into devant");
+  });
+
+  it('tag homonyme de la source : la branche est fusionnée, pas le tag', async () => {
+    const { dir, sh, rev } = repo();
+    sh('tag', 'diverge', 'devant');
+    await mergeInto(dir, 'main', rev('main'), 'refs/heads/diverge', false);
+    expect(sh('rev-parse', 'HEAD^2')).toBe(rev('refs/heads/diverge'));
+  });
+
+  it('branche distante : message « remote-tracking branch »', async () => {
+    const { dir, sh, rev } = repo();
+    sh('update-ref', 'refs/remotes/o/diverge', 'diverge');
+    await mergeInto(dir, 'main', rev('main'), 'refs/remotes/o/diverge', false);
+    expect(sh('log', '-1', '--format=%s')).toBe("Merge remote-tracking branch 'o/diverge'");
   });
 });
 
 describe('rebaseBranch', () => {
+  it('tag homonyme de la cible : rebase sur la branche', async () => {
+    const { dir, sh, rev } = repo();
+    sh('tag', 'devant', 'main~1');
+    await rebaseBranch(dir, 'diverge', 'refs/heads/devant', false);
+    expect(sh('rev-parse', 'diverge~1')).toBe(rev('refs/heads/devant'));
+  });
+
   it('rebase une branche non courante, qui reste extraite à la fin', async () => {
     const { dir, sh, rev } = repo();
-    await rebaseBranch(dir, 'diverge', 'devant', false);
+    await rebaseBranch(dir, 'diverge', 'refs/heads/devant', false);
     expect(sh('symbolic-ref', '--short', 'HEAD')).toBe('diverge');
     expect(sh('rev-parse', 'diverge~1')).toBe(rev('devant'));
   });
@@ -91,8 +151,8 @@ describe('rebaseBranch', () => {
   it('sans autostash, refuse avec des modifications locales ; avec, les réapplique', async () => {
     const { dir, sh } = repo();
     writeFileSync(join(dir, 'base.txt'), 'modifié\n');
-    await expect(rebaseBranch(dir, 'main', 'diverge', false)).rejects.toThrow(/modifications/);
-    await rebaseBranch(dir, 'main', 'diverge', true);
+    await expect(rebaseBranch(dir, 'main', 'refs/heads/diverge', false)).rejects.toThrow(/modifications/);
+    await rebaseBranch(dir, 'main', 'refs/heads/diverge', true);
     expect(sh('status', '--porcelain')).toBe('M base.txt');
     expect(sh('rev-parse', 'main~1')).toBe(sh('rev-parse', 'diverge'));
   });
@@ -105,7 +165,7 @@ describe('rebaseBranch', () => {
     } catch {
       // conflit attendu
     }
-    await expect(rebaseBranch(dir, 'devant', 'main', false)).rejects.toThrow(/opération est en cours/);
+    await expect(rebaseBranch(dir, 'devant', 'refs/heads/main', false)).rejects.toThrow(/opération est en cours/);
   });
 });
 

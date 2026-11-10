@@ -366,7 +366,10 @@ const handlers: Record<string, (...args: any[]) => Promise<unknown>> = {
   undoLast: (repo: string, expectedHead: unknown, expectedTarget: unknown) => g.undoLast(repo, String(expectedHead), String(expectedTarget)),
 
   // glisser-déposer
-  fastForwardBranch: (repo: string, branch: unknown, expectedOld: unknown, source: unknown) => g.fastForwardBranch(repo, String(branch), String(expectedOld), String(source)),
+  fastForwardBranch: (repo: string, branch: unknown, expectedOld: unknown, sourceRef: unknown, expectedSource: unknown) =>
+    g.fastForwardBranch(repo, String(branch), String(expectedOld), String(sourceRef), String(expectedSource)),
+  mergeInto: (repo: string, target: unknown, expectedTarget: unknown, sourceRef: unknown, checkoutFirst: unknown) =>
+    g.mergeInto(repo, String(target), String(expectedTarget), String(sourceRef), checkoutFirst === true),
   rebaseBranch: (repo: string, branch: unknown, onto: unknown, autostash: unknown) => g.rebaseBranch(repo, String(branch), String(onto), autostash === true),
   pushBranch: (repo: string, remote: unknown, branch: unknown, setUpstream: unknown) => g.pushBranch(repo, String(remote), String(branch), setUpstream === true),
   moveBranch: (repo: string, branch: unknown, expectedOld: unknown, sha: unknown) => g.moveBranch(repo, String(branch), String(expectedOld), String(sha)),

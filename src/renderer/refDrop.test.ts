@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Branch, Commit, RepoSnapshot, RepoState } from '../shared/types';
-import { dragDisabledReason, dropActions, type RefAction } from './refDrop';
+import { dragDisabledReason, dropActions, fullRef, type RefAction } from './refDrop';
 
 const commit = (sha: string): Commit => ({ sha, parents: [], author: 'A', email: 'a@x', date: 0, subject: sha, body: '', refs: [] }) as Commit;
 const br = (name: string, sha: string, extra: Partial<Branch> = {}): Branch => ({ name, sha, current: false, remote: false, upstream: null, ...extra });
@@ -130,5 +130,12 @@ describe('dropActions : états du dépôt', () => {
     expect(dragDisabledReason(s)).toMatch(/vide/);
     expect(dropActions(s, local('feature'), { kind: 'branch', name: 'main', remote: false })).toEqual([]);
     expect(dragDisabledReason(snap())).toBeNull();
+  });
+});
+
+describe('fullRef', () => {
+  it('nom complet, jamais ambigu avec un tag ou une branche locale « origin/x »', () => {
+    expect(fullRef({ name: 'origin/x', remote: false })).toBe('refs/heads/origin/x');
+    expect(fullRef({ name: 'origin/x', remote: true })).toBe('refs/remotes/origin/x');
   });
 });

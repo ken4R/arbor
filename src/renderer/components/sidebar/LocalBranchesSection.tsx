@@ -1,7 +1,7 @@
 import type { RepoSnapshot } from '../../../shared/types';
 import { branchMenu, checkoutBranch } from '../../actions';
 import { useUi } from '../../ui';
-import { isMenuKey } from '../ContextMenu';
+import { isMenuKey, menuAnchor } from '../ContextMenu';
 import { dragDisabledReason, dropTargetProps, startRefDrag } from '../../refDrop';
 import { useTabsBusy } from '../../tabs';
 import { Icon } from '../Icons';
@@ -27,7 +27,13 @@ export function LocalBranchesSection({ snap, match, onSelectCommit }: { snap: Re
           title={b.upstream ? `Suit ${b.upstream}` : 'Pas de branche distante'}
           onClick={() => onSelectCommit(b.sha)}
           onDoubleClick={() => !b.current && checkoutBranch(ui, repo, b.name)}
-          onContextMenu={(e) => ui.openMenu(e, branchMenu(ui, snap, b.name, false))}
+          onContextMenu={(e) => {
+            // Clic droit ou touche Menu : un seul chemin (position sous l'élément quand l'événement vient du clavier).
+            e.preventDefault();
+            e.stopPropagation();
+            const at = menuAnchor(e);
+            ui.openMenuAt(at.x, at.y, branchMenu(ui, snap, b.name, false));
+          }}
           tabIndex={0}
           onKeyDown={(e) => {
             if (e.key === 'Enter') onSelectCommit(b.sha);

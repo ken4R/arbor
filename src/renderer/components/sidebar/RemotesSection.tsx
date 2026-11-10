@@ -2,7 +2,7 @@ import type { Remote, RepoSnapshot } from '../../../shared/types';
 import { remoteOf } from '../../../shared/remotes';
 import { branchMenu, checkoutBranch, fetchRemoteAction, remoteMenu } from '../../actions';
 import { useUi } from '../../ui';
-import { isMenuKey } from '../ContextMenu';
+import { isMenuKey, menuAnchor } from '../ContextMenu';
 import { dragDisabledReason, dropTargetProps, startRefDrag } from '../../refDrop';
 import { useTabsBusy } from '../../tabs';
 import { Icon, IconRemoteAdd } from '../Icons';
@@ -51,7 +51,13 @@ export function RemotesSection({ snap, match, onSelectCommit }: { snap: RepoSnap
                 title={b.name}
                 onClick={() => onSelectCommit(b.sha)}
                 onDoubleClick={() => checkoutBranch(ui, repo, b.name)}
-                onContextMenu={(e) => ui.openMenu(e, branchMenu(ui, snap, b.name, true))}
+                onContextMenu={(e) => {
+            // Clic droit ou touche Menu : un seul chemin (position sous l'élément quand l'événement vient du clavier).
+            e.preventDefault();
+            e.stopPropagation();
+            const at = menuAnchor(e);
+            ui.openMenuAt(at.x, at.y, branchMenu(ui, snap, b.name, true));
+          }}
                 tabIndex={0}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') onSelectCommit(b.sha);
