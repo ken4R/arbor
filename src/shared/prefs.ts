@@ -26,6 +26,12 @@ export interface Preferences {
   layout: LayoutPreferences;
 }
 
+/** Correctif de préférences venu du rendu : `layout` peut ne donner qu'une largeur. */
+export type PreferencesPatch = Partial<Omit<Preferences, 'layout'>> & { layout?: Partial<LayoutPreferences> };
+
+/** Largeur minimale de la colonne centrale (graphe, diff), réservée par les séparateurs. */
+export const CENTER_MIN_WIDTH = 320;
+
 export const SIDEBAR_WIDTH_MIN = 160;
 export const SIDEBAR_WIDTH_MAX = 480;
 export const RIGHT_WIDTH_MIN = 260;

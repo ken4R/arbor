@@ -53,9 +53,18 @@ describe('normalizeSession : états d’affichage', () => {
     search: { open: true, field: 'author', text: 'Léa' },
   };
 
-  it('garde un état valide, seulement pour les dépôts retenus', () => {
-    const s = normalizeSession({ repos: ['/a', '/x'], active: 0, views: { '/a': view, '/x': view, '/autre': view } }, (p) => p !== '/x');
-    expect(s.views).toEqual({ '/a': view });
+  it('garde un état valide, seulement pour les dépôts retenus ou indisponibles', () => {
+    const s = normalizeSession(
+      { repos: ['/a', '/x'], active: 0, missing: ['/m'], views: { '/a': view, '/x': view, '/m': view, '/autre': view } },
+      (p) => p !== '/x',
+    );
+    expect(s.views).toEqual({ '/a': view, '/m': view });
+    expect(Object.getPrototypeOf(s.views)).toBeNull();
+  });
+
+  it('ignore les chemins non absolus', () => {
+    const s = normalizeSession({ repos: ['relatif', 'C:\\depot', '/a'], views: { relatif: view, 'C:\\depot': view, '/a': view } });
+    expect(Object.keys(s.views)).toEqual(['C:\\depot', '/a']);
   });
 
   it('ignore des vues invalides ou d’une autre version', () => {
@@ -88,6 +97,9 @@ describe('normalizeSession : états d’affichage', () => {
     expect(v?.filter).toHaveLength(VIEW_TEXT_LIMIT);
     expect(v?.search.text).toHaveLength(VIEW_TEXT_LIMIT);
     expect(Object.keys(v!.collapsed)).toHaveLength(COLLAPSED_LIMIT);
+    // Les dernières clés sont gardées.
+    expect(v!.collapsed[`s${COLLAPSED_LIMIT + 9}`]).toBe(true);
+    expect(v!.collapsed.s0).toBeUndefined();
     expect(v!.collapsed.bad).toBeUndefined();
   });
 });

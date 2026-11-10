@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from 'react';
-import { DEFAULT_PREFERENCES, mergePreferences, normalizePreferences, type Preferences } from '../shared/prefs';
+import { DEFAULT_PREFERENCES, mergePreferences, normalizePreferences, type Preferences, type PreferencesPatch } from '../shared/prefs';
 import { api } from './api';
 
 // Préférences côté rendu : copie locale du fichier tenu par le processus principal (`api.getPreferences`).
@@ -40,7 +40,7 @@ export function usePreferencesLoaded(): boolean {
  * Applique le correctif immédiatement (optimiste) puis l'enregistre. En cas d'échec, l'état revient à la valeur
  * enregistrée par le processus principal (relue si possible) et l'erreur est relancée.
  */
-export async function updatePreferences(patch: Partial<Preferences>): Promise<Preferences> {
+export async function updatePreferences(patch: PreferencesPatch): Promise<Preferences> {
   current = mergePreferences(current, patch);
   emit();
   const seq = ++writeSeq;

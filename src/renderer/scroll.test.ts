@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { anchorFor, scrollTopFor } from './scroll';
+import { anchorFor, reanchor, scrollTopFor } from './scroll';
 
 const commits = ['a1', 'b2', 'c3', 'd4'].map((sha) => ({ sha }));
 const H = 30;
@@ -33,5 +33,16 @@ describe('ancrage du défilement', () => {
 
   it('borne le décalage à la hauteur d’une ligne', () => {
     expect(scrollTopFor(commits, { sha: 'a1', offset: 500 }, H)).toBe(30 + 29);
+  });
+});
+
+describe('réancrage quand les commits changent', () => {
+  it('garde la première ligne visible quand des commits arrivent au-dessus', () => {
+    expect(reanchor(commits, [{ sha: 'n1' }, { sha: 'n0' }, ...commits], 75, H)).toBe(135);
+  });
+
+  it('reste en haut (WIP) et garde les pixels si le commit ancré a disparu', () => {
+    expect(reanchor(commits, [{ sha: 'n0' }, ...commits], 10, H)).toBe(10);
+    expect(reanchor(commits, [{ sha: 'x' }, { sha: 'y' }], 75, H)).toBe(75);
   });
 });

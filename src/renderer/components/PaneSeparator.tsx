@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useReducer, useRef, useState } from 'react';
 import { clampWidth } from '../../shared/prefs';
 
 /** Pas d'un séparateur au clavier (←/→), en pixels. */
@@ -13,6 +13,8 @@ interface Props {
   value: number;
   min: number;
   max: number;
+  /** Largeur minimale de la colonne centrale : le maximum est borné par conteneur − autre panneau − ce minimum. */
+  centerMin: number;
   /** Largeur par défaut (double-clic). */
   byDefault: number;
   /** Élément `.main` : la largeur y est appliquée directement pendant le glissement, sans rendu de la vue. */
@@ -22,14 +24,32 @@ interface Props {
 }
 
 /** Séparateur vertical redimensionnable à la souris et au clavier (`role="separator"`, ←/→, Origine/Fin). */
-export function PaneSeparator({ side, label, cssVar, value, min, max, byDefault, container, onCommit }: Props) {
+export function PaneSeparator({ side, label, cssVar, value, min, max: maxWidth, centerMin, byDefault, container, onCommit }: Props) {
   // Largeur affichée pendant un glissement ou une suite de touches ; `null` = valeur enregistrée.
   // Doublée d'une référence : plusieurs événements peuvent arriver avant le rendu suivant.
   const [live, setLiveState] = useState<number | null>(null);
   const liveRef = useRef<number | null>(null);
   const drag = useRef<{ x: number; start: number } | null>(null);
   const width = live ?? value;
-  const clamp = (w: number) => clampWidth(w, min, max, value);
+  // Maximum effectif, relu à chaque événement : jamais au point d'écraser la colonne centrale (fenêtre étroite).
+  // Autre panneau = dernier élément de `.main` (séparateur gauche) ou premier (séparateur droit), à sa largeur réelle.
+  const effectiveMax = () => {
+    const el = container.current;
+    const other = side === 'left' ? el?.lastElementChild : el?.firstElementChild;
+    if (!el || !other) return maxWidth;
+    return Math.max(min, Math.min(maxWidth, el.clientWidth - other.getBoundingClientRect().width - centerMin));
+  };
+  // Fenêtre redimensionnée : maximum annoncé (`aria-valuemax`) recalculé.
+  const [, refresh] = useReducer((n: number) => n + 1, 0);
+  useEffect(() => {
+    const el = container.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => refresh());
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [container]);
+  const max = effectiveMax();
+  const clamp = (w: number) => clampWidth(w, min, effectiveMax(), value);
   const setLive = (w: number | null) => {
     liveRef.current = w;
     setLiveState(w);
@@ -92,7 +112,7 @@ export function PaneSeparator({ side, label, cssVar, value, min, max, byDefault,
         if (e.key === 'ArrowLeft') next = cur - grow * SEPARATOR_STEP;
         else if (e.key === 'ArrowRight') next = cur + grow * SEPARATOR_STEP;
         else if (e.key === 'Home') next = min;
-        else if (e.key === 'End') next = max;
+        else if (e.key === 'End') next = effectiveMax();
         if (next === null) return;
         e.preventDefault();
         apply(clamp(next));

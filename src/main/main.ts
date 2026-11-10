@@ -107,6 +107,8 @@ const REOPEN_TIMEOUT_MS = 3000;
  * rouverts) ; `null` tant que la session n'a été ni restaurée ni relue.
  */
 let missingRepos: string[] | null = null;
+/** État d'affichage des dépôts indisponibles (le rendu ne connaît que ses onglets) : réinjecté à chaque sauvegarde. */
+let missingViews: Record<string, PersistedView> = Object.create(null);
 
 function readSession(): SessionData {
   try {
@@ -165,7 +167,7 @@ async function restoreSession(): Promise<{ repos: string[]; active: number; view
   const repos: string[] = [];
   const missing: string[] = [];
   let active = 0;
-  const views: Record<string, PersistedView> = {};
+  const views: Record<string, PersistedView> = Object.create(null);
   results.forEach((r, i) => {
     if (r.kind === 'missing') missing.push(candidates[i]);
     if (r.kind !== 'ok') return; // `gone` : onglet écarté
@@ -176,16 +178,25 @@ async function restoreSession(): Promise<{ repos: string[]; active: number; view
     if (has(saved.views, candidates[i]) && !has(views, r.top)) views[r.top] = saved.views[candidates[i]];
   });
   missingRepos = missing.slice(0, MISSING_LIMIT);
+  missingViews = Object.create(null);
+  for (const p of missingRepos) if (Object.prototype.hasOwnProperty.call(saved.views, p)) missingViews[p] = saved.views[p];
   return { repos, active, views };
 }
 
 /** N'enregistre que des dépôts ouverts dans Arbor (mêmes règles que `assertOpened`), plus les dépôts indisponibles. */
 function saveSession(repos: unknown, active: unknown, views: unknown) {
   const recent = loadRecent();
+  if (missingRepos === null) {
+    // restauration désactivée : on garde les dépôts indisponibles et leur état d'affichage
+    const saved = readSession();
+    missingRepos = saved.missing;
+    for (const p of missingRepos) if (Object.prototype.hasOwnProperty.call(saved.views, p)) missingViews[p] = saved.views[p];
+  }
   const s = normalizeSession({ repos, active, views }, (p) => openedRepos.has(p) || recent.includes(p));
-  if (missingRepos === null) missingRepos = readSession().missing; // restauration désactivée : on les garde
   missingRepos = missingRepos.filter((p) => !s.repos.includes(p));
-  const data: SessionData = { ...s, missing: missingRepos };
+  // Vues des onglets ouverts, puis celles des dépôts indisponibles (assainies à nouveau, clés limitées).
+  const merged = normalizeSession({ repos: s.repos, active: s.active, missing: missingRepos, views: { ...missingViews, ...s.views } });
+  const data: SessionData = { ...s, missing: missingRepos, views: merged.views };
   writeFileAtomic(sessionFile(), JSON.stringify(data));
 }
 

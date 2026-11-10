@@ -20,3 +20,13 @@ export function scrollTopFor(commits: readonly { sha: string }[], anchor: Scroll
   const i = commits.findIndex((c) => c.sha === anchor.sha);
   return i < 0 ? 0 : (i + 1) * rowH + offset;
 }
+
+/**
+ * Nouveau `scrollTop` quand la liste des commits change sous la vue (commit, fetch, rebase) : la première ligne
+ * visible reste en haut. Si son commit a disparu, la position en pixels est gardée.
+ */
+export function reanchor(prev: readonly { sha: string }[], next: readonly { sha: string }[], scrollTop: number, rowH: number): number {
+  const anchor = anchorFor(prev, scrollTop, rowH);
+  if (anchor.sha !== null && !next.some((c) => c.sha === anchor.sha)) return scrollTop;
+  return scrollTopFor(next, anchor, rowH);
+}

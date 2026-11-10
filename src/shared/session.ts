@@ -65,7 +65,8 @@ export function normalizeView(raw: unknown): PersistedView | null {
   const collapsed: Record<string, boolean> = {};
   if (isObject(raw.collapsed)) {
     const entries = Object.entries(raw.collapsed).filter(([k, v]) => typeof v === 'boolean' && k !== '' && k.length <= VIEW_TEXT_LIMIT && k !== '__proto__');
-    for (const [k, v] of entries.slice(0, COLLAPSED_LIMIT)) collapsed[k] = v as boolean;
+    // Les plus récentes en dernier (ordre d'insertion) : on garde les dernières.
+    for (const [k, v] of entries.slice(-COLLAPSED_LIMIT)) collapsed[k] = v as boolean;
   }
   const s = isObject(raw.search) ? raw.search : {};
   return {
@@ -82,6 +83,9 @@ export function normalizeView(raw: unknown): PersistedView | null {
   };
 }
 
+/** Chemin absolu POSIX ou Windows (`C:\…`, `\\serveur\…`) : seuls ces chemins servent de clé de `views`. */
+export const isAbsolutePath = (p: string): boolean => p.startsWith('/') || /^[A-Za-z]:[\\/]/.test(p) || p.startsWith('\\\\');
+
 const strings = (v: unknown): string[] => (Array.isArray(v) ? v.filter((p): p is string => typeof p === 'string' && p !== '') : []);
 const unique = (list: string[]) => list.filter((p, i) => list.indexOf(p) === i);
 
@@ -89,7 +93,7 @@ const unique = (list: string[]) => list.filter((p, i) => list.indexOf(p) === i);
  * Assainit une session lue sur disque ou reçue du rendu : chaînes uniquement, sans doublon ; `allowed` filtre les
  * dépôts des onglets (pas les dépôts indisponibles). `active` désigne un index de la liste d'origine : il suit son
  * dépôt après filtrage, et vaut 0 s'il est hors bornes ou si ce dépôt a été écarté. `views` : seulement pour les
- * dépôts retenus, chaque état assaini par `normalizeView` (champs inconnus retirés, textes et sections bornés).
+ * dépôts retenus et les dépôts indisponibles (chemins absolus, objet sans prototype), chaque état assaini par `normalizeView` (champs inconnus retirés, textes et sections bornés).
  */
 export function normalizeSession(data: unknown, allowed: (path: string) => boolean = () => true): SessionData {
   const d = (data && typeof data === 'object' ? data : {}) as { repos?: unknown; active?: unknown; missing?: unknown; views?: unknown };
@@ -99,9 +103,9 @@ export function normalizeSession(data: unknown, allowed: (path: string) => boole
   const activeRepo = i >= 0 ? raw[i] : undefined;
   const active = typeof activeRepo === 'string' ? Math.max(0, repos.indexOf(activeRepo)) : 0;
   const missing = unique(strings(d.missing)).filter((p) => !repos.includes(p)).slice(0, MISSING_LIMIT);
-  const views: Record<string, PersistedView> = {};
+  const views: Record<string, PersistedView> = Object.create(null);
   if (isObject(d.views)) {
-    for (const repo of repos) {
+    for (const repo of [...repos, ...missing].filter(isAbsolutePath)) {
       const v = Object.prototype.hasOwnProperty.call(d.views, repo) ? normalizeView(d.views[repo]) : null;
       if (v) views[repo] = v;
     }

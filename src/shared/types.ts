@@ -1,5 +1,5 @@
 import type { FinalNewlines, MergeBlock } from './merge3';
-import type { Preferences } from './prefs';
+import type { Preferences, PreferencesPatch } from './prefs';
 import type { RebaseProgress, RebaseStep } from './rebase';
 import type { PersistedView } from './session';
 
@@ -207,7 +207,7 @@ export interface ArborApi {
   /** Préférences de l'utilisateur (`userData/prefs.json`), normalisées. */
   getPreferences(): Promise<Preferences>;
   /** Fusionne un correctif dans les préférences, les enregistre et renvoie le résultat normalisé. */
-  setPreferences(patch: Partial<Preferences>): Promise<Preferences>;
+  setPreferences(patch: PreferencesPatch): Promise<Preferences>;
   /** Onglets de la session précédente (`userData/session.json`) ; dépôts supprimés écartés, dépôts inaccessibles gardés
    * par le processus principal pour un prochain lancement (voir `shared/session.ts`), récents inchangés. */
   restoreSession(): Promise<{ repos: string[]; active: number; views: Record<string, PersistedView> }>;

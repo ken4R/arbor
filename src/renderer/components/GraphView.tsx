@@ -8,7 +8,7 @@ import { fullDate, hashColor, initials, laneColor, relativeDate } from '../util'
 import { isShaQuery, matchNormalized, normalize, normalizeCommit, useSearch } from '../search';
 import { SearchBar } from './SearchBar';
 import { Icon } from './Icons';
-import { anchorFor, scrollTopFor } from '../scroll';
+import { anchorFor, reanchor, scrollTopFor } from '../scroll';
 import type { ScrollAnchor } from '../../shared/session';
 
 const ROW_H = 30;
@@ -107,6 +107,20 @@ export function GraphView({ snap, rows, selection, onSelect, initialAnchor, onAn
     },
     [], // eslint-disable-line react-hooks/exhaustive-deps
   );
+
+  // Commits changés sous la vue (rafraîchissement) : la première ligne visible reste en place.
+  const prevCommits = useRef(snap.commits);
+  useLayoutEffect(() => {
+    const prev = prevCommits.current;
+    prevCommits.current = snap.commits;
+    const el = scroller.current;
+    if (!el || prev === snap.commits) return;
+    const next = reanchor(prev, snap.commits, el.scrollTop, ROW_H);
+    if (next === el.scrollTop) return;
+    el.scrollTop = next;
+    setScrollTop(el.scrollTop);
+    lastScrollTop.current = el.scrollTop;
+  }, [snap.commits]);
 
   // Fait défiler jusqu'à la ligne sélectionnée si elle est hors de vue.
   useEffect(() => {

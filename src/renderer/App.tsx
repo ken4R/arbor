@@ -39,7 +39,7 @@ import { PaneSeparator } from './components/PaneSeparator';
 import { getTabView, onViewChange, patchTabView, toPersistedView } from './tabs';
 import { getSearch, subscribeSearch } from './search';
 import type { ScrollAnchor } from '../shared/session';
-import { DEFAULT_PREFERENCES, RIGHT_WIDTH_MAX, RIGHT_WIDTH_MIN, SIDEBAR_WIDTH_MAX, SIDEBAR_WIDTH_MIN } from '../shared/prefs';
+import { CENTER_MIN_WIDTH, DEFAULT_PREFERENCES, RIGHT_WIDTH_MAX, RIGHT_WIDTH_MIN, SIDEBAR_WIDTH_MAX, SIDEBAR_WIDTH_MIN } from '../shared/prefs';
 
 export type Selection = { kind: 'wip' } | { kind: 'commit'; sha: string };
 
@@ -222,7 +222,8 @@ function RepoView({ tabId, repo, onBusy }: RepoViewProps) {
   const { autoRefresh, layout } = usePreferences();
   // état des onglets : largeur des panneaux (préférence commune à tous les onglets) et défilement du graphe.
   const mainRef = useRef<HTMLDivElement>(null);
-  const saveLayout = (patch: Partial<typeof layout>) => updatePreferences({ layout: { ...layout, ...patch } }).catch(() => {});
+  // Seule la largeur modifiée est envoyée : un réglage fait dans une autre fenêtre n'est pas écrasé.
+  const saveLayout = (patch: Partial<typeof layout>) => updatePreferences({ layout: patch }).catch(() => {});
   const onAnchor = useCallback((a: ScrollAnchor) => patchTabView(tabId, { graph: a }), [tabId]);
   const toggleAutoRefresh = () => updatePreferences({ autoRefresh: !autoRefresh }).catch(() => {}); // échec : l'interrupteur revient à la valeur enregistrée
 
@@ -448,6 +449,7 @@ function RepoView({ tabId, repo, onBusy }: RepoViewProps) {
                 min={SIDEBAR_WIDTH_MIN}
                 max={SIDEBAR_WIDTH_MAX}
                 byDefault={DEFAULT_PREFERENCES.layout.sidebarWidth}
+                centerMin={CENTER_MIN_WIDTH}
                 container={mainRef}
                 onCommit={(w) => saveLayout({ sidebarWidth: w })}
               />
@@ -479,6 +481,7 @@ function RepoView({ tabId, repo, onBusy }: RepoViewProps) {
                 min={RIGHT_WIDTH_MIN}
                 max={RIGHT_WIDTH_MAX}
                 byDefault={DEFAULT_PREFERENCES.layout.rightWidth}
+                centerMin={CENTER_MIN_WIDTH}
                 container={mainRef}
                 onCommit={(w) => saveLayout({ rightWidth: w })}
               />
