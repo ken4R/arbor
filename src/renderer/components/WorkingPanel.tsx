@@ -7,6 +7,7 @@ import { OperationBanner } from './OperationBanner';
 import { useSubmodules } from '../submodules';
 import { openSubmoduleTab, resetSubmoduleAction } from '../actions';
 import type { MenuItem } from './ContextMenu';
+import { LFS_MISSING_TEXT, lfsMissing, useLfsInfo, useLfsPaths } from '../lfs';
 
 /** Message de commit en cours, conservé par App quand on consulte un autre commit. */
 export interface CommitDraft {
@@ -58,6 +59,9 @@ export function WorkingPanel({ repo, snap, activeDiff, draft, onDraft }: Props) 
       },
     ];
   };
+  // lfs : badge des fichiers stockés dans LFS, bandeau si git-lfs est absent.
+  const lfsInfo = useLfsInfo(snap);
+  const lfsPaths = useLfsPaths(snap);
 
   const doCommit = async () => {
     const message = description.trim() ? `${summary.trim()}\n\n${description.trim()}` : summary.trim();
@@ -77,6 +81,11 @@ export function WorkingPanel({ repo, snap, activeDiff, draft, onDraft }: Props) 
   return (
     <div className="panel working">
       <OperationBanner repo={repo} snap={snap} />
+      {lfsMissing(snap, lfsInfo) && (
+        <div className="lfs-banner" role="status">
+          {LFS_MISSING_TEXT}
+        </div>
+      )}
 
       {st.conflicted.length > 0 && (
         <PanelSection title="Conflits" count={st.conflicted.length}>
@@ -105,6 +114,7 @@ export function WorkingPanel({ repo, snap, activeDiff, draft, onDraft }: Props) 
           diffFor={(f) => ({ kind: 'working', path: f.path, staged: false, untracked: f.status === '?' })}
           action={{ label: 'Indexer', onClick: (f) => ui.run('Indexation…', () => api.stage(repo, [f.path])) }}
           submodules={subPaths}
+          lfs={lfsPaths}
           menu={(f) => (subPaths.has(f.path) ? submoduleFileMenu(f.path) : [
             { label: 'Indexer', onClick: () => ui.run('Indexation…', () => api.stage(repo, [f.path])) },
             'separator',
@@ -139,6 +149,7 @@ export function WorkingPanel({ repo, snap, activeDiff, draft, onDraft }: Props) 
           diffFor={(f) => ({ kind: 'working', path: f.path, oldPath: f.oldPath, staged: true })}
           action={{ label: 'Retirer', onClick: (f) => ui.run('Désindexation…', () => api.unstage(repo, withOld([f]))) }}
           submodules={subPaths}
+          lfs={lfsPaths}
           menu={(f) =>
             // Fichier ajouté : pas encore d'historique. Renommage : historique et blame de l'ancien chemin (version de HEAD).
             subPaths.has(f.path)

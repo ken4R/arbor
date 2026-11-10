@@ -13,9 +13,11 @@ interface Props {
   menu?: (f: FileChange) => MenuItem[];
   /** Chemins des sous-modules : badge « sous-module » sur ces entrées. */
   submodules?: ReadonlySet<string>;
+  /** Chemins stockés dans LFS (attribut `filter=lfs`) : badge « LFS », ou « sera stocké dans LFS » pour un fichier non suivi. */
+  lfs?: ReadonlySet<string>;
 }
 
-export function FileList({ files, diffFor, activeDiff, action, menu, submodules }: Props) {
+export function FileList({ files, diffFor, activeDiff, action, menu, submodules, lfs }: Props) {
   const ui = useUi();
   return (
     <ul className="files">
@@ -41,6 +43,14 @@ export function FileList({ files, diffFor, activeDiff, action, menu, submodules 
             {submodules?.has(f.path) && (
               <span className="file-badge-submodule" title="Sous-module : le diff montre le changement de commit">
                 sous-module
+              </span>
+            )}
+            {lfs?.has(f.path) && (
+              <span
+                className="file-badge-lfs"
+                title={f.status === '?' ? 'Ce fichier correspond à un motif LFS : il sera stocké dans LFS une fois ajouté' : 'Fichier stocké dans LFS : le diff compare les pointeurs'}
+              >
+                {f.status === '?' ? 'sera stocké dans LFS' : 'LFS'}
               </span>
             )}
             {action && (

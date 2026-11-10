@@ -286,6 +286,10 @@ const READ_ONLY = new Set([
   'openSubmodule', // valide le chemin, n'écrit que la liste des récents
 
   // lfs
+  // `lfsInfo` : `git lfs version`, check-attr et lecture du `.gitattributes` en Node ; n'écrit rien (jamais
+  // `git lfs track`, qui installe des hooks et écrit .git/config). `lfsFiles` reste hors de cette liste :
+  // `git lfs ls-files` n'écrit pas l'index mais ajoute `lfs.repositoryformatversion` à .git/config s'il manque.
+  'lfsInfo',
 
   // état des onglets
 ]);
@@ -402,6 +406,11 @@ const handlers: Record<string, (...args: any[]) => Promise<unknown>> = {
   openSubmodule: async (repo: string, path: unknown) => openRepo(await g.submoduleRoot(repo, path)),
 
   // lfs
+  lfsInfo: (repo: string, paths: unknown) => g.lfsInfo(repo, paths),
+  lfsFiles: g.lfsFiles,
+  lfsTrack: (repo: string, pattern: unknown, untrack: unknown) => g.lfsTrack(repo, pattern, untrack),
+  lfsFetch: g.lfsFetch,
+  lfsPull: (repo: string, paths: unknown) => g.lfsPull(repo, paths),
 
   // état des onglets
 };

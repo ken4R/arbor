@@ -299,6 +299,20 @@ export interface ArborApi {
   openSubmodule(repo: string, path: string): Promise<string>;
 
   // lfs
+  /**
+   * git-lfs installé (version), motifs suivis ou exclus (lus dans le `.gitattributes` racine, sans git-lfs) et,
+   * parmi `paths` (fichiers du statut), ceux dont l'attribut `filter` vaut `lfs`. N'écrit rien et ne lit jamais la
+   * liste des fichiers LFS (voir `lfsFiles`).
+   */
+  lfsInfo(repo: string, paths: string[]): Promise<LfsInfo>;
+  /** Fichiers LFS de HEAD et de l'index (`git lfs ls-files --json`), au plus 1 000. Coûteux : chargement à la demande. */
+  lfsFiles(repo: string): Promise<LfsFiles>;
+  /** Suit (`git lfs track -- <motif>`) ou ne suit plus (`untrack`) un motif du `.gitattributes` racine. */
+  lfsTrack(repo: string, pattern: string, untrack: boolean): Promise<void>;
+  /** Télécharge les objets LFS de la branche courante sans toucher à l'arbre de travail (`git lfs fetch`). */
+  lfsFetch(repo: string): Promise<void>;
+  /** Télécharge et extrait les fichiers LFS : tous (`paths` null) ou ceux donnés (`--include`), revérifiés. */
+  lfsPull(repo: string, paths: string[] | null): Promise<void>;
 
   // état des onglets
 }
@@ -423,5 +437,39 @@ export interface Submodule {
 }
 
 // lfs
+
+/** Motif LFS : `excluded` = exclusion (`-filter`, `!filter`) ; `source` = fichier `.gitattributes` qui le déclare. */
+export interface LfsPattern {
+  pattern: string;
+  source: string;
+  excluded: boolean;
+}
+
+export interface LfsInfo {
+  /** git-lfs utilisable par Arbor (`git lfs version` réussit). */
+  installed: boolean;
+  version: string | null;
+  patterns: LfsPattern[];
+  /** Chemins demandés dont l'attribut `filter` vaut `lfs` (stockés dans LFS au prochain commit). */
+  lfsPaths: string[];
+}
+
+export interface LfsFile {
+  path: string;
+  /** Empreinte SHA-256 de l'objet. */
+  oid: string;
+  /** Le fichier de l'arbre de travail est le contenu ; false = pointeur seul (objet non récupéré ou non extrait). */
+  present: boolean;
+  /** Objet présent dans le stockage local (`.git/lfs/objects`) ; null si git-lfs ne le dit pas. */
+  downloaded: boolean | null;
+  /** Taille de l'objet en octets (null si git-lfs ne la donne pas). */
+  size: number | null;
+}
+
+export interface LfsFiles {
+  files: LfsFile[];
+  /** Liste tronquée à 1 000 fichiers. */
+  truncated: boolean;
+}
 
 // état des onglets

@@ -28,6 +28,8 @@ import './commands/tags';
 import './commands/reflog';
 // sous-modules
 import './commands/submodules';
+// lfs
+import './commands/lfs';
 // glisser-déposer
 import './commands/branches';
 import { clearDropHover, endRefDrag } from './refDrop';

@@ -35,6 +35,11 @@ export class GitError extends Error {
   }
 }
 
+// lfs : exécutable `git-lfs` introuvable (dépôt LFS sans git-lfs installé), sous ses différentes formes. Un filtre
+// git-lfs présent mais en échec (objet introuvable, téléchargement impossible) est une autre erreur (LFS_FILTER_FAILED).
+const LFS_MISSING = /git-lfs(?: [\w-]+)?: (?:\d+: )?(?:git-lfs: )?(?:command )?not found|'git-lfs' was not found on your path|git: 'lfs' is not a git command/;
+const LFS_FILTER_FAILED = /external filter '?git-lfs[^\n]*'? failed|smudge filter lfs failed/;
+
 const GIT_ERRORS: [RegExp, (m: RegExpMatchArray) => string][] = [
   // Avant les conflits : un commit devenu vide pendant un rebase sort aussi « could not apply ».
   [/previous cherry-pick is now empty/, () => 'Le commit en cours est devenu vide (ses changements sont déjà présents) : retirez-le avec Passer (ou Continuer pendant un rebase).'],
@@ -74,6 +79,8 @@ const GIT_ERRORS: [RegExp, (m: RegExpMatchArray) => string][] = [
   [/No url found for submodule path '(.+?)' in \.gitmodules/, (m) => `Aucune URL n'est déclarée pour le sous-module « ${m[1]} » dans .gitmodules.`],
 
   // lfs
+  [LFS_MISSING, () => "git-lfs n'est pas installé (ou introuvable dans le PATH) : Git ne peut pas lire ni écrire les fichiers LFS de ce dépôt. Installez git-lfs puis relancez Arbor."],
+  [LFS_FILTER_FAILED, () => "Le filtre LFS a échoué : un objet LFS est introuvable ou n'a pas pu être téléchargé. Vérifiez le remote et la connexion, puis récupérez les fichiers LFS."],
 ];
 
 /** Traduit les erreurs Git courantes en français ; sinon renvoie la fin du message d'origine. */
@@ -238,9 +245,10 @@ async function repoState(repo: string, knownDir?: string): Promise<RepoState> {
   return 'clean';
 }
 
-export async function status(repo: string): Promise<WorkingStatus> {
+/** `config` : options `-c clé=valeur` placées avant la commande (lecture sans filtre LFS, voir `statusWithoutLfs`). */
+export async function status(repo: string, config: string[] = []): Promise<WorkingStatus> {
   const [out, dir] = await Promise.all([
-    git(repo, ['--no-optional-locks', 'status', '--porcelain=v1', '-z', '-b', '--untracked-files=all']),
+    git(repo, [...config, '--no-optional-locks', 'status', '--porcelain=v1', '-z', '-b', '--untracked-files=all']),
     gitDir(repo),
   ]);
   const state = await repoState(repo, dir);
@@ -529,7 +537,7 @@ export async function snapshot(repo: string): Promise<RepoSnapshot> {
     git(repo, TAGS_ARGS),
     git(repo, ['remote']),
     git(repo, ['remote', '-v']),
-    status(repo),
+    status(repo).catch((e) => statusWithoutLfs(repo, e)),
     stashes(repo),
     repoFeatures(repo),
   ]);
@@ -710,7 +718,7 @@ const diffPaths = (t: { path: string; oldPath?: string }) => (t.oldPath ? [t.old
  * le texte doit rester analysable et réapplicable par `git apply` (préfixes a/ b/ pour -p1, pas de couleur,
  * pas d'outil externe ni de textconv qui produiraient un contenu différent du fichier réel).
  */
-const DIFF_OUTPUT = ['--no-color', '--no-ext-diff', '--no-textconv', '--src-prefix=a/', '--dst-prefix=b/', '--submodule=short'];
+const DIFF_OUTPUT = ['--no-color', '--no-ext-diff', '--no-textconv', '--src-prefix=a/', '--dst-prefix=b/', '--submodule=short', '-U3'];
 
 export async function diff(repo: string, t: DiffTarget): Promise<string> {
   if (t.kind === 'commit') {
@@ -780,6 +788,10 @@ export async function applyPatchSelection(repo: string, t: DiffTarget, shown: st
   if (raw !== shown) throw new GitError('Le fichier a changé depuis l\'affichage, recommencez.', '');
   // sous-modules : un gitlink (mode 160000) n'a pas de lignes à indexer partiellement.
   if (parseSubmoduleChange(raw)) throw new GitError('Sous-module : indexez ou désindexez son commit en entier.', '');
+  // lfs : un pointeur partiellement indexé serait invalide. Garde par l'attribut (indépendante du texte : fichier brut
+  // devenu pointeur, contexte réduit…), puis par le contenu du diff.
+  const lfsFilter = parseFilterAttr(await git(repo, ['check-attr', '-z', 'filter', '--', t.path])) === 'lfs';
+  if (lfsFilter || lfsPointerChange(raw)) throw new GitError('Fichier LFS : indexez ou désindexez le fichier en entier.', '');
   let patch: string;
   try {
     patch = buildPartialPatch(raw, sel, action !== 'stage');
@@ -2133,4 +2145,158 @@ export async function submoduleReset(repo: string, path: unknown, expected: unkn
 
 export async function submoduleSync(repo: string) {
   await git(repo, ['submodule', 'sync', '--recursive']);
+}
+
+// lfs
+// git-lfs est facultatif : sans lui, les motifs viennent du `.gitattributes` racine et les actions sont refusées.
+// `git lfs ls-files` n'est jamais appelé par `snapshot` (liste chargée à la demande par `lfsFiles`).
+
+import type { LfsFiles, LfsInfo, LfsPattern } from '../shared/types';
+import {
+  lfsPullArgs,
+  lfsIncludeError,
+  lfsPointerChange,
+  lfsPathsFromCheckAttr,
+  lfsPatternError,
+  parseGitattributesLfs,
+  parseLfsFiles,
+  parseLfsFilesJson,
+  parseLfsVersion,
+} from '../shared/lfs';
+
+/** Filtre LFS neutralisé : les fichiers sont comparés tels quels à l'index (lecture seule, git-lfs absent). */
+const LFS_FILTER_OFF = ['-c', 'filter.lfs.process=', '-c', 'filter.lfs.clean=', '-c', 'filter.lfs.smudge=', '-c', 'filter.lfs.required=false'];
+
+/**
+ * Arguments et environnement de `git lfs <args>`. Jamais `--literal-pathspecs` ici, et `GIT_LITERAL_PATHSPECS`
+ * forcé à 0 (au cas où il viendrait de l'environnement) : la variable se propage aux `git` lancés par git-lfs, qui
+ * utilise des pathspecs magiques (git-lfs 3.8 : `git ls-files ':(top,attr:filter=lfs)'`) ; rendues littérales,
+ * elles ne trouvent aucun fichier et `git lfs pull` réussit sans rien récupérer. Les chemins passés à git-lfs
+ * (`--include`, motif après `--`) sont validés en amont et ne sont pas des pathspecs Git.
+ */
+export function lfsCommand(args: string[]): { args: string[]; env: Record<string, string> } {
+  return { args: ['lfs', ...args], env: { GIT_LITERAL_PATHSPECS: '0' } };
+}
+
+function lfs(repo: string, args: string[]): Promise<string> {
+  const c = lfsCommand(args);
+  return git(repo, c.args, { env: c.env });
+}
+
+/** Erreur due à un git-lfs introuvable. */
+export function isLfsMissing(e: unknown): boolean {
+  return e instanceof GitError && LFS_MISSING.test(e.stderr);
+}
+
+/**
+ * Statut d'un dépôt LFS sans git-lfs : `git status` échoue dès qu'un fichier LFS doit passer par le filtre (fichier
+ * modifié). Relu sans le filtre pour que le dépôt s'affiche (un fichier LFS modifié apparaît modifié) ; toute autre
+ * erreur est relancée.
+ */
+export async function statusWithoutLfs(repo: string, e: unknown): Promise<WorkingStatus> {
+  if (!isLfsMissing(e)) throw e;
+  return status(repo, LFS_FILTER_OFF);
+}
+
+/** Résultat de `git lfs version` gardé pour le processus ; une absence est revérifiée après ce délai. */
+const LFS_RECHECK_MS = 30_000;
+let lfsVersionCache: { installed: boolean; version: string | null; at: number } | null = null;
+
+/** Oublie le résultat de `git lfs version` (tests : changement de PATH). */
+export function forgetLfsVersion() {
+  lfsVersionCache = null;
+}
+
+export async function lfsVersion(repo: string): Promise<{ installed: boolean; version: string | null }> {
+  const c = lfsVersionCache;
+  if (c && (c.installed || Date.now() - c.at < LFS_RECHECK_MS)) return c;
+  const out = await lfs(repo, ['version']).catch(() => null);
+  lfsVersionCache = { installed: out !== null, version: out === null ? null : parseLfsVersion(out), at: Date.now() };
+  return lfsVersionCache;
+}
+
+async function requireLfs(repo: string) {
+  if (!(await lfsVersion(repo)).installed)
+    throw new GitError("git-lfs n'est pas installé (ou introuvable dans le PATH) : installez-le puis relancez Arbor.", '');
+}
+
+/**
+ * Motifs du `.gitattributes` racine, lus en Node : `git lfs track`, même pour lister, installe des hooks et écrit
+ * `.git/config`. Les `.gitattributes` des sous-dossiers ne sont pas listés.
+ */
+async function lfsPatterns(repo: string): Promise<LfsPattern[]> {
+  const text = await readTextOrNull(join(repo, '.gitattributes'));
+  return text === null ? [] : parseGitattributesLfs(text);
+}
+
+/** Nombre maximal de chemins du statut examinés par `check-attr`. */
+const LFS_ATTR_MAX = 10_000;
+
+export async function lfsInfo(repo: string, paths: unknown): Promise<LfsInfo> {
+  const list = (Array.isArray(paths) ? paths : [])
+    .filter((p): p is string => typeof p === 'string' && p !== '' && !p.includes('\0'))
+    .slice(0, LFS_ATTR_MAX);
+  const [{ installed, version }, features] = await Promise.all([lfsVersion(repo), repoFeatures(repo)]);
+  // Lecture pure : seuls `git lfs version` (n'écrit rien) et `git check-attr` sont lancés, jamais `git lfs track`.
+  if (!features.lfs) return { installed, version, patterns: [], lfsPaths: [] };
+  const [patterns, lfsPaths] = await Promise.all([
+    lfsPatterns(repo),
+    list.length
+      ? git(repo, ['check-attr', '-z', '--stdin', 'filter'], { input: list.map((p) => `${p}\0`).join('') }).then(lfsPathsFromCheckAttr)
+      : Promise.resolve([]),
+  ]);
+  return { installed, version, patterns, lfsPaths };
+}
+
+const LFS_FILES_MAX = 1000;
+
+async function allLfsFiles(repo: string) {
+  await requireLfs(repo);
+  const json = await lfs(repo, ['ls-files', '--json']).catch(() => null);
+  return (json === null ? null : parseLfsFilesJson(json)) ?? parseLfsFiles(await lfs(repo, ['ls-files', '-l']));
+}
+
+export async function lfsFiles(repo: string): Promise<LfsFiles> {
+  const files = await allLfsFiles(repo);
+  return { files: files.slice(0, LFS_FILES_MAX), truncated: files.length > LFS_FILES_MAX };
+}
+
+/** Suit ou ne suit plus un motif (validé, toujours après `--`) ; `untrack` n'accepte qu'un motif suivi du `.gitattributes` racine. */
+export async function lfsTrack(repo: string, pattern: unknown, untrack: unknown) {
+  const err = lfsPatternError(pattern);
+  if (err) throw new GitError(err, '');
+  const p = pattern as string;
+  await requireLfs(repo);
+  if (untrack === true) {
+    const known = (await lfsPatterns(repo)).some((x) => x.pattern === p && x.source === '.gitattributes' && !x.excluded);
+    if (!known) throw new GitError(`« ${p} » n'est pas un motif suivi du .gitattributes racine.`, '');
+  }
+  await lfs(repo, [untrack === true ? 'untrack' : 'track', '--', p]);
+}
+
+export async function lfsFetch(repo: string) {
+  await requireLfs(repo);
+  await lfs(repo, ['fetch']);
+}
+
+/** Nombre maximal de fichiers récupérés un par un (au-delà, tout récupérer). */
+const LFS_PULL_MAX = 100;
+
+export async function lfsPull(repo: string, paths: unknown) {
+  await requireLfs(repo);
+  if (paths === null) {
+    await lfs(repo, ['pull']);
+    return;
+  }
+  if (!Array.isArray(paths) || paths.length === 0 || paths.length > LFS_PULL_MAX || !paths.every((p) => typeof p === 'string'))
+    throw new GitError('Liste de fichiers LFS invalide.', '');
+  for (const p of paths as string[]) {
+    const err = lfsIncludeError(p);
+    if (err) throw new GitError(err, '');
+  }
+  // Chemins revérifiés contre la liste recalculée : `--include` ne reçoit que des fichiers LFS connus.
+  const known = new Set((await allLfsFiles(repo)).map((f) => f.path));
+  const unknown = (paths as string[]).find((p) => !known.has(p));
+  if (unknown !== undefined) throw new GitError(`« ${unknown} » n'est pas un fichier LFS de ce dépôt.`, '');
+  for (const args of lfsPullArgs(paths as string[])) await lfs(repo, ['pull', ...args]);
 }
