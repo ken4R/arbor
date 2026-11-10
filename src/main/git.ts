@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
-import { existsSync } from 'node:fs';
+import { existsSync, realpathSync } from 'node:fs';
 import { chmod, lstat, mkdtemp, readFile as fsReadFile, realpath, rename, rm, stat, unlink, writeFile as fsWriteFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve as resolvePath, sep } from 'node:path';
@@ -1875,18 +1875,46 @@ export function buildSubmodules(
   });
 }
 
-/** Sous-modules déclarés dans `.gitmodules` (aucun lancement de `git` sans ce fichier). */
-export async function submodules(repo: string): Promise<Submodule[]> {
+/**
+ * Vrai si `<chemin>` est un vrai dossier du dépôt (aucun lien symbolique sur le trajet : un lien `ext -> ../autre`
+ * mènerait hors du dépôt) qui contient `.git`.
+ */
+function isInitializedSync(repo: string, rootReal: string | null, path: string): boolean {
+  if (rootReal === null) return false;
+  try {
+    return realpathSync(join(repo, path)) === join(rootReal, path) && existsSync(join(repo, path, '.git'));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Sous-modules déclarés dans `.gitmodules` (aucun lancement de `git` sans ce fichier). `changed` (facultatif, envoyé
+ * par le rendu) : chemins présents dans le statut du dépôt ; le `status` des sous-modules n'est lancé que pour eux
+ * (les autres sont à jour par construction), et pas du tout si aucun. Sans `changed`, tous les chemins sont lus
+ * (vérifications du processus principal).
+ */
+export async function submodules(repo: string, changed?: unknown): Promise<Submodule[]> {
   if (!existsSync(join(repo, '.gitmodules'))) return [];
   const config = await git(repo, ['config', '-z', '-f', '.gitmodules', '--get-regexp', '^submodule\\.'], { okCodes: [1] });
   const entries = parseGitmodules(config);
   if (entries.length === 0) return [];
   const paths = entries.map((e) => e.path);
+  const hint = Array.isArray(changed) ? new Set(changed.filter((p): p is string => typeof p === 'string')) : null;
+  const statusPaths = hint ? paths.filter((p) => hint.has(p)) : paths;
   const [ls, st] = await Promise.all([
     git(repo, ['--literal-pathspecs', 'ls-files', '-s', '-z', '--', ...paths]),
-    git(repo, ['--no-optional-locks', '--literal-pathspecs', 'status', '--porcelain=v2', '-z', '--', ...paths]),
+    statusPaths.length
+      ? git(repo, ['--no-optional-locks', '--literal-pathspecs', 'status', '--porcelain=v2', '-z', '--ignore-submodules=none', '--', ...statusPaths])
+      : Promise.resolve(''),
   ]);
-  return buildSubmodules(entries, parseLsFilesStage(ls), parseSubmoduleStatusV2(st), (p) => existsSync(join(repo, p, '.git')));
+  let rootReal: string | null = null;
+  try {
+    rootReal = realpathSync(repo);
+  } catch {
+    // dépôt inaccessible : aucun sous-module initialisé
+  }
+  return buildSubmodules(entries, parseLsFilesStage(ls), parseSubmoduleStatusV2(st), (p) => isInitializedSync(repo, rootReal, p));
 }
 
 /** Sous-module désigné par le rendu, revérifié contre la liste recalculée. */
@@ -1897,13 +1925,21 @@ export async function requireSubmodule(repo: string, path: unknown): Promise<Sub
 }
 
 const notInitialized = (path: string) => new GitError(`Le sous-module « ${path} » n'est pas initialisé : initialisez-le d'abord.`, '');
+const noGitlink = (path: string) => new GitError(`Aucun commit attendu pour « ${path} » (sous-module en conflit ou absent de l'index).`, '');
 
-/** Dossier d'un sous-module initialisé, vérifié comme racine de son propre dépôt (sinon Git remonterait au parent). */
+/**
+ * Dossier d'un sous-module initialisé, avec un gitlink à l'étage 0, sans lien symbolique sur le trajet, et racine de
+ * son propre dépôt (sinon Git remonterait au parent).
+ */
 async function verifiedRoot(repo: string, sub: Submodule): Promise<string> {
+  if (sub.state === 'missing' || sub.state === 'conflict' || !sub.expected) throw noGitlink(sub.path);
   if (!sub.initialized) throw notInitialized(sub.path);
   const dir = join(repo, sub.path);
+  const invalid = new GitError(`Le dossier « ${sub.path} » n'est pas un dépôt Git valide.`, '');
+  const real = await realpath(dir).catch(() => null);
+  if (real === null || real !== join(await realpath(repo), sub.path)) throw invalid;
   const top = await toplevel(dir).catch(() => null);
-  if (top === null || (await realpath(top)) !== (await realpath(dir))) throw new GitError(`Le dossier « ${sub.path} » n'est pas un dépôt Git valide.`, '');
+  if (top === null || (await realpath(top)) !== real) throw invalid;
   return dir;
 }
 
@@ -1917,18 +1953,37 @@ export async function submoduleHead(repo: string, path: unknown): Promise<string
   return headSha(await verifiedRoot(repo, sub));
 }
 
-/** `git submodule update [--init] --recursive [-- <chemin>]` (mode de mise à jour configuré par l'utilisateur). */
-export async function submoduleUpdate(repo: string, path: unknown, init: unknown) {
-  const target = path === null ? null : (await requireSubmodule(repo, path)).path;
-  await git(repo, ['submodule', 'update', ...(init === true ? ['--init'] : []), '--recursive', ...(target ? ['--', target] : [])]);
+/**
+ * Initialise les sous-modules non initialisés : celui de `path`, ou tous (liste explicite) si `path` est null.
+ * Toujours `--checkout` : jamais de rebase ni de fusion selon `submodule.<nom>.update`. Un sous-module déjà
+ * initialisé n'est jamais déplacé (un « autre commit extrait » se traite par « Revenir au commit attendu… »).
+ */
+export async function submoduleInit(repo: string, path: unknown) {
+  let targets: string[];
+  if (path === null) {
+    targets = (await submodules(repo)).filter((s) => s.state === 'uninitialized').map((s) => s.path);
+    if (!targets.length) throw new GitError('Aucun sous-module à initialiser.', '');
+  } else {
+    const sub = await requireSubmodule(repo, path);
+    if (sub.state === 'changed')
+      throw new GitError(`« ${sub.path} » a un autre commit extrait : utilisez « Revenir au commit attendu… » pour le ramener au commit attendu.`, '');
+    if (sub.state === 'missing' || sub.state === 'conflict') throw noGitlink(sub.path);
+    if (sub.state !== 'uninitialized') throw new GitError(`Le sous-module « ${sub.path} » est déjà initialisé.`, '');
+    targets = [sub.path];
+  }
+  await git(repo, ['--literal-pathspecs', 'submodule', 'update', '--init', '--checkout', '--recursive', '--', ...targets]);
 }
 
-/** Revient au commit attendu : checkout forcé (`--checkout`), quel que soit `submodule.<nom>.update`. */
-export async function submoduleReset(repo: string, path: unknown) {
+/**
+ * Revient au commit attendu `expected` (celui affiché) : checkout forcé (`--checkout`), sans les sous-modules
+ * imbriqués ; refusé si le gitlink a changé depuis l'affichage.
+ */
+export async function submoduleReset(repo: string, path: unknown, expected: unknown) {
   const sub = await requireSubmodule(repo, path);
-  if (!sub.initialized) throw notInitialized(sub.path);
-  if (!sub.expected) throw new GitError(`Aucun commit attendu pour « ${sub.path} » (sous-module en conflit ou absent de l'index).`, '');
-  await git(repo, ['submodule', 'update', '--checkout', '--recursive', '--', sub.path]);
+  if (!sub.expected || sub.state === 'missing' || sub.state === 'conflict') throw noGitlink(sub.path);
+  if (sub.expected !== expected) throw new GitError('Le commit attendu a changé : rafraîchissez.', '');
+  await verifiedRoot(repo, sub);
+  await git(repo, ['--literal-pathspecs', 'submodule', 'update', '--checkout', '--', sub.path]);
 }
 
 export async function submoduleSync(repo: string) {

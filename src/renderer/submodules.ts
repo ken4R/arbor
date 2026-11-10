@@ -46,8 +46,11 @@ export function loadSubmodules(snap: RepoSnapshot): void {
   }
   // L'ancienne liste reste affichée pendant la lecture.
   states.set(repo, { snap, list: cur?.list ?? EMPTY, error: cur?.error ?? null });
+  // Seuls les chemins présents dans le statut peuvent différer de « à jour » : le main ne lit qu'eux.
+  const st = snap.status;
+  const changed = [...st.staged, ...st.unstaged, ...st.conflicted].map((f) => f.path);
   api
-    .submodules(repo)
+    .submodules(repo, changed)
     .then((list) => {
       if (states.get(repo)?.snap !== snap) return; // réponse dépassée
       states.set(repo, { snap, list, error: null });
@@ -64,6 +67,11 @@ export function loadSubmodules(snap: RepoSnapshot): void {
 export function useSubmodules(snap: RepoSnapshot): Submodule[] {
   useEffect(() => loadSubmodules(snap), [snap]);
   return useSyncExternalStore(subscribe, () => getSubmodules(snap.path));
+}
+
+/** Sous-module `path` du dépôt d'après la dernière liste lue (undefined si inconnu). */
+export function useSubmodule(repo: string, path: string): Submodule | undefined {
+  return useSyncExternalStore(subscribe, () => getSubmodules(repo).find((s) => s.path === path));
 }
 
 export function useSubmodulesError(repo: string): string | null {

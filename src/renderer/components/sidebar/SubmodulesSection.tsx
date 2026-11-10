@@ -1,5 +1,5 @@
 import type { RepoSnapshot } from '../../../shared/types';
-import { openSubmoduleTab, submoduleMenu, updateSubmodulesAction } from '../../actions';
+import { openSubmoduleTab, submoduleMenu, initSubmodulesAction } from '../../actions';
 import { SUBMODULE_STATE_LABEL, submoduleTitle, useSubmodules, useSubmodulesError } from '../../submodules';
 import { useUi } from '../../ui';
 import { Icon } from '../Icons';
@@ -16,7 +16,10 @@ export function SubmodulesSection({ snap, match }: { snap: RepoSnapshot; match: 
   if (!snap.features?.submodules) return null;
   const repo = snap.path;
   const shown = subs.filter((s) => match(s.path) || match(s.name));
-  const actions = [{ icon: <Icon.refresh />, title: 'Initialiser et mettre à jour tous les sous-modules', onClick: () => void updateSubmodulesAction(ui, repo, null) }];
+  // Initialise seulement les sous-modules manquants : aucun sous-module initialisé n'est déplacé.
+  const actions = subs.some((s) => s.state === 'uninitialized')
+    ? [{ icon: <Icon.pull />, title: 'Initialiser les sous-modules manquants', onClick: () => void initSubmodulesAction(ui, repo, null) }]
+    : [];
 
   return (
     <Section id="submodules" title="Sous-modules" count={shown.length} icon={<Icon.folder />} actions={actions}>
@@ -27,7 +30,7 @@ export function SubmodulesSection({ snap, match }: { snap: RepoSnapshot; match: 
           title={submoduleTitle(s)}
           onDoubleClick={() => {
             if (s.initialized) void openSubmoduleTab(ui, repo, s.path);
-            else if (s.state === 'uninitialized') void updateSubmodulesAction(ui, repo, s.path);
+            else if (s.state === 'uninitialized') void initSubmodulesAction(ui, repo, s.path);
           }}
           onContextMenu={(e) => ui.openMenu(e, submoduleMenu(ui, snap, s))}
         >

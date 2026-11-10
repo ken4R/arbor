@@ -9,6 +9,8 @@ import { Icon } from './Icons';
 import { MergeEditor } from './MergeEditor';
 import { openSubmoduleTab, resetSubmoduleAction } from '../actions';
 import type { SubmoduleChange } from '../../shared/diff';
+import type { Submodule } from '../../shared/types';
+import { useSubmodule } from '../submodules';
 
 type Mode = DiffMode;
 
@@ -78,7 +80,14 @@ function PatchView({ repo, target, onClose, reloadKey }: { repo: string; target:
 
   // Indexation partielle : diff du répertoire de travail d'un fichier suivi, ni renommé ni binaire.
   // Une carte dédiée (sous-module…) remplace les blocs : rien à sélectionner.
-  const card = diff?.submodule ? submoduleCard(ui, repo, target, diff.submodule) : null;
+  const sub = useSubmodule(repo, target.path);
+  // Fichiers non suivis seuls dans un sous-module : `git diff` est vide, la carte s'appuie sur l'état lu.
+  const untrackedOnly =
+    raw === '' && target.kind === 'working' && !target.staged && !target.untracked && sub?.untracked && sub.expected
+      ? { old: sub.expected, new: sub.expected, dirty: true }
+      : null;
+  const change = diff?.submodule ?? untrackedOnly;
+  const card = change ? submoduleCard(ui, repo, target, change, sub) : null;
   const editable = target.kind === 'working' && !target.untracked && !target.conflict && !target.oldPath && !!diff && !diff.binary && !card;
   const staged = target.kind === 'working' && target.staged;
   const linesSelectable = editable && mode === 'unified' && !diff?.newFile && !diff?.deletedFile;
@@ -341,12 +350,23 @@ export function DiffCard({ kind, label, before, after, beforeTitle, afterTitle, 
 
 // sous-modules
 
-/** Carte d'un diff de sous-module : commits avant et après, modifications non commitées, ouverture. */
-function submoduleCard(ui: ReturnType<typeof useUi>, repo: string, target: DiffTarget, change: SubmoduleChange) {
+/**
+ * Carte d'un diff de sous-module : commits avant et après, contenu local (modifications ou fichiers non suivis, d'après
+ * l'état lu pour la barre latérale quand le diff est celui de l'arbre de travail), ouverture.
+ */
+function submoduleCard(ui: ReturnType<typeof useUi>, repo: string, target: DiffTarget, change: SubmoduleChange, sub: Submodule | undefined) {
   const short = (sha: string | null) => sha && sha.slice(0, 7);
   const notes: string[] = [];
-  if (change.dirty) notes.push('Le sous-module a des modifications non commitées.');
-  if (change.old && change.old === change.new) notes.push('Même commit : seules les modifications non commitées diffèrent.');
+  const local = target.kind === 'working' && !target.staged && sub ? sub : null;
+  if (change.dirty) {
+    // « -dirty » couvre aussi bien des fichiers modifiés que des fichiers non suivis : l'état détaillé les distingue.
+    if (local && (local.dirty || local.untracked)) {
+      if (local.dirty) notes.push('Le sous-module a des modifications non commitées.');
+      if (local.untracked) notes.push('Fichiers non suivis dans le sous-module.');
+    } else notes.push('Le sous-module a des modifications non commitées ou des fichiers non suivis.');
+  }
+  if (change.old && change.old === change.new) notes.push('Même commit : seul le contenu local du sous-module diffère.');
+  if (change.typeChange) notes.push('Changement de type : un fichier ordinaire et un sous-module se remplacent à ce chemin.');
   const actions: DiffCardAction[] = [{ label: 'Ouvrir le sous-module', onClick: () => void openSubmoduleTab(ui, repo, target.path) }];
   // Diff non indexé d'un autre commit extrait : l'ancien côté est le commit attendu par l'index.
   if (target.kind === 'working' && !target.staged && change.old && change.new && change.old !== change.new) {

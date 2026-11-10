@@ -74,6 +74,32 @@ index 1111111..2222222 100644
   });
 });
 
+describe('parseSubmoduleChange (changement de type)', () => {
+  it('fichier → gitlink : seule la section du gitlink est lue', () => {
+    const raw = `diff --git a/x b/x
+deleted file mode 100644
+index 1111111..0000000
+--- a/x
++++ /dev/null
+@@ -1 +0,0 @@
+-Subproject commit 7b38535b1417aa5a65b8f56ba4a0bb2c3e4b88a4
+${added.replace(/vendor\/lib/g, 'x')}`;
+    expect(parseSubmoduleChange(raw)).toEqual({ old: null, new: '99dbb2f1c9db5fcad9a0f88aaf1ea37dfc068d6a', dirty: false, typeChange: true });
+  });
+
+  it('gitlink → fichier', () => {
+    const raw = `${removed}diff --git a/vendor/outils b/vendor/outils
+new file mode 100644
+index 0000000..2222222
+--- /dev/null
++++ b/vendor/outils
+@@ -0,0 +1 @@
++contenu
+`;
+    expect(parseSubmoduleChange(raw)).toEqual({ old: '0430cb9d4e37f1943140842a25110b5af106b6de', new: null, dirty: false, typeChange: true });
+  });
+});
+
 describe('parseDiff (sous-module)', () => {
   it('ajoute `submodule` et garde les compteurs', () => {
     const d = parseDiff(changedDirty);

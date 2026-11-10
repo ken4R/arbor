@@ -1,5 +1,5 @@
 import type { RepoSnapshot } from '../../shared/types';
-import { openSubmoduleTab, resetSubmoduleAction, syncSubmodulesAction, updateSubmodulesAction } from '../actions';
+import { openSubmoduleTab, resetSubmoduleAction, syncSubmodulesAction, initSubmodulesAction } from '../actions';
 import { registerCommands, type Command, type CommandContext } from '../commands';
 import { getSubmodules } from '../submodules';
 
@@ -16,12 +16,12 @@ registerCommands('submodules', (c) => {
   if (!c.snap?.features?.submodules) return [];
   const cmds: Command[] = [
     {
-      id: 'submodules.updateAll',
-      title: 'Initialiser et mettre à jour tous les sous-modules',
+      id: 'submodules.initMissing',
+      title: 'Initialiser les sous-modules manquants',
       group: GROUP,
       keywords: ['submodule', 'update', 'init', 'sous-module'],
-      enabled: ready,
-      run: (x) => ready(x) && void updateSubmodulesAction(x.ui, x.snap.path, null),
+      enabled: (x) => ready(x) && getSubmodules(x.snap.path).some((s) => s.state === 'uninitialized'),
+      run: (x) => ready(x) && void initSubmodulesAction(x.ui, x.snap.path, null),
     },
     {
       id: 'submodules.sync',
@@ -51,10 +51,10 @@ registerCommands('submodules', (c) => {
         group: GROUP,
         keywords: ['submodule', 'init', 'sous-module'],
         enabled: (x) => current(x)?.state === 'uninitialized',
-        run: (x) => ready(x) && void updateSubmodulesAction(x.ui, x.snap.path, path),
+        run: (x) => ready(x) && void initSubmodulesAction(x.ui, x.snap.path, path),
       });
     }
-    if (s.state === 'changed') {
+    if (s.state === 'changed' && s.expected) {
       cmds.push({
         id: `submodules.reset:${path}`,
         title: `Ramener le sous-module ${path} au commit attendu…`,

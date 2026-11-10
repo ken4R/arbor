@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -18,7 +18,8 @@ import {
   submodules,
   submoduleState,
   submoduleSync,
-  submoduleUpdate,
+  submoduleInit,
+  status,
   translateGitError,
 } from './git';
 
@@ -203,6 +204,16 @@ describe('sous-modules sur un vrai dépôt', () => {
     const [s] = await submodules(dir);
     expect([s.state, s.dirty, s.untracked]).toEqual(['changed', true, true]);
     expect(await submoduleHead(dir, SUB)).toBe(shas[1]);
+    // Statut détaillé limité aux chemins signalés par le rendu : hors liste, « à jour » sans lancer `status`.
+    expect((await submodules(dir, []))[0].state).toBe('ok');
+    expect((await submodules(dir, [SUB]))[0].state).toBe('changed');
+  });
+
+  it('initialiser ne déplace jamais un sous-module déjà initialisé (autre commit extrait)', async () => {
+    run(dir, 'config', 'submodule.ma.lib.v2.update', 'rebase');
+    await expect(submoduleInit(dir, SUB)).rejects.toThrow(/Revenir au commit attendu/);
+    expect(await submoduleHead(dir, SUB)).toBe(shas[1]);
+    run(dir, 'config', '--unset', 'submodule.ma.lib.v2.update');
   });
 
   it('diff : --submodule=short forcé, carte analysable, indexation partielle refusée', async () => {
@@ -214,12 +225,20 @@ describe('sous-modules sur un vrai dépôt', () => {
   });
 
   it('revenir au commit attendu : refusé si les modifications seraient écrasées, sinon checkout', async () => {
-    await expect(submoduleReset(dir, SUB)).rejects.toThrow(/modifications locales seraient écrasées/);
+    await expect(submoduleReset(dir, SUB, shas[2])).rejects.toThrow(/modifications locales seraient écrasées/);
     run(join(dir, SUB), 'checkout', '-q', '--', 'lib.txt');
-    await submoduleReset(dir, SUB);
+    await expect(submoduleReset(dir, SUB, shas[0])).rejects.toThrow(/Le commit attendu a changé/);
+    expect(await submoduleHead(dir, SUB)).toBe(shas[1]);
+    await submoduleReset(dir, SUB, shas[2]);
     const [s] = await submodules(dir);
     expect([s.state, s.dirty, s.untracked]).toEqual(['ok', false, true]);
     expect(await submoduleHead(dir, SUB)).toBe(shas[2]);
+  });
+
+  it('fichiers non suivis seuls : présents dans le statut du dépôt, diff vide (la carte vient de l’état)', async () => {
+    expect((await status(dir)).unstaged.map((f) => f.path)).toContain(SUB);
+    expect((await submodules(dir, [SUB]))[0]).toMatchObject({ state: 'ok', dirty: false, untracked: true });
+    expect(await diff(dir, { kind: 'working', path: SUB, staged: false })).toBe('');
   });
 
   it('même commit et modification seule : diff « -dirty » reconnu', async () => {
@@ -236,17 +255,21 @@ describe('sous-modules sur un vrai dépôt', () => {
   });
 
   it('chemins revérifiés : refuse un chemin non déclaré et un sous-module non initialisé', async () => {
-    await expect(submoduleUpdate(dir, '../ailleurs', true)).rejects.toThrow(/n'est pas un sous-module/);
+    await expect(submoduleInit(dir, '../ailleurs')).rejects.toThrow(/n'est pas un sous-module/);
     await expect(submoduleRoot(dir, 'vendor/outils')).rejects.toThrow(/n'est pas initialisé/);
-    await expect(submoduleReset(dir, 'vendor/outils')).rejects.toThrow(/n'est pas initialisé/);
+    await expect(submoduleReset(dir, 'vendor/outils', shas[2])).rejects.toThrow(/n'est pas initialisé/);
     await expect(submoduleRoot(dir, 'README.md')).rejects.toThrow(/n'est pas un sous-module/);
     expect(await submoduleRoot(dir, SUB)).toBe(join(dir, SUB));
   });
 
-  it('initialisation (module déjà cloné dans .git/modules) et synchronisation', async () => {
-    await submoduleUpdate(dir, 'vendor/outils', true);
+  it('initialisation de tous les manquants (module déjà cloné dans .git/modules) et synchronisation', async () => {
+    run(join(dir, SUB), 'checkout', '-q', shas[1]);
+    await submoduleInit(dir, null);
     const subs = await submodules(dir);
-    expect(subs[1].state).toBe('ok');
+    expect(subs.map((s) => s.state)).toEqual(['changed', 'ok']);
+    expect(await submoduleHead(dir, SUB)).toBe(shas[1]); // le sous-module initialisé n'a pas bougé
+    await expect(submoduleInit(dir, null)).rejects.toThrow(/Aucun sous-module à initialiser/);
+    await submoduleReset(dir, SUB, shas[2]);
     expect(existsSync(join(dir, 'vendor/outils/lib.txt'))).toBe(true);
     await submoduleSync(dir);
   });
@@ -255,7 +278,7 @@ describe('sous-modules sur un vrai dépôt', () => {
     const clone = join(root, 'clone');
     run(root, 'clone', '-q', dir, clone);
     expect((await submodules(clone)).map((s) => s.state)).toEqual(['uninitialized', 'uninitialized']);
-    await expect(submoduleUpdate(clone, null, true)).rejects.toThrow(/transport « file »/);
+    await expect(submoduleInit(clone, null)).rejects.toThrow(/transport « file »/);
   });
 
   it('conflit sur le gitlink et sous-module absent de l’index', async () => {
@@ -269,7 +292,8 @@ describe('sous-modules sur un vrai dépôt', () => {
     expect(() => run(dir, 'merge', '-q', 'autre')).toThrow();
     let [s] = await submodules(dir);
     expect([s.state, s.expected]).toEqual(['conflict', null]);
-    await expect(submoduleReset(dir, SUB)).rejects.toThrow(/Aucun commit attendu/);
+    await expect(submoduleReset(dir, SUB, shas[1])).rejects.toThrow(/Aucun commit attendu/);
+    await expect(submoduleRoot(dir, SUB)).rejects.toThrow(/Aucun commit attendu/);
     run(dir, 'merge', '--abort');
     run(dir, 'rm', '-q', '--cached', '--', SUB);
     [s] = await submodules(dir);
@@ -278,5 +302,80 @@ describe('sous-modules sur un vrai dépôt', () => {
 
   it('sans .gitmodules : aucun lancement, liste vide', async () => {
     expect(await submodules(lib)).toEqual([]);
+  });
+});
+
+describe('sous-modules : chemins piégés et changement de type', () => {
+  let root = '';
+  let lib = '';
+  let dir = '';
+  let shas: string[] = [];
+  const run = (cwd: string, ...args: string[]) => execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
+  const allow = ['-c', 'protocol.file.allow=always'];
+  const init = (d: string) => {
+    mkdirSync(d);
+    run(d, 'init', '-q', '-b', 'main');
+    run(d, 'config', 'user.name', 'Test');
+    run(d, 'config', 'user.email', 't@example.com');
+  };
+  const commit = (cwd: string, file: string, text: string, msg: string) => {
+    writeFileSync(join(cwd, file), text);
+    run(cwd, 'add', '--', file);
+    run(cwd, 'commit', '-q', '-m', msg);
+    return run(cwd, 'rev-parse', 'HEAD');
+  };
+
+  beforeAll(() => {
+    root = realpathSync(mkdtempSync(join(tmpdir(), 'arbor-sub2-')));
+    lib = join(root, 'lib');
+    dir = join(root, 'parent');
+    init(lib);
+    init(dir);
+    init(join(root, 'autre'));
+    commit(join(root, 'autre'), 'a.txt', 'a\n', 'autre');
+    shas = [commit(lib, 'lib.txt', '1\n', 'un'), commit(lib, 'lib.txt', '2\n', 'deux')];
+    commit(dir, 'fichier', 'texte\n', 'init');
+    run(dir, ...allow, 'submodule', 'add', '-q', lib, 'lit*');
+    run(dir, ...allow, 'submodule', 'add', '-q', lib, 'litA');
+    run(dir, 'commit', '-q', '-m', 'sous-modules');
+    run(dir, 'submodule', 'deinit', '-q', '-f', '--', 'lit*', 'litA');
+  });
+
+  afterAll(() => rmSync(root, { recursive: true, force: true }));
+
+  it('chemins pris à la lettre (`*`) pour initialiser et revenir au commit attendu', async () => {
+    await submoduleInit(dir, 'lit*');
+    expect((await submodules(dir)).map((s) => [s.path, s.state])).toEqual([
+      ['lit*', 'ok'],
+      ['litA', 'uninitialized'],
+    ]);
+    run(join(dir, 'lit*'), 'checkout', '-q', shas[0]);
+    await submoduleReset(dir, 'lit*', shas[1]);
+    expect(await submoduleHead(dir, 'lit*')).toBe(shas[1]);
+    expect((await submodules(dir))[1].state).toBe('uninitialized');
+  });
+
+  it('lien symbolique déclaré comme chemin : jamais considéré comme initialisé ni ouvert', async () => {
+    symlinkSync('../autre', join(dir, 'ext'));
+    run(dir, 'config', '-f', '.gitmodules', 'submodule.ext.path', 'ext');
+    let ext = (await submodules(dir)).find((s) => s.path === 'ext')!;
+    expect([ext.state, ext.initialized]).toEqual(['missing', false]);
+    await expect(submoduleRoot(dir, 'ext')).rejects.toThrow(/Aucun commit attendu/);
+    run(dir, 'update-index', '--add', '--cacheinfo', `160000,${shas[0]},ext`);
+    ext = (await submodules(dir)).find((s) => s.path === 'ext')!;
+    expect([ext.state, ext.initialized]).toEqual(['uninitialized', false]);
+    await expect(submoduleRoot(dir, 'ext')).rejects.toThrow(/n'est pas initialisé/);
+    expect(await submoduleHead(dir, 'ext')).toBeNull();
+    await expect(submoduleReset(dir, 'ext', shas[0])).rejects.toThrow(/n'est pas initialisé/);
+  });
+
+  it('fichier remplacé par un gitlink : carte de sous-module, indexation partielle refusée', async () => {
+    run(dir, 'rm', '-q', '--cached', '--', 'fichier');
+    rmSync(join(dir, 'fichier'));
+    run(dir, 'update-index', '--add', '--cacheinfo', `160000,${shas[1]},fichier`);
+    const target = { kind: 'working' as const, path: 'fichier', staged: true };
+    const raw = await diff(dir, target);
+    expect(parseDiff(raw).submodule).toEqual({ old: null, new: shas[1], dirty: false, typeChange: true });
+    await expect(applyPatchSelection(dir, target, raw, [{ hunk: 0 }], 'unstage')).rejects.toThrow(/Sous-module/);
   });
 });

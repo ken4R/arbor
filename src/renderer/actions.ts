@@ -275,10 +275,10 @@ export function openSubmoduleTab(ui: Ui, repo: string, path: string) {
   );
 }
 
-/** Initialise (au besoin) et met à jour un sous-module, ou tous si `path` est null. */
-export function updateSubmodulesAction(ui: Ui, repo: string, path: string | null) {
-  const what = path ? `« ${path} »` : 'tous les sous-modules';
-  return ui.run(`Mise à jour de ${what}…`, () => api.submoduleUpdate(repo, path, true), path ? `Sous-module « ${path} » à jour` : 'Sous-modules à jour');
+/** Initialise un sous-module non initialisé, ou tous ceux qui ne le sont pas si `path` est null (aucun n'est déplacé). */
+export function initSubmodulesAction(ui: Ui, repo: string, path: string | null) {
+  const what = path ? `« ${path} »` : 'des sous-modules manquants';
+  return ui.run(`Initialisation ${path ? 'de ' : ''}${what}…`, () => api.submoduleInit(repo, path), path ? `Sous-module « ${path} » initialisé` : 'Sous-modules initialisés');
 }
 
 export function syncSubmodulesAction(ui: Ui, repo: string) {
@@ -287,14 +287,15 @@ export function syncSubmodulesAction(ui: Ui, repo: string) {
 
 /** Remet le sous-module sur le commit attendu par le dépôt parent, après confirmation. */
 export function resetSubmoduleAction(ui: Ui, repo: string, path: string, expected: string | null) {
+  if (!expected) return;
   ui.ask({
     title: 'Revenir au commit attendu',
     message:
-      `« ${path} » sera extrait sur le commit attendu${expected ? ` ${expected.slice(0, 7)}` : ''} (HEAD détachée dans le sous-module). ` +
+      `« ${path} » sera extrait sur le commit attendu ${expected.slice(0, 7)} (HEAD détachée dans le sous-module ; ses propres sous-modules ne sont pas modifiés). ` +
       'Le commit actuellement extrait reste accessible par le reflog du sous-module ; des modifications locales qui gêneraient le checkout le feront échouer.',
     confirm: 'Revenir au commit attendu',
     danger: true,
-    onSubmit: () => void ui.run('Retour au commit attendu…', () => api.submoduleReset(repo, path), `« ${path} » est revenu au commit attendu`),
+    onSubmit: () => void ui.run('Retour au commit attendu…', () => api.submoduleReset(repo, path, expected), `« ${path} » est revenu au commit attendu`),
   });
 }
 
@@ -302,16 +303,16 @@ export function resetSubmoduleAction(ui: Ui, repo: string, path: string, expecte
 export function submoduleMenu(ui: Ui, snap: RepoSnapshot, sub: Submodule): MenuItem[] {
   const repo = snap.path;
   const unstaged = snap.status.unstaged.some((f) => f.path === sub.path);
-  const blocked = sub.state === 'conflict' || sub.state === 'missing';
   return [
     { label: 'Ouvrir dans un nouvel onglet', disabled: !sub.initialized, onClick: () => void openSubmoduleTab(ui, repo, sub.path) },
     { label: 'Voir les modifications', disabled: !unstaged, onClick: () => ui.showDiff({ kind: 'working', path: sub.path, staged: false }) },
     'separator',
-    { label: sub.initialized ? 'Mettre à jour' : 'Initialiser', disabled: blocked, onClick: () => void updateSubmodulesAction(ui, repo, sub.path) },
+    // Seul un sous-module non initialisé s'initialise ; un « autre commit extrait » passe par l'entrée confirmée ci-dessous.
+    { label: 'Initialiser', disabled: sub.state !== 'uninitialized', onClick: () => void initSubmodulesAction(ui, repo, sub.path) },
     {
       label: 'Revenir au commit attendu…',
       danger: true,
-      disabled: sub.state !== 'changed',
+      disabled: sub.state !== 'changed' || !sub.expected,
       onClick: () => resetSubmoduleAction(ui, repo, sub.path, sub.expected),
     },
     'separator',

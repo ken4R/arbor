@@ -371,10 +371,10 @@ const handlers: Record<string, (...args: any[]) => Promise<unknown>> = {
   // glisser-déposer
 
   // sous-modules
-  submodules: g.submodules,
+  submodules: (repo: string, changed: unknown) => g.submodules(repo, changed),
   submoduleHead: g.submoduleHead,
-  submoduleUpdate: (repo: string, path: unknown, init: unknown) => g.submoduleUpdate(repo, path, init),
-  submoduleReset: g.submoduleReset,
+  submoduleInit: (repo: string, path: unknown) => g.submoduleInit(repo, path),
+  submoduleReset: (repo: string, path: unknown, expected: unknown) => g.submoduleReset(repo, path, expected),
   submoduleSync: g.submoduleSync,
   // Chemin revérifié (déclaré, initialisé, racine de son propre dépôt) avant d'être autorisé comme dépôt ouvert.
   openSubmodule: async (repo: string, path: unknown) => openRepo(await g.submoduleRoot(repo, path)),

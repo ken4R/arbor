@@ -262,14 +262,20 @@ export interface ArborApi {
   // glisser-déposer
 
   // sous-modules
-  /** Sous-modules déclarés dans `.gitmodules` et leur état (3 lancements de `git`, aucun dans les sous-modules). */
-  submodules(repo: string): Promise<Submodule[]>;
+  /**
+   * Sous-modules déclarés dans `.gitmodules` et leur état (aucun `git` lancé dans les sous-modules). `changed` : chemins
+   * présents dans le statut du dépôt ; le statut détaillé n'est lu que pour eux (les autres sont à jour).
+   */
+  submodules(repo: string, changed: string[]): Promise<Submodule[]>;
   /** Commit extrait dans un sous-module initialisé ; null s'il n'est pas initialisé ou sans commit. */
   submoduleHead(repo: string, path: string): Promise<string | null>;
-  /** `git submodule update [--init] --recursive [-- <chemin>]` ; `path` null = tous les sous-modules. */
-  submoduleUpdate(repo: string, path: string | null, init: boolean): Promise<void>;
-  /** Revient au commit attendu par le dépôt parent (`git submodule update --checkout -- <chemin>`). */
-  submoduleReset(repo: string, path: string): Promise<void>;
+  /**
+   * Initialise un sous-module non initialisé, ou tous ceux qui ne le sont pas (`path` null) : `--init --checkout`.
+   * Refuse un sous-module déjà initialisé (jamais de déplacement sans confirmation).
+   */
+  submoduleInit(repo: string, path: string | null): Promise<void>;
+  /** Revient au commit attendu `expected` (`git submodule update --checkout -- <chemin>`), refusé s'il a changé. */
+  submoduleReset(repo: string, path: string, expected: string): Promise<void>;
   /** Recopie les URL de `.gitmodules` dans la configuration (`git submodule sync --recursive`). */
   submoduleSync(repo: string): Promise<void>;
   /** Valide un sous-module initialisé et l'autorise comme dépôt ; renvoie son chemin, à ouvrir dans un onglet. */
