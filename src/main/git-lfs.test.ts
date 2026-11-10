@@ -57,8 +57,21 @@ describe.skipIf(!lfsInstalled)('LFS (git-lfs installé)', { timeout: 20_000 }, (
   let root: string;
   let dir: string;
   let remote: string;
+  /** Diagnostic joint aux assertions qui dépendent du comportement de git-lfs (versions différentes en CI). */
+  const lfsState = () => {
+    const out = (...args: string[]) => {
+      try {
+        return run(dir, ...args);
+      } catch (e) {
+        return `échec : ${(e as Error).message}`;
+      }
+    };
+    return [out('lfs', 'version'), out('lfs', 'ls-files', '-l'), out('status', '--short')].join('\n');
+  };
 
   beforeAll(() => {
+    // Diagnostic minimal : les sorties de git-lfs varient selon les versions.
+    console.info(`git-lfs.test : ${run(tmpdir(), 'version')} ; ${run(tmpdir(), 'lfs', 'version')}`);
     root = mkdtempSync(join(tmpdir(), 'arbor-lfs-'));
     remote = join(root, 'distant.git');
     dir = join(root, 'dépôt lfs');
@@ -168,14 +181,16 @@ describe.skipIf(!lfsInstalled)('LFS (git-lfs installé)', { timeout: 20_000 }, (
     const oid = run(dir, 'lfs', 'ls-files', '-l').split('\n').find((l) => l.endsWith(` ${path}`))!.split(' ')[0];
     rmSync(join(dir, '.git', 'lfs', 'objects', oid.slice(0, 2), oid.slice(2, 4), oid));
     writeFileSync(join(dir, path), run(dir, 'cat-file', 'blob', `HEAD:${path}`) + '\n');
+    // Index rafraîchi (comme après un clone sans smudge) : sinon git-lfs récent voit un fichier modifié et ne l'écrase pas.
+    run(dir, 'add', '--', path);
     expect((await lfsFiles(dir)).files.find((f) => f.path === path)?.present).toBe(false);
     await expect(lfsPull(dir, ['*.bin'])).rejects.toThrow(/motif/);
     await expect(lfsPull(dir, ['a,b.bin'])).rejects.toThrow(/motif/);
     await expect(lfsPull(dir, ['lisez-moi.txt'])).rejects.toThrow(/n'est pas un fichier LFS/);
     await expect(lfsPull(dir, [])).rejects.toThrow();
     await lfsPull(dir, [path]);
-    expect((await lfsFiles(dir)).files.find((f) => f.path === path)?.present).toBe(true);
-    expect(readFileSync(join(dir, path), 'utf8')).toBe('B'.repeat(300));
+    expect(readFileSync(join(dir, path), 'utf8'), lfsState()).toBe('B'.repeat(300));
+    expect((await lfsFiles(dir)).files.find((f) => f.path === path)?.present, lfsState()).toBe(true);
   });
 
   it('sans git-lfs dans le PATH : statut relu sans filtre, motifs du .gitattributes, actions refusées', async () => {
@@ -183,13 +198,17 @@ describe.skipIf(!lfsInstalled)('LFS (git-lfs installé)', { timeout: 20_000 }, (
     mkdirSync(bin);
     symlinkSync(execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim(), join(bin, 'git'));
     const path = 'données é/modèle 1.bin';
-    writeFileSync(join(dir, path), 'Y'.repeat(100));
+    // Même taille que la version indexée : Git doit comparer le contenu, donc passer par le filtre LFS (une taille
+    // différente suffit à Git ≥ 2.5x pour conclure sans filtre, et `status` n'échouerait pas).
+    writeFileSync(join(dir, path), 'Y'.repeat(20000));
     const savedPath = process.env.PATH;
     process.env.PATH = bin;
     forgetLfsVersion();
     try {
+      // Précondition : git-lfs n'est plus trouvable (ni dans le PATH, ni dans `git --exec-path`).
+      expect((await lfsInfo(dir, [])).installed, `git --exec-path : ${run(dir, '--exec-path')}`).toBe(false);
       const err = await status(dir).catch((e) => e);
-      expect(isLfsMissing(err)).toBe(true);
+      expect(isLfsMissing(err), `statut sans git-lfs : ${err instanceof Error ? (err as GitError).stderr : 'aucune erreur'}`).toBe(true);
       const snap = await snapshot(dir);
       expect(snap.status.unstaged.map((f) => f.path)).toContain(path);
       const info = await lfsInfo(dir, [path]);
@@ -251,10 +270,12 @@ describe.skipIf(!lfsInstalled)('LFS (git-lfs installé)', { timeout: 20_000 }, (
       rmSync(join(dir, '.git', 'lfs', 'objects', oid.slice(0, 2), oid.slice(2, 4), oid));
       writeFileSync(join(dir, p), run(dir, 'cat-file', 'blob', `HEAD:${p}`) + '\n');
     }
+    run(dir, 'add', '--', 'x.bin', 'sub/x.bin'); // index rafraîchi : pointeurs non modifiés
     await lfsPull(dir, ['x.bin']);
+    expect(readFileSync(join(dir, 'x.bin'), 'utf8'), lfsState()).toBe('racine');
+    expect(readFileSync(join(dir, 'sub', 'x.bin'), 'utf8'), lfsState()).toMatch(/^version https:\/\/git-lfs/);
     const files = (await lfsFiles(dir)).files;
-    expect(files.find((f) => f.path === 'x.bin')?.present).toBe(true);
-    expect(files.find((f) => f.path === 'sub/x.bin')?.present).toBe(false);
-    expect(readFileSync(join(dir, 'x.bin'), 'utf8')).toBe('racine');
+    expect(files.find((f) => f.path === 'x.bin')?.present, lfsState()).toBe(true);
+    expect(files.find((f) => f.path === 'sub/x.bin')?.present, lfsState()).toBe(false);
   });
 });
