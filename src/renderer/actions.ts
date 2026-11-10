@@ -7,6 +7,8 @@ import type { MenuItem } from './components/ContextMenu';
 import { openDeleteTagDialog, openTagDialog, pushTagAction } from './components/TagDialog';
 import type { Ui } from './ui';
 import { openRebaseDialog } from './components/RebaseDialog';
+// glisser-déposer
+import { openRefActionDialog } from './components/RefActionDialog';
 
 export function checkoutBranch(ui: Ui, repo: string, name: string) {
   return ui.run(`Checkout de ${name}…`, () => api.checkout(repo, name));
@@ -34,6 +36,8 @@ export function branchMenu(ui: Ui, snap: RepoSnapshot, name: string, remote: boo
       disabled: isCurrent || !snap.head || snap.status.state !== 'clean',
       onClick: () => openRebaseDialog(ui, snap, name, `« ${name} »`),
     },
+    // glisser-déposer : mêmes actions que le dépôt de la branche, au clavier.
+    { label: 'Fusionner, rebaser ou pousser…', disabled: snap.commits.length === 0, onClick: () => openRefActionDialog(ui, snap, { name, remote }) },
     'separator',
     {
       label: 'Créer une branche ici…',

@@ -2513,6 +2513,106 @@ tr.cf-marker {
 }
 
 /* glisser-déposer */
+.ref[draggable='true'],
+.side-item[draggable='true'] {
+  cursor: grab;
+}
+.side-item:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+/* Cible survolée : dépôt possible (contour et fond) ou refusé (contour pointillé). */
+.drop-ok {
+  outline: 2px solid var(--drop-target);
+  outline-offset: -2px;
+  background: var(--drop-target-bg);
+}
+.ref.drop-ok {
+  outline-offset: 1px;
+}
+.drop-no {
+  outline: 1px dashed var(--text-faint);
+  outline-offset: -1px;
+  cursor: no-drop;
+}
+.ref.drop-no {
+  outline-offset: 1px;
+}
+.remote-drop.drop-ok,
+.remote-drop.drop-no {
+  border-radius: var(--radius);
+}
+.menu-item:focus-visible {
+  outline: none;
+  background: var(--accent);
+  color: var(--on-accent);
+}
+.menu-item.danger:focus-visible {
+  background: var(--danger);
+  color: var(--on-danger);
+}
+.menu-hint {
+  display: block;
+  font-size: 11px;
+  color: var(--text-faint);
+  white-space: normal;
+  max-width: 340px;
+}
+.ref-action-dialog {
+  width: 520px;
+}
+.ref-action-dialog select {
+  font: inherit;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 5px 6px;
+}
+.ref-action-dialog select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.ref-action-commit {
+  color: var(--text-dim);
+}
+.ref-action-error {
+  color: var(--warn);
+}
+.ref-action-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.ref-action {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  text-align: left;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-3);
+}
+.ref-action:hover:not(:disabled),
+.ref-action:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  background: var(--drop-target-bg);
+}
+.ref-action.danger {
+  color: var(--danger);
+}
+.ref-action.danger:hover:not(:disabled),
+.ref-action.danger:focus-visible {
+  border-color: var(--danger);
+}
+.ref-action small {
+  font-size: 11px;
+  color: var(--text-faint);
+}
 
 /* sous-modules */
 
