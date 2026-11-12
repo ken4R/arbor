@@ -33,6 +33,8 @@ import './commands/lfs';
 // glisser-déposer
 import './commands/branches';
 import { clearDropHover, endRefDrag } from './refDrop';
+// comptes
+// identifiants
 
 // Préférences enregistrées lues dès le démarrage (et migration des anciennes clés localStorage).
 void loadPreferences();
@@ -64,5 +66,9 @@ createRoot(document.getElementById('root')!).render(
     <PreferencesDialog />
 
     {/* onglets */}
+
+    {/* comptes */}
+
+    {/* identifiants */}
   </>,
 );

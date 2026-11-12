@@ -70,6 +70,12 @@
   /* Badges sous-module et LFS */
   --badge-submodule: #5aa6e8;
   --badge-lfs: #d9793f;
+  /* Comptes et identifiants */
+  --account-ok: var(--add);
+  --account-rejected: var(--danger);
+  --credential-fingerprint-bg: rgba(255, 255, 255, 0.05);
+  --secret-field-letter-spacing: 0.12em;
+  --avatar-size: 20px;
   color-scheme: dark;
 }
 
@@ -143,6 +149,12 @@
   /* Badges sous-module et LFS */
   --badge-submodule: #2a78c8;
   --badge-lfs: #b35215;
+  /* Comptes et identifiants */
+  --account-ok: var(--add);
+  --account-rejected: var(--danger);
+  --credential-fingerprint-bg: rgba(60, 70, 90, 0.06);
+  --secret-field-letter-spacing: 0.12em;
+  --avatar-size: 20px;
   color-scheme: light;
 }
 
@@ -218,6 +230,12 @@
     /* Badges sous-module et LFS */
     --badge-submodule: #2a78c8;
     --badge-lfs: #b35215;
+    /* Comptes et identifiants */
+    --account-ok: var(--add);
+    --account-rejected: var(--danger);
+    --credential-fingerprint-bg: rgba(60, 70, 90, 0.06);
+    --secret-field-letter-spacing: 0.12em;
+    --avatar-size: 20px;
     color-scheme: light;
   }
 }
@@ -2791,3 +2809,7 @@ tr.cf-marker {
   width: 3px;
   background: var(--accent);
 }
+
+/* comptes */
+
+/* identifiants */

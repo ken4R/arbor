@@ -59,5 +59,5 @@ Le rendu n'a aucun accès direct au système : toutes les commandes passent par 
 
 ## Feuille de route
 
-1. Authentification GitHub/GitLab, pull requests, identifiants SSH/HTTPS.
+1. Authentification GitHub/GitLab et identifiants SSH/HTTPS : en cours (vague 5). Pull requests : vague 6.
 2. Performances sur gros dépôts, tests de bout en bout en CI, paquets d'installation (electron-builder).

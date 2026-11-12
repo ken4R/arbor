@@ -1,11 +1,18 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, type MenuItemConstructorOptions } from 'electron';
-import { closeSync, existsSync, fsyncSync, openSync, readFileSync, renameSync, rmSync, writeFileSync, writeSync } from 'node:fs';
+import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { access, realpath } from 'node:fs/promises';
 import { basename, join, resolve } from 'node:path';
 import * as g from './git';
 import { RepoWatcher } from './watcher';
 import { mergePreferences, normalizePreferences, type Preferences } from '../shared/prefs';
 import { MISSING_LIMIT, normalizeSession, type PersistedView, type SessionData } from '../shared/session';
+import { writeFileAtomic } from './fsutil';
+import { withOperation } from './opContext';
+// comptes
+import { randomBytes } from 'node:crypto';
+import { createAccountStore, type AccountStore } from './accountStore';
+import { electronCrypto } from './secrets';
+// identifiants
 
 // Données utilisateur isolées (tests d'interface) : à fixer avant `ready`.
 if (process.env.ARBOR_USER_DATA) app.setPath('userData', resolve(process.env.ARBOR_USER_DATA));
@@ -51,29 +58,35 @@ function loadPreferences(): Preferences {
   return prefsCache;
 }
 
-/** Écriture atomique : un arrêt brutal ne laisse jamais un fichier tronqué. */
-function writeFileAtomic(file: string, content: string) {
-  const tmp = `${file}.${process.pid}.tmp`;
-  try {
-    const fd = openSync(tmp, 'w');
-    try {
-      writeSync(fd, content);
-      fsyncSync(fd);
-    } finally {
-      closeSync(fd);
-    }
-    renameSync(tmp, file);
-  } finally {
-    rmSync(tmp, { force: true });
-  }
-}
-
 function savePreferences(patch: unknown): Preferences {
   const next = mergePreferences(loadPreferences(), patch);
   writeFileAtomic(prefsFile(), JSON.stringify(next, null, 2));
   prefsCache = next;
   nativeTheme.themeSource = next.theme;
   return next;
+}
+
+// comptes : `userData/accounts.json` (0600), jetons chiffrés par safeStorage ; créé à `ready` (safeStorage l'exige).
+let accountStoreInstance: AccountStore | null = null;
+
+function accountStore(): AccountStore {
+  if (!accountStoreInstance) throw new Error("Les comptes ne sont pas encore disponibles : réessayez dans un instant.");
+  return accountStoreInstance;
+}
+
+function initAccountStore() {
+  accountStoreInstance = createAccountStore({
+    file: join(app.getPath('userData'), 'accounts.json'),
+    crypto: electronCrypto,
+    readFile: (f) => readFileSync(f, 'utf8'),
+    writeFile: (f, c) => writeFileAtomic(f, c, 0o600),
+    renameFile: renameSync,
+    now: () => Math.floor(Date.now() / 1000),
+    randomId: () => randomBytes(12).toString('hex'),
+    // Jamais de secret ni de contenu de fichier dans ce journal.
+    warn: (m) => console.warn(m),
+  });
+  accountStoreInstance.onChange((accounts) => sendEvent('accountsChanged', { accounts }));
 }
 
 // Couleur de fond de la fenêtre avant le premier rendu (doit suivre `--bg` du thème).
@@ -246,7 +259,25 @@ function installMenu() {
 }
 
 // Handlers qui ne reçoivent pas de dépôt en premier argument.
-const NO_REPO = new Set(['openRepoDialog', 'initRepoDialog', 'cloneRepo', 'recentRepos', 'initialRepo', 'unwatchRepo', 'getPreferences', 'setPreferences', 'restoreSession', 'saveSession']);
+const NO_REPO = new Set([
+  'openRepoDialog',
+  'initRepoDialog',
+  'cloneRepo',
+  'recentRepos',
+  'initialRepo',
+  'unwatchRepo',
+  'getPreferences',
+  'setPreferences',
+  'restoreSession',
+  'saveSession',
+
+  // comptes
+  'listAccounts',
+  'removeAccount',
+  'accountStorage',
+
+  // identifiants
+]);
 
 // Handlers en lecture seule, hors sourdine du rafraîchissement automatique. Liste blanche : toute nouvelle
 // commande est mise en sourdine par défaut. Les noms absents de `handlers` (autres branches) sont sans effet.
@@ -292,6 +323,13 @@ const READ_ONLY = new Set([
   'lfsInfo',
 
   // état des onglets
+
+  // comptes : n'écrivent que dans userData, jamais dans .git
+  'listAccounts',
+  'removeAccount',
+  'accountStorage',
+
+  // identifiants
 ]);
 
 const handlers: Record<string, (...args: any[]) => Promise<unknown>> = {
@@ -413,16 +451,28 @@ const handlers: Record<string, (...args: any[]) => Promise<unknown>> = {
   lfsPull: (repo: string, paths: unknown) => g.lfsPull(repo, paths),
 
   // état des onglets
+
+  // comptes
+  listAccounts: async () => accountStore().list(),
+  async removeAccount(id: unknown) {
+    if (typeof id !== 'string') throw new Error('Compte invalide.');
+    return accountStore().remove(id);
+  },
+  accountStorage: async () => accountStore().storage(),
+
+  // identifiants
 };
 
 for (const [name, fn] of Object.entries(handlers)) {
   ipcMain.handle(`arbor:${name}`, async (_e, ...args) => {
     try {
       if (!NO_REPO.has(name)) assertOpened(args[0]);
+      // Contexte d'opération : le crochet d'authentification de git.ts sait quelle opération lance une commande réseau.
+      const ctx = { operation: name, repo: NO_REPO.has(name) ? null : (args[0] as string) };
       // En sourdine : ce que la commande écrit dans le dépôt ne déclenche pas de rafraîchissement automatique.
       // Les lectures n'écrivent rien : elles ne coupent pas le son, pour ne pas masquer un changement externe.
-      if (READ_ONLY.has(name)) return { value: await fn(...args) };
-      return { value: await watcher.mute(() => fn(...args)) };
+      if (READ_ONLY.has(name)) return { value: await withOperation(ctx, () => fn(...args)) };
+      return { value: await withOperation(ctx, () => watcher.mute(() => fn(...args))) };
     } catch (err) {
       return { error: err instanceof Error ? err.message : String(err) };
     }
@@ -458,6 +508,15 @@ const watcher = new RepoWatcher(
   (ev) => sendEvent('watchLimited', ev),
 );
 
-app.whenReady().then(createWindow);
+app.whenReady().then(() => {
+  // comptes
+  initAccountStore();
+  // identifiants : démarrage du serveur askpass
+
+  createWindow();
+});
 app.on('window-all-closed', () => app.quit());
-app.on('will-quit', () => watcher.stop());
+app.on('will-quit', () => {
+  watcher.stop();
+  // identifiants : arrêt du serveur askpass
+});

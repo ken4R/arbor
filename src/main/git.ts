@@ -51,6 +51,8 @@ const GIT_ERRORS: [RegExp, (m: RegExpMatchArray) => string][] = [
   [/(?:branch named|tag) '(.+?)' already exists/i, (m) => `« ${m[1]} » existe déjà.`],
   [/is not a valid (?:branch|tag) name|not a valid ref name/, () => 'Nom invalide pour Git (espaces, « .. », « ~ », « ^ », « : » et « \\ » sont interdits).'],
   [/\[rejected\].*\((?:fetch first|non-fast-forward)\)/, () => 'Push refusé : la branche distante contient des commits que vous n\'avez pas. Faites un pull d\'abord.'],
+  // identifiants (vague 5) : avant les entrées génériques ci-dessous
+
   [/Authentication failed|could not read Username|Permission denied \(publickey/, () => 'Authentification refusée par le serveur distant. Vérifiez vos identifiants ou votre clé SSH.'],
   [/Could not resolve host|Connection timed out|unable to access/, () => 'Serveur distant injoignable. Vérifiez la connexion et l\'URL du remote.'],
   [/Please tell me who you are|empty ident name/, () => 'Identité Git non configurée : définissez user.name et user.email (git config --global).'],
@@ -101,13 +103,30 @@ interface RunOptions {
   env?: Record<string, string>;
 }
 
+/**
+ * Crochet d'authentification (installé par l'assistant d'identifiants) : appelé avant chaque commande, il renvoie
+ * null pour les commandes locales, ou des arguments à placer devant `args` (`-c credential…`) et des variables
+ * d'environnement. `done()` est appelé à la sortie du processus, réussite ou échec.
+ */
+export type GitAuthHook = (args: readonly string[]) => { prefixArgs: string[]; env: Record<string, string>; done(): void } | null;
+let authHook: GitAuthHook | null = null;
+export function setGitAuthHook(h: GitAuthHook | null) {
+  authHook = h;
+}
+
 export function git(repo: string, args: string[], opts: RunOptions = {}): Promise<string> {
   return new Promise((resolve, reject) => {
+    const auth = authHook?.(args) ?? null;
     const child = execFile(
       'git',
-      args,
-      { cwd: repo, maxBuffer: 256 * 1024 * 1024, env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_EDITOR: 'true', LC_ALL: 'C', ...opts.env } },
+      [...(auth?.prefixArgs ?? []), ...args],
+      { cwd: repo, maxBuffer: 256 * 1024 * 1024, env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_EDITOR: 'true', LC_ALL: 'C', ...auth?.env, ...opts.env } },
       (err, stdout, stderr) => {
+        try {
+          auth?.done();
+        } catch {
+          // la fin de session ne doit pas masquer le résultat de la commande
+        }
         const code = err ? (typeof err.code === 'number' ? err.code : 1) : 0;
         if (err && !(opts.okCodes ?? []).includes(code)) {
           // Certains messages (CONFLICT…) sont écrits sur stdout : on garde les deux flux.

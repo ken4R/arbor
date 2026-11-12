@@ -1,6 +1,9 @@
 // Lance Arbor dans Electron (sans écran via xvfb-run), ouvre un dépôt et prend des captures.
 // Usage : xvfb-run -a node scripts/ui-check.cjs <dépôt> <dossier-captures> [scénario.cjs] [--keep-user-data[=<dossier>]] [--path-without-lfs]
-// Un scénario exporte `async (win, shot) => {}` ; `shot(nom)` enregistre une capture.
+//         xvfb-run -a node scripts/ui-check.cjs --welcome <dossier-captures> [scénario.cjs] [options…]
+// Un scénario exporte `async (win, shot, app) => {}` ; `shot(nom)` enregistre une capture ; `app` est
+// l'ElectronApplication de Playwright (`app.evaluate(({ dialog }) => …)` pour simuler un dialogue natif).
+// `--welcome` : aucun dépôt ouvert, attente de l'écran d'accueil (`.welcome`) au lieu du graphe.
 // Données utilisateur (préférences, dépôts récents) : dossier temporaire neuf à chaque lancement, sauf avec
 // `--keep-user-data`, qui réutilise un dossier fixe (ou celui donné) pour tester un redémarrage.
 // `--path-without-lfs` : PATH réduit à un dossier temporaire qui ne contient que `git` (simule un poste sans git-lfs).
@@ -11,9 +14,12 @@ const { _electron } = require('playwright');
 
 const argv = process.argv.slice(2);
 const keepArg = argv.find((a) => a === '--keep-user-data' || a.startsWith('--keep-user-data='));
-const [repo, outDir, scenario] = argv.filter((a) => !a.startsWith('--'));
-if (!repo || !outDir) {
+const welcome = argv.includes('--welcome');
+const positional = argv.filter((a) => !a.startsWith('--'));
+const [repo, outDir, scenario] = welcome ? [null, ...positional] : positional;
+if ((!welcome && !repo) || !outDir) {
   console.error('Usage : node scripts/ui-check.cjs <dépôt> <dossier-captures> [scénario.cjs] [--keep-user-data[=<dossier>]] [--path-without-lfs]');
+  console.error('        node scripts/ui-check.cjs --welcome <dossier-captures> [scénario.cjs] [options…]');
   process.exit(1);
 }
 // Dossier fixe propre à cette copie du dépôt : deux worktrees lancés en parallèle ne partagent pas leurs données.
@@ -37,7 +43,7 @@ if (argv.includes('--path-without-lfs')) {
   fs.mkdirSync(outDir, { recursive: true });
   const app = await _electron.launch({
     executablePath: require(path.join(root, 'node_modules/electron')),
-    args: [root, '--no-sandbox', path.resolve(repo)],
+    args: [root, '--no-sandbox', ...(repo ? [path.resolve(repo)] : [])],
     cwd: root,
     env: { ...process.env, ARBOR_USER_DATA: userData, ...(pathWithoutLfs ? { PATH: pathWithoutLfs } : {}) },
   });
@@ -46,7 +52,7 @@ if (argv.includes('--path-without-lfs')) {
   win.on('pageerror', (e) => errors.push(e.message));
   win.on('console', (m) => m.type() === 'error' && errors.push(m.text()));
   await win.setViewportSize({ width: 1440, height: 860 });
-  await win.waitForSelector('.row', { timeout: 20000 });
+  await win.waitForSelector(welcome ? '.welcome' : '.row', { timeout: 20000 });
   await win.waitForTimeout(300);
   const shot = async (name) => {
     const file = path.join(outDir, `${name}.png`);
@@ -55,7 +61,7 @@ if (argv.includes('--path-without-lfs')) {
   };
   try {
     await shot('00-ouverture');
-    if (scenario) await require(path.resolve(scenario))(win, shot);
+    if (scenario) await require(path.resolve(scenario))(win, shot, app);
   } finally {
     await app.close();
     if (!keepArg) fs.rmSync(userData, { recursive: true, force: true });
