@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { accountForCredential, matchAccount, missingScopes, PROVIDERS } from './accounts';
+import { accountForCredential, accountOrigin, gitUsername, matchAccount, missingScopes, PROVIDERS } from './accounts';
 import { parseRemoteUrl } from './remoteUrl';
 import type { AccountInfo } from './types';
 
@@ -17,6 +17,7 @@ function account(over: Partial<AccountInfo>): AccountInfo {
     missingScopes: [],
     authMethod: 'pat',
     status: 'ok',
+    secretUnreadable: false,
     persisted: true,
     addedAt: 100,
     validatedAt: 100,
@@ -96,6 +97,10 @@ describe('accountForCredential', () => {
     expect(accountForCredential({ protocol: 'https', host: 'gitlab.com', username: 'Alice' }, [gl])?.id).toBe('gl');
   });
 
+  it('identifiants génériques des URL à jeton', () => {
+    for (const username of ['oauth2', 'git', 'x-access-token']) expect(accountForCredential({ protocol: 'https', host: 'gitlab.com', username }, [gl])?.id).toBe('gl');
+  });
+
   it('identifiant différent du login : pas de réponse', () => {
     expect(accountForCredential({ protocol: 'https', host: 'gitlab.com', username: 'bob' }, [gl])).toBeNull();
   });
@@ -109,5 +114,33 @@ describe('accountForCredential', () => {
   it('ni ssh ni hôte absent', () => {
     expect(accountForCredential({ protocol: 'ssh', host: 'gitlab.com' }, [gl])).toBeNull();
     expect(accountForCredential({ protocol: 'https' }, [gl])).toBeNull();
+  });
+});
+
+describe('gitUsername', () => {
+  it('login, sauf jeton OAuth GitLab', () => {
+    expect(gitUsername(account({ provider: 'gitlab' }), 'pat')).toBe('alice');
+    expect(gitUsername(account({ provider: 'gitlab' }), 'oauth')).toBe('oauth2');
+    expect(gitUsername(account({ provider: 'github', login: 'octo' }), 'oauth')).toBe('octo');
+  });
+});
+
+describe('accountOrigin', () => {
+  it('schéma de l’instance et hôte, sans caractère dangereux pour une clé de configuration', () => {
+    const cases = [
+      [account({}), 'https://gitlab.com'],
+      [account({ instanceUrl: 'https://git.exemple.org:8443/gitlab', host: 'git.exemple.org:8443' }), 'https://git.exemple.org:8443'],
+      [account({ instanceUrl: 'http://127.0.0.1:5000', host: '127.0.0.1:5000' }), 'http://127.0.0.1:5000'],
+      [account({ instanceUrl: 'http://[::1]:5000', host: '[::1]:5000' }), 'http://[::1]:5000'],
+    ] as const;
+    for (const [a, origin] of cases) {
+      const o = accountOrigin(a);
+      expect(o).toBe(origin);
+      expect(o).not.toMatch(/[\s"'=\n\r\0]/);
+    }
+  });
+
+  it('refuse un hôte mal formé', () => {
+    for (const host of ['h x', 'h"', 'h=1', 'h\nx', 'H']) expect(() => accountOrigin(account({ host })), host).toThrow();
   });
 });

@@ -60,7 +60,7 @@ function byPreference(a: AccountInfo, b: AccountInfo): number {
   return a.addedAt - b.addedAt;
 }
 
-function instanceScheme(account: AccountInfo): string {
+function instanceScheme(account: Pick<AccountInfo, 'instanceUrl'>): string {
   return account.instanceUrl.slice(0, account.instanceUrl.indexOf(':'));
 }
 
@@ -81,9 +81,13 @@ export function matchAccount(loc: RemoteLocation | null, accounts: readonly Acco
   return found.sort(byPreference)[0] ?? null;
 }
 
+/** Identifiants génériques qu'on trouve dans les URL de remotes à jeton (`https://oauth2@gitlab.com/…`). */
+const GENERIC_GIT_USERNAMES = new Set(['oauth2', 'git', 'x-access-token']);
+
 /**
  * Compte qui peut répondre à une demande `git credential get` : https (ou http en boucle locale) seulement, hôte
- * identique (`host` de Git inclut le port), identifiant vide ou égal au login du compte.
+ * identique (`host` de Git inclut le port), identifiant vide, égal au login du compte, ou générique (`oauth2`,
+ * `git`, `x-access-token`).
  */
 export function accountForCredential(req: { protocol?: string; host?: string; username?: string }, accounts: readonly AccountInfo[]): AccountInfo | null {
   const protocol = (req.protocol ?? '').toLowerCase();
@@ -92,7 +96,29 @@ export function accountForCredential(req: { protocol?: string; host?: string; us
   if (protocol !== 'https' && !(protocol === 'http' && isLoopbackHost(host.replace(/:\d+$/, '')))) return null;
   const username = req.username ?? '';
   const found = accounts.filter(
-    (a) => a.host === host && instanceScheme(a) === protocol && (username === '' || username.toLowerCase() === a.login.toLowerCase()),
+    (a) => a.host === host && instanceScheme(a) === protocol && (username === '' || username.toLowerCase() === a.login.toLowerCase() || GENERIC_GIT_USERNAMES.has(username.toLowerCase())),
   );
   return found.sort(byPreference)[0] ?? null;
+}
+
+/**
+ * Identifiant à présenter à Git avec le jeton : le login ; `oauth2` pour un jeton OAuth GitLab (GitLab ignore
+ * l'identifiant pour un jeton personnel, mais l'exige égal à `oauth2` pour un jeton OAuth).
+ */
+export function gitUsername(account: Pick<AccountInfo, 'provider' | 'login'>, secretKind: 'pat' | 'oauth'): string {
+  if (account.provider === 'gitlab' && secretKind === 'oauth') return 'oauth2';
+  return account.login;
+}
+
+const ORIGIN_RE = /^https?:\/\/[a-z0-9_.:\[\]-]+$/;
+
+/**
+ * Origine Git du compte (`https://hôte[:port]`, ou `http://` en boucle locale), utilisable telle quelle dans une clé
+ * de configuration `credential.<origine>.helper` : ni espace, ni guillemet, ni `=`, ni saut de ligne. Lève une
+ * erreur si le compte est mal formé (jamais le cas après `normalizeInstanceUrl`).
+ */
+export function accountOrigin(account: Pick<AccountInfo, 'instanceUrl' | 'host'>): string {
+  const origin = `${instanceScheme(account)}://${account.host}`;
+  if (!ORIGIN_RE.test(origin)) throw new Error('Origine de compte invalide.');
+  return origin;
 }

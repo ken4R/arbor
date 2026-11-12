@@ -85,7 +85,7 @@ describe('normalizeInstanceUrl', () => {
   });
 
   it('refuse identifiants, requête, fragment et autres schémas', () => {
-    for (const u of ['https://u:p@h', 'https://u@h', 'https://h/?a=1', 'https://h/#x', 'https://h?', 'ftp://h', 'mailto:x', '', 'https://h /x', 'https://h"x', 'https://h/../x']) {
+    for (const u of ['https://h:0', 'https://u:p@h', 'https://u@h', 'https://h/?a=1', 'https://h/#x', 'https://h?', 'ftp://h', 'mailto:x', '', 'https://h /x', 'https://h"x', 'https://h/../x']) {
       expect(normalizeInstanceUrl(u), u).toHaveProperty('error');
     }
   });
@@ -95,7 +95,13 @@ describe('redactUrlCredentials', () => {
   it('masque le mot de passe dans un texte', () => {
     expect(redactUrlCredentials("fatal: unable to access 'https://u:glpat-123@h/o/r.git/': 403")).toBe("fatal: unable to access 'https://u:•••@h/o/r.git/': 403");
     expect(redactUrlCredentials('a https://x:y@h b http://p:q@k')).toBe('a https://x:•••@h b http://p:•••@k');
-    expect(redactUrlCredentials('https://u@h/o/r')).toBe('https://u@h/o/r');
+    // Identifiant seul : peut être un jeton (https://ghp_…@github.com), masqué aussi.
+    expect(redactUrlCredentials('https://ghp_abcdef@github.com/o/r/')).toBe('https://•••@github.com/o/r/');
+    expect(redactUrlCredentials('https://u@h/o/r')).toBe('https://•••@h/o/r');
+    // `@` dans le mot de passe : tout ce qui précède le dernier `@` de l'autorité est masqué.
+    expect(redactUrlCredentials('https://u:p@ss@h/x')).toBe('https://u:•••@h/x');
+    expect(redactUrlCredentials('https://u:p@ss@h/x@y')).toBe('https://u:•••@h/x@y');
+    expect(redactUrlCredentials('https://h/o/r@main')).toBe('https://h/o/r@main');
     expect(redactUrlCredentials('git@github.com:o/r.git')).toBe('git@github.com:o/r.git');
   });
 });
@@ -105,6 +111,7 @@ describe('projectPathFor', () => {
     const https = parseRemoteUrl('https://git.exemple.org/gitlab/g/s/p.git')!;
     expect(projectPathFor('https://git.exemple.org/gitlab', https)).toBe('g/s/p');
     expect(projectPathFor('https://git.exemple.org/autre', https)).toBeNull();
+    expect(projectPathFor('https://git.exemple.org/GitLab', https)).toBe('g/s/p');
     expect(projectPathFor('https://github.com', parseRemoteUrl('https://github.com/o/r')!)).toBe('o/r');
   });
 

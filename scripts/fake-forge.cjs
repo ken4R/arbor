@@ -174,12 +174,11 @@ function handleGit(req, res, url, opts, done) {
   child.stderr.on('data', (d) => {
     stderr += d;
   });
-  child.on('error', () => {
-    if (!headersSent) res.writeHead(500);
-    res.end();
-    done(500);
-  });
-  child.on('close', (code) => {
+  // `error` (git introuvable) et `close` peuvent arriver tous les deux : une seule réponse, un seul journal.
+  let finished = false;
+  const finish = (code) => {
+    if (finished) return;
+    finished = true;
     if (!headersSent) {
       status = 500;
       res.writeHead(500, { 'Content-Type': 'text/plain' });
@@ -187,7 +186,9 @@ function handleGit(req, res, url, opts, done) {
     res.end();
     if (opts.log && code !== 0 && stderr.trim()) process.stderr.write(`http-backend : ${stderr.trim().split('\n').pop()}\n`);
     done(status);
-  });
+  };
+  child.on('error', () => finish(-1));
+  child.on('close', (code) => finish(code));
 }
 
 let baseUrl = '';

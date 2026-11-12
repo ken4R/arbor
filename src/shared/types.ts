@@ -507,8 +507,16 @@ export interface AccountInfo {
   missingScopes: string[];
   /** 'oauth' : extension « device flow ». */
   authMethod: 'pat' | 'oauth';
-  /** 'rejected' : jeton refusé lors du dernier usage (Git ou API), ou illisible (trousseau réinitialisé). */
+  /**
+   * 'rejected' : jeton refusé lors du dernier usage (Git ou API), ou illisible (voir `secretUnreadable`). Un compte
+   * « rejected » n'est jamais proposé automatiquement à Git.
+   */
   status: 'ok' | 'rejected';
+  /**
+   * true : le jeton enregistré ne peut pas être déchiffré (trousseau indisponible, réinitialisé ou autre machine) ;
+   * distinct d'un jeton refusé par le serveur. Le statut vaut alors 'rejected'.
+   */
+  secretUnreadable: boolean;
   /** false : gardé en mémoire seulement (chiffrement indisponible). */
   persisted: boolean;
   /** Secondes depuis l'epoch. */

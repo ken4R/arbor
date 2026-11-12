@@ -23,6 +23,14 @@ function start() {
   onAccountsChanged((ev) => {
     accounts = Array.isArray(ev?.accounts) ? ev.accounts : [];
     emit();
+    // L'état du trousseau peut avoir changé (chiffrement en échec, compte gardé en mémoire) : relu à chaque fois.
+    api.accountStorage().then(
+      (s) => {
+        storage = s;
+        emit();
+      },
+      () => {},
+    );
   });
   void refreshAccounts();
 }

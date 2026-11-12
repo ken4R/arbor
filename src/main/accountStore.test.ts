@@ -105,7 +105,7 @@ describe('createAccountStore', () => {
     const first = setup(fakeCrypto('available', 1));
     first.store.add(META, { kind: 'pat', token: TOKEN });
     const second = setup(fakeCrypto('available', 2), first.dir);
-    expect(second.store.list()[0]).toMatchObject({ login: 'arbor-test', status: 'rejected', persisted: true });
+    expect(second.store.list()[0]).toMatchObject({ login: 'arbor-test', status: 'rejected', secretUnreadable: true, persisted: true });
     expect(second.store.secret('id1')).toBeNull();
     expect(second.store.findForCredential({ protocol: 'http', host: '127.0.0.1:5000' })).toBeNull();
     // Reconnexion : nouveau secret, le compte redevient « ok ».
@@ -122,6 +122,9 @@ describe('createAccountStore', () => {
     expect(store.findForCredential({ protocol: 'http', host: '127.0.0.1:5000', username: 'bob' })).toBeNull();
     store.markRejected('id1');
     store.markRejected('id1'); // sans effet la seconde fois
+    // Un jeton refusé n'est plus proposé à Git.
+    expect(store.findForCredential({ protocol: 'http', host: '127.0.0.1:5000' })).toBeNull();
+    expect(store.list()[0].secretUnreadable).toBe(false);
     expect(store.list()[0].status).toBe('rejected');
     expect(JSON.parse(readFileSync(file, 'utf8')).accounts[0].status).toBe('rejected');
     expect(seen).toEqual([['arbor-test:ok'], ['arbor-test:rejected']]);
@@ -137,6 +140,84 @@ describe('createAccountStore', () => {
     expect(() => store.add({ ...META, instanceUrl: 'http://gitlab.exemple.org' }, { kind: 'pat', token: TOKEN })).toThrow(/https/);
     expect(() => store.remove('absent')).toThrow(/introuvable/);
     expect(store.secret('absent')).toBeNull();
+  });
+});
+
+describe('createAccountStore : disque préservé', () => {
+  it('weak + entrée persistée + update : l’entrée chiffrée reste sur disque, le nouveau jeton en mémoire', () => {
+    const crypto = fakeCrypto('available');
+    const first = setup(crypto);
+    first.store.add(META, { kind: 'pat', token: TOKEN });
+    const before = readFileSync(first.file, 'utf8');
+    crypto.set('weak');
+    const second = setup(crypto, first.dir);
+    // Trousseau indisponible : distinct d'un jeton refusé.
+    expect(second.store.list()[0]).toMatchObject({ status: 'rejected', secretUnreadable: true, persisted: true });
+    const updated = second.store.update('id1', { scopes: ['api'] }, { kind: 'pat', token: 'nouveau-jeton' });
+    expect(updated).toMatchObject({ status: 'ok', secretUnreadable: false, persisted: false, missingScopes: [] });
+    expect(second.store.secret('id1')).toEqual({ kind: 'pat', token: 'nouveau-jeton' });
+    expect(readFileSync(first.file, 'utf8')).toBe(before);
+    expect(readFileSync(first.file, 'utf8')).not.toContain('nouveau-jeton');
+    // Trousseau revenu (session suivante) : l'ancien jeton chiffré est toujours là.
+    crypto.set('available');
+    const third = setup(crypto, first.dir);
+    expect(third.store.secret('id1')).toEqual({ kind: 'pat', token: TOKEN });
+  });
+
+  it('chiffrement en échec (accès au trousseau refusé) : compte en mémoire, avertissement fixe', () => {
+    const crypto = { ...fakeCrypto(), encrypt: () => { throw new Error(`refus ${TOKEN}`); } };
+    const { store, file, warnings } = setup(crypto);
+    expect(store.add(META, { kind: 'pat', token: TOKEN })).toMatchObject({ persisted: false, status: 'ok' });
+    expect(existsSync(file)).toBe(false);
+    expect(warnings.join('\n')).not.toContain(TOKEN);
+    expect(warnings.length).toBe(1);
+  });
+
+  it('version de fichier inconnue : lecture seule, fichier intact', () => {
+    const { store, file, warnings } = setup();
+    const future = JSON.stringify({ version: 2, accounts: [{ futur: true }] });
+    writeFileSync(file, future);
+    expect(store.list()).toEqual([]);
+    store.add(META, { kind: 'pat', token: TOKEN });
+    expect(readFileSync(file, 'utf8')).toBe(future);
+    expect(store.list()[0]).toMatchObject({ login: 'arbor-test', persisted: false });
+    expect(warnings.length).toBe(1);
+  });
+
+  it('erreur de lecture autre que ENOENT : lecture seule', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'arbor-accounts-'));
+    dirs.push(dir);
+    const writes: string[] = [];
+    const store = createAccountStore({
+      file: join(dir, 'accounts.json'),
+      crypto: fakeCrypto(),
+      readFile: () => {
+        throw Object.assign(new Error('EACCES'), { code: 'EACCES' });
+      },
+      writeFile: (f) => writes.push(f),
+      renameFile: () => {},
+      now: () => 1,
+      randomId: () => 'x',
+    });
+    expect(store.add(META, { kind: 'pat', token: TOKEN }).persisted).toBe(false);
+    expect(writes).toEqual([]);
+  });
+});
+
+describe('createAccountStore : identité', () => {
+  it('upsert met à jour le compte de même instance et même login au lieu de le dupliquer', () => {
+    const { store } = setup();
+    const a = store.upsert(META, { kind: 'pat', token: TOKEN });
+    expect(a.created).toBe(true);
+    const b = store.upsert({ ...META, instanceUrl: 'http://127.0.0.1:5000', login: 'ARBOR-test', scopes: ['api'] }, { kind: 'pat', token: 'autre' });
+    expect(b).toMatchObject({ created: false, account: { id: a.account.id, missingScopes: [] } });
+    expect(store.list().length).toBe(1);
+    expect(store.secret(a.account.id)).toEqual({ kind: 'pat', token: 'autre' });
+    expect(store.findByIdentity('http://127.0.0.1:5000/', 'arbor-test')?.id).toBe(a.account.id);
+    expect(store.findByIdentity('http://127.0.0.1:5001', 'arbor-test')).toBeNull();
+    // Autre login sur la même instance : nouveau compte.
+    expect(store.upsert({ ...META, login: 'bob' }, { kind: 'pat', token: 'b' }).created).toBe(true);
+    expect(store.list().length).toBe(2);
   });
 });
 

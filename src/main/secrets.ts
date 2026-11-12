@@ -12,21 +12,29 @@ export interface SecretCrypto {
   decrypt(b64: string): unknown;
 }
 
+/** Trousseaux Linux reconnus comme sûrs ; tout autre backend (`basic_text`, `unknown`…) est traité comme faible. */
+const LINUX_SAFE_BACKENDS = new Set(['gnome_libsecret', 'kwallet', 'kwallet5', 'kwallet6']);
+
 /**
- * `unavailable` : pas de chiffrement ; `weak` : Linux sans trousseau (backend `basic_text`, clé codée en dur,
- * équivalent à du clair : refusé) ; sinon `available`.
+ * `unavailable` : pas de chiffrement ; `weak` : Linux sans trousseau reconnu (`basic_text` : clé codée en dur,
+ * équivalent à du clair ; `unknown`) : refusé ; sinon `available`.
  */
 export function storageStatus(): AccountStorageStatus {
   if (!safeStorage.isEncryptionAvailable()) return { encryption: 'unavailable', backend: null };
   if (process.platform === 'linux') {
     const backend = safeStorage.getSelectedStorageBackend();
-    return { encryption: backend === 'basic_text' ? 'weak' : 'available', backend };
+    return { encryption: LINUX_SAFE_BACKENDS.has(backend) ? 'available' : 'weak', backend };
   }
   return { encryption: 'available', backend: process.platform === 'darwin' ? 'keychain' : 'dpapi' };
 }
 
 export function encrypt(obj: unknown): string {
-  return safeStorage.encryptString(JSON.stringify(obj)).toString('base64');
+  try {
+    return safeStorage.encryptString(JSON.stringify(obj)).toString('base64');
+  } catch {
+    // Accès au trousseau refusé (macOS) ou indisponible : message fixe, jamais le contenu.
+    throw new Error('Chiffrement impossible (accès au trousseau refusé ou indisponible).');
+  }
 }
 
 export function decrypt(b64: string): unknown {

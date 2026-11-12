@@ -206,6 +206,20 @@ describe('setGitAuthHook', () => {
       expect(f.done()).toBe(1);
     }));
 
+  it('appelle done() si execFile échoue immédiatement (NUL dans un argument)', () =>
+    withRepo(async (dir) => {
+      const f = fakeHook();
+      setGitAuthHook(f.hook);
+      await expect(git(dir, ['ls-remote', '--', 'a\0b'])).rejects.toThrow();
+      expect(f.done()).toBe(1);
+    }));
+
+  it('ne laisse pas le crochet écraser GIT_EDITOR, GIT_TERMINAL_PROMPT ni LC_ALL', () =>
+    withRepo(async (dir) => {
+      setGitAuthHook(() => ({ prefixArgs: [], env: { GIT_EDITOR: 'vi', GIT_TERMINAL_PROMPT: '1', LC_ALL: 'fr_FR.UTF-8' }, done: () => {} }));
+      expect((await git(dir, ['var', 'GIT_EDITOR'])).trim()).toBe('true');
+    }));
+
   it('sans crochet : arguments inchangés', () =>
     withRepo(async (dir) => {
       setGitAuthHook(null);

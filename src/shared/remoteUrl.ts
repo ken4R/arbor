@@ -190,6 +190,7 @@ export function normalizeInstanceUrl(input: string): { url: string; host: string
   if (parsed.protocol !== 'https:' && !(parsed.protocol === 'http:' && isLoopbackHost(parsed.hostname))) {
     return { error: "L'URL de l'instance doit commencer par https:// (http:// n'est accepté que vers la machine locale)." };
   }
+  if (parsed.port === '0') return { error: "Le port de l'instance n'est pas valide." };
   const hostname = parsed.hostname.replace(/^\[|\]$/g, '').toLowerCase();
   if (!hostname || !validHost(hostname)) return { error: "L'hôte de l'instance n'est pas valide." };
   const path = parsed.pathname.replace(/\/+$/, '');
@@ -198,9 +199,16 @@ export function normalizeInstanceUrl(input: string): { url: string; host: string
   return { url: `${parsed.protocol}//${host}${path}`, host };
 }
 
-/** Masque le mot de passe des URL d'un texte quelconque : `https://u:xxx@h` → `https://u:•••@h`. */
+/**
+ * Masque les identifiants des URL d'un texte quelconque : tout ce qui précède le dernier `@` de l'autorité.
+ * `https://u:xxx@h` → `https://u:•••@h` ; `https://jeton@h` (jeton seul en identifiant) → `https://•••@h`.
+ */
 export function redactUrlCredentials(text: string): string {
-  return text.replace(/\b([a-z][a-z0-9+.-]*:\/\/)([^\s/@:'"]*):([^\s/@'"]+)@/gi, '$1$2:•••@');
+  // Autorité : jusqu'au premier `/` (ou espace, guillemet) ; le `*` gourmand s'arrête au dernier `@`.
+  return text.replace(/\b([a-z][a-z0-9+.-]*:\/\/)([^\s/'"<>]*)@/gi, (_m, scheme: string, userinfo: string) => {
+    const colon = userinfo.indexOf(':');
+    return colon < 0 ? `${scheme}•••@` : `${scheme}${userinfo.slice(0, colon)}:•••@`;
+  });
 }
 
 /**
@@ -213,6 +221,7 @@ export function projectPathFor(instanceUrl: string, loc: RemoteLocation): string
   if ('error' in norm) return null;
   const prefix = new URL(norm.url).pathname.replace(/^\/+|\/+$/g, '');
   if (!prefix) return loc.path || null;
-  if (!loc.path.startsWith(prefix + '/')) return null;
+  // Les chemins d'URL sont sensibles à la casse, mais GitLab sert son préfixe quelle que soit la casse saisie.
+  if (!loc.path.toLowerCase().startsWith(prefix.toLowerCase() + '/')) return null;
   return loc.path.slice(prefix.length + 1) || null;
 }

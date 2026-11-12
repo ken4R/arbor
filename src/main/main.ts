@@ -343,7 +343,10 @@ const handlers: Record<string, (...args: any[]) => Promise<unknown>> = {
     await g.git(r.filePaths[0], ['init']);
     return openRepo(r.filePaths[0]);
   },
-  async cloneRepo(url: string) {
+  async cloneRepo(url: unknown) {
+    if (typeof url !== 'string') throw new Error("L'URL est vide.");
+    const urlError = g.remoteUrlError(url);
+    if (urlError) throw new Error(urlError);
     const r = await dialog.showOpenDialog(win!, { properties: ['openDirectory', 'createDirectory'], title: 'Dossier de destination' });
     if (r.canceled) return null;
     const name = basename(url).replace(/\.git$/, '') || 'repo';

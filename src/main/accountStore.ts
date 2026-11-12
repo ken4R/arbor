@@ -5,8 +5,12 @@
 // - le jeton ne sort jamais d'ici autrement que par `secret(id)`, appelé par le main (assistant d'identifiants,
 //   client d'API) ; `list()` et `onChange` ne renvoient que des `AccountInfo`, sans secret ;
 // - rien n'est jamais écrit en clair : si le chiffrement est faible (`basic_text`) ou indisponible, le compte est
-//   gardé en mémoire seulement (`persisted: false`) ;
-// - aucun journal ne contient de secret ni de contenu chiffré.
+//   gardé en mémoire seulement (`persisted: false`) ; une entrée déjà chiffrée sur disque y reste intacte (un
+//   nouveau jeton saisi pendant cette session vit en mémoire à côté) ;
+// - fichier illisible (autre que absent) ou d'une version inconnue : lecture seule, rien n'est écrit, pour ne pas
+//   l'écraser ;
+// - toutes les méthodes sont synchrones : deux appels concurrents (`upsert`) ne peuvent pas s'entrelacer ;
+// - aucun journal ne contient de secret ni de contenu chiffré (avertissements à texte fixe).
 import { accountForCredential, missingScopes } from '../shared/accounts';
 import { normalizeInstanceUrl } from '../shared/remoteUrl';
 import type { AccountInfo, AccountStorageStatus } from '../shared/types';
@@ -18,7 +22,7 @@ export type AccountSecret =
   | { kind: 'oauth'; accessToken: string; refreshToken: string | null; expiresAt: number | null };
 
 /** Entrée de `accounts.json` : `secret` = base64 de `crypto.encrypt(AccountSecret)`. Ne quitte jamais le main. */
-export type StoredAccount = Omit<AccountInfo, 'missingScopes' | 'persisted'> & { secret: string };
+export type StoredAccount = Omit<AccountInfo, 'missingScopes' | 'persisted' | 'secretUnreadable'> & { secret: string };
 
 /** Ce que l'appelant fournit à `add` (l'hôte est déduit de `instanceUrl`, la méthode du secret). */
 export type AccountMeta = Pick<AccountInfo, 'provider' | 'instanceUrl' | 'sshHosts' | 'login' | 'name' | 'avatarUrl' | 'scopes'>;
@@ -36,7 +40,7 @@ export interface AccountStoreDeps {
   /** Secondes depuis l'epoch. */
   now(): number;
   randomId(): string;
-  /** Avertissement sans donnée sensible (fichier corrompu…). */
+  /** Avertissement à texte fixe, sans donnée sensible (fichier corrompu…). */
   warn?(message: string): void;
 }
 
@@ -46,10 +50,20 @@ export interface AccountStore {
   add(meta: AccountMeta, secret: AccountSecret): AccountInfo;
   /** Met à jour les métadonnées ; avec `secret`, remplace le jeton (le compte redevient « ok »). */
   update(id: string, patch: AccountPatch, secret?: AccountSecret): AccountInfo;
+  /** Compte de même identité : même instance (normalisée) et même login (sans casse) ; null sinon. */
+  findByIdentity(instanceUrl: string, login: string): AccountInfo | null;
+  /**
+   * Ajoute le compte, ou met à jour (métadonnées et jeton) celui de même identité au lieu de le dupliquer.
+   * Synchrone : deux connexions concurrentes du même compte ne créent pas de doublon.
+   */
+  upsert(meta: AccountMeta, secret: AccountSecret): { account: AccountInfo; created: boolean };
   remove(id: string): AccountInfo[];
   /** Secret déchiffré, ou null (compte inconnu ou secret illisible). */
   secret(id: string): AccountSecret | null;
-  /** Compte (avec un secret lisible) qui répond à une demande `git credential get`. */
+  /**
+   * Compte qui répond à une demande `git credential get` : secret lisible et statut « ok » seulement (un jeton
+   * refusé n'est plus proposé à Git : l'utilisateur peut saisir d'autres identifiants ou reconnecter le compte).
+   */
   findForCredential(req: { protocol?: string; host?: string; username?: string }): AccountInfo | null;
   /** Jeton refusé (Git ou API) : statut « rejected », jamais de suppression automatique. */
   markRejected(id: string): void;
@@ -59,6 +73,7 @@ export interface AccountStore {
 
 const PROVIDER_KINDS = new Set(['github', 'gitlab']);
 const HOST_RE = /^[a-z0-9_]([a-z0-9_.-]*[a-z0-9_])?$/;
+const FILE_VERSION = 1;
 const isStr = (v: unknown): v is string => typeof v === 'string';
 const isNum = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v) && v >= 0;
 const strOrNull = (v: unknown): string | null => (isStr(v) && v ? v : null);
@@ -112,22 +127,28 @@ export function normalizeAccountsFile(raw: unknown): StoredAccount[] {
   return out;
 }
 
+type Rec = Omit<StoredAccount, 'secret'>;
+
 interface Entry {
-  rec: Omit<StoredAccount, 'secret'>;
-  /** Secret chiffré (compte persisté) ; null = compte en mémoire seulement. */
+  rec: Rec;
+  /** Secret chiffré présent sur disque ; null = rien sur disque pour ce compte. */
   cipher: string | null;
-  /** Secret des comptes en mémoire seulement. */
+  /** Métadonnées écrites avec `cipher` (inchangées tant que le jeton courant n'est qu'en mémoire). */
+  diskRec: Rec | null;
+  /** Jeton courant gardé en mémoire seulement (chiffrement indisponible) ; prioritaire sur `cipher`. */
   memSecret: AccountSecret | null;
-  /** false : secret chiffré illisible (trousseau réinitialisé, autre machine, chiffrement devenu indisponible). */
+  /** false : `cipher` illisible (trousseau réinitialisé, autre machine, chiffrement indisponible). */
   readable: boolean;
 }
 
 export function createAccountStore(deps: AccountStoreDeps): AccountStore {
   let entries: Entry[] | null = null;
   let lastWritten: string | null = null;
+  /** Fichier illisible ou d'une version inconnue : jamais écrasé pendant cette session. */
+  let readOnly = false;
   const listeners = new Set<(accounts: AccountInfo[]) => void>();
 
-  const canPersist = () => deps.crypto.status().encryption === 'available';
+  const canPersist = () => !readOnly && deps.crypto.status().encryption === 'available';
 
   function tryDecrypt(cipher: string): AccountSecret | null {
     try {
@@ -144,7 +165,10 @@ export function createAccountStore(deps: AccountStoreDeps): AccountStore {
     try {
       raw = deps.readFile(deps.file);
     } catch (e) {
-      if ((e as NodeJS.ErrnoException).code !== 'ENOENT') deps.warn?.('Comptes illisibles : aucun compte chargé.');
+      if ((e as NodeJS.ErrnoException).code !== 'ENOENT') {
+        readOnly = true;
+        deps.warn?.('Fichier des comptes illisible : comptes gardés en mémoire, fichier laissé intact.');
+      }
     }
     let parsed: unknown = undefined;
     if (raw !== null) {
@@ -157,46 +181,67 @@ export function createAccountStore(deps: AccountStoreDeps): AccountStore {
         try {
           deps.renameFile(deps.file, `${deps.file}.corrupt`);
         } catch {
-          // rien à mettre de côté
+          readOnly = true;
         }
       }
     }
-    const available = canPersist();
+    if (parsed !== undefined) {
+      const version = parsed && typeof parsed === 'object' ? (parsed as { version?: unknown }).version : undefined;
+      if (version !== FILE_VERSION) {
+        // Version future (ou inconnue) : on ne la comprend pas, on ne l'écrase pas.
+        readOnly = true;
+        deps.warn?.("Fichier des comptes d'une version inconnue : comptes gardés en mémoire, fichier laissé intact.");
+        entries = [];
+        return entries;
+      }
+    }
+    const available = deps.crypto.status().encryption === 'available';
     entries = normalizeAccountsFile(parsed).map(({ secret, ...rec }) => ({
       rec,
       cipher: secret,
+      diskRec: rec,
       memSecret: null,
       readable: available && tryDecrypt(secret) !== null,
     }));
     return entries;
   }
 
+  const unreadable = (e: Entry) => e.memSecret === null && (e.cipher === null || !e.readable);
+
   function info(e: Entry): AccountInfo {
+    const secretUnreadable = unreadable(e);
     return {
       ...e.rec,
       sshHosts: [...e.rec.sshHosts],
       scopes: e.rec.scopes ? [...e.rec.scopes] : null,
-      status: e.readable ? e.rec.status : 'rejected',
+      status: secretUnreadable ? 'rejected' : e.rec.status,
+      secretUnreadable,
       missingScopes: missingScopes(e.rec.provider, e.rec.scopes),
-      persisted: e.cipher !== null,
+      // Le jeton courant est celui du disque.
+      persisted: e.cipher !== null && e.memSecret === null,
     };
   }
 
   const list = () => load().map(info);
 
-  /** Remplace l'état et écrit les comptes persistés (seulement si le contenu change). Annule tout en cas d'échec. */
+  /** Remplace l'état et écrit les entrées chiffrées (seulement si le contenu change, jamais en lecture seule). */
   function commit(next: Entry[]) {
-    const persisted = next.filter((e) => e.cipher !== null).map((e) => ({ ...e.rec, secret: e.cipher }));
-    const content = JSON.stringify({ version: 1, accounts: persisted }, null, 2);
-    // Aucun fichier et rien à persister : on n'en crée pas.
-    if (content !== lastWritten && !(lastWritten === null && persisted.length === 0)) {
-      deps.writeFile(deps.file, content);
-      lastWritten = content;
+    if (!readOnly) {
+      const persisted = next.flatMap((e) => (e.cipher !== null && e.diskRec !== null ? [{ ...e.diskRec, secret: e.cipher }] : []));
+      const content = JSON.stringify({ version: FILE_VERSION, accounts: persisted }, null, 2);
+      // Aucun fichier et rien à persister : on n'en crée pas.
+      if (content !== lastWritten && !(lastWritten === null && persisted.length === 0)) {
+        deps.writeFile(deps.file, content);
+        lastWritten = content;
+      }
     }
     entries = next;
     const accounts = list();
     for (const cb of listeners) cb(accounts);
   }
+
+  /** Après un changement de métadonnées : le disque suit si le jeton courant est celui du disque. */
+  const synced = (e: Entry): Entry => (e.memSecret === null && e.cipher !== null ? { ...e, diskRec: e.rec } : e);
 
   function find(id: string): Entry {
     const e = load().find((x) => x.rec.id === id);
@@ -206,13 +251,20 @@ export function createAccountStore(deps: AccountStoreDeps): AccountStore {
 
   function withSecret(e: Entry, secret: AccountSecret): Entry {
     if (!isSecret(secret)) throw new Error('Secret invalide.');
-    const rec = { ...e.rec, authMethod: secret.kind === 'oauth' ? ('oauth' as const) : ('pat' as const) };
-    if (canPersist()) return { rec, cipher: deps.crypto.encrypt(secret), memSecret: null, readable: true };
-    return { rec, cipher: null, memSecret: secret, readable: true };
+    const rec: Rec = { ...e.rec, authMethod: secret.kind === 'oauth' ? 'oauth' : 'pat' };
+    if (canPersist()) {
+      try {
+        return { rec, cipher: deps.crypto.encrypt(secret), diskRec: rec, memSecret: null, readable: true };
+      } catch {
+        deps.warn?.('Chiffrement du jeton impossible : compte gardé en mémoire pour cette session.');
+      }
+    }
+    // En mémoire seulement ; l'éventuelle entrée chiffrée du disque reste intacte.
+    return { ...e, rec, memSecret: secret };
   }
 
-  function checkMeta(meta: AccountPatch): Partial<Entry['rec']> {
-    const out: Partial<Entry['rec']> = {};
+  function checkMeta(meta: AccountPatch): Partial<Rec> {
+    const out: Partial<Rec> = {};
     if (meta.provider !== undefined) {
       if (!PROVIDER_KINDS.has(meta.provider)) throw new Error('Fournisseur inconnu.');
       out.provider = meta.provider;
@@ -242,47 +294,70 @@ export function createAccountStore(deps: AccountStoreDeps): AccountStore {
     return tryDecrypt(e.cipher);
   }
 
+  function findIdentity(instanceUrl: string, login: string): Entry | null {
+    const inst = normalizeInstanceUrl(instanceUrl);
+    if ('error' in inst) return null;
+    const l = login.toLowerCase();
+    return load().find((e) => e.rec.instanceUrl === inst.url && e.rec.login.toLowerCase() === l) ?? null;
+  }
+
+  function add(meta: AccountMeta, secret: AccountSecret): AccountInfo {
+    load(); // avant `canPersist` : la lecture peut passer le magasin en lecture seule
+    const checked = checkMeta(meta);
+    if (!checked.provider || !checked.instanceUrl || !checked.host || !checked.login) throw new Error('Compte incomplet.');
+    const now = deps.now();
+    const base: Entry = {
+      rec: {
+        id: deps.randomId(),
+        provider: checked.provider,
+        instanceUrl: checked.instanceUrl,
+        host: checked.host,
+        sshHosts: checked.sshHosts ?? [],
+        login: checked.login,
+        name: checked.name ?? null,
+        avatarUrl: checked.avatarUrl ?? null,
+        scopes: checked.scopes ?? null,
+        authMethod: 'pat',
+        status: 'ok',
+        addedAt: now,
+        validatedAt: now,
+      },
+      cipher: null,
+      diskRec: null,
+      memSecret: null,
+      readable: false,
+    };
+    const entry = withSecret(base, secret);
+    commit([...load(), entry]);
+    return info(entry);
+  }
+
+  function update(id: string, patch: AccountPatch, secret?: AccountSecret): AccountInfo {
+    const old = find(id);
+    let entry: Entry = { ...old, rec: { ...old.rec, ...checkMeta(patch) } };
+    if (secret) {
+      entry = withSecret(entry, secret);
+      if (patch.status === undefined) entry.rec.status = 'ok';
+      if (patch.validatedAt === undefined) entry.rec.validatedAt = deps.now();
+    }
+    entry = synced(entry);
+    commit(load().map((e) => (e === old ? entry : e)));
+    return info(entry);
+  }
+
   return {
     list,
     storage: () => deps.crypto.status(),
-    add(meta, secret) {
-      const checked = checkMeta(meta);
-      if (!checked.provider || !checked.instanceUrl || !checked.login) throw new Error('Compte incomplet.');
-      const now = deps.now();
-      const base: Entry = {
-        rec: {
-          id: deps.randomId(),
-          provider: checked.provider,
-          instanceUrl: checked.instanceUrl,
-          host: checked.host!,
-          sshHosts: checked.sshHosts ?? [],
-          login: checked.login,
-          name: checked.name ?? null,
-          avatarUrl: checked.avatarUrl ?? null,
-          scopes: checked.scopes ?? null,
-          authMethod: 'pat',
-          status: 'ok',
-          addedAt: now,
-          validatedAt: now,
-        },
-        cipher: null,
-        memSecret: null,
-        readable: true,
-      };
-      const entry = withSecret(base, secret);
-      commit([...load(), entry]);
-      return info(entry);
+    add,
+    update,
+    findByIdentity(instanceUrl, login) {
+      const e = findIdentity(instanceUrl, login);
+      return e ? info(e) : null;
     },
-    update(id, patch, secret) {
-      const old = find(id);
-      let entry: Entry = { ...old, rec: { ...old.rec, ...checkMeta(patch) } };
-      if (secret) {
-        entry = withSecret(entry, secret);
-        if (patch.status === undefined) entry.rec.status = 'ok';
-        if (patch.validatedAt === undefined) entry.rec.validatedAt = deps.now();
-      }
-      commit(load().map((e) => (e === old ? entry : e)));
-      return info(entry);
+    upsert(meta, secret) {
+      const existing = findIdentity(meta.instanceUrl, meta.login);
+      if (existing) return { account: update(existing.rec.id, meta, secret), created: false };
+      return { account: add(meta, secret), created: true };
     },
     remove(id) {
       const old = find(id);
@@ -294,13 +369,17 @@ export function createAccountStore(deps: AccountStoreDeps): AccountStore {
       return e ? secretOf(e) : null;
     },
     findForCredential(req) {
-      // Même règle d'association que le rendu (shared/accounts.ts), parmi les comptes dont le secret est lisible.
-      return accountForCredential(req, load().filter((e) => secretOf(e) !== null).map(info));
+      // Même règle d'association que le rendu (shared/accounts.ts), parmi les comptes utilisables.
+      const usable = load()
+        .map((e) => ({ e, a: info(e) }))
+        .filter(({ e, a }) => a.status === 'ok' && secretOf(e) !== null)
+        .map(({ a }) => a);
+      return accountForCredential(req, usable);
     },
     markRejected(id) {
       const e = load().find((x) => x.rec.id === id);
       if (!e || e.rec.status === 'rejected') return;
-      commit(load().map((x) => (x === e ? { ...x, rec: { ...x.rec, status: 'rejected' } } : x)));
+      commit(load().map((x) => (x === e ? synced({ ...x, rec: { ...x.rec, status: 'rejected' } }) : x)));
     },
     onChange(cb) {
       listeners.add(cb);

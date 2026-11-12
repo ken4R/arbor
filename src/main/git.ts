@@ -117,26 +117,41 @@ export function setGitAuthHook(h: GitAuthHook | null) {
 export function git(repo: string, args: string[], opts: RunOptions = {}): Promise<string> {
   return new Promise((resolve, reject) => {
     const auth = authHook?.(args) ?? null;
-    const child = execFile(
-      'git',
-      [...(auth?.prefixArgs ?? []), ...args],
-      { cwd: repo, maxBuffer: 256 * 1024 * 1024, env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_EDITOR: 'true', LC_ALL: 'C', ...auth?.env, ...opts.env } },
-      (err, stdout, stderr) => {
-        try {
-          auth?.done();
-        } catch {
-          // la fin de session ne doit pas masquer le résultat de la commande
-        }
-        const code = err ? (typeof err.code === 'number' ? err.code : 1) : 0;
-        if (err && !(opts.okCodes ?? []).includes(code)) {
-          // Certains messages (CONFLICT…) sont écrits sur stdout : on garde les deux flux.
-          const msg = [stderr, stdout.slice(-4000)].filter((t) => t.trim()).join('\n').trim() || err.message;
-          reject(new GitError(translateGitError(msg), msg));
-        } else {
-          resolve(stdout);
-        }
-      },
-    );
+    let finished = false;
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      try {
+        auth?.done();
+      } catch {
+        // la fin de session ne doit pas masquer le résultat de la commande
+      }
+    };
+    let child: ReturnType<typeof execFile>;
+    try {
+      child = execFile(
+        'git',
+        [...(auth?.prefixArgs ?? []), ...args],
+        // Le crochet ne peut pas écraser les valeurs imposées par Arbor ; `opts.env` passe en dernier.
+        { cwd: repo, maxBuffer: 256 * 1024 * 1024, env: { ...process.env, ...auth?.env, GIT_TERMINAL_PROMPT: '0', GIT_EDITOR: 'true', LC_ALL: 'C', ...opts.env } },
+        (err, stdout, stderr) => {
+          finish();
+          const code = err ? (typeof err.code === 'number' ? err.code : 1) : 0;
+          if (err && !(opts.okCodes ?? []).includes(code)) {
+            // Certains messages (CONFLICT…) sont écrits sur stdout : on garde les deux flux.
+            const msg = [stderr, stdout.slice(-4000)].filter((t) => t.trim()).join('\n').trim() || err.message;
+            reject(new GitError(translateGitError(msg), msg));
+          } else {
+            resolve(stdout);
+          }
+        },
+      );
+    } catch (e) {
+      // Échec immédiat (argument ou variable contenant NUL…) : la session du crochet est fermée quand même.
+      finish();
+      reject(e);
+      return;
+    }
     // git peut se terminer sans lire l'entrée (EPIPE) : l'erreur est déjà remontée par le code de sortie.
     child.stdin?.on('error', () => {});
     if (opts.input !== undefined) child.stdin?.end(opts.input);
