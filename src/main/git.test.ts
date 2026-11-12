@@ -1,5 +1,9 @@
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { gitSide, parseLog, parseNameStatus, parseRefs, parseRemotes, parseStatus, parseTags, pushRemote, translateGitError } from './git';
+import { git, gitSide, parseLog, parseNameStatus, parseRefs, parseRemotes, parseStatus, parseTags, pushRemote, setGitAuthHook, translateGitError, type GitAuthHook } from './git';
 
 describe('parseStatus', () => {
   it('sépare indexé, non indexé, non suivi et conflits', () => {
@@ -142,4 +146,83 @@ describe('parseRemotes', () => {
     expect(parseRemotes('o\n', verbose)).toEqual([{ name: 'o', fetchUrl: 'https://a', pushUrl: null }]);
     expect(parseRemotes('', '')).toEqual([]);
   });
+});
+
+describe('setGitAuthHook', () => {
+  /** Crochet factice : n'agit que sur `ls-remote` (comme le ferait `needsAuth`), note les appels et les fins. */
+  function fakeHook() {
+    const calls: string[][] = [];
+    let done = 0;
+    const hook: GitAuthHook = (args) => {
+      calls.push([...args]);
+      if (args[0] !== 'ls-remote') return null;
+      return {
+        // Observable sans réseau : une option de configuration en argument, une autre par l'environnement.
+        prefixArgs: ['-c', 'arbor.crochet=argument'],
+        env: { GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'arbor.env', GIT_CONFIG_VALUE_0: 'oui' },
+        done: () => done++,
+      };
+    };
+    return { hook, calls, done: () => done };
+  }
+
+  function withRepo<T>(fn: (dir: string, bare: string) => Promise<T>): Promise<T> {
+    const dir = mkdtempSync(join(tmpdir(), 'arbor-hook-'));
+    const sh = (...a: string[]) => execFileSync('git', a, { cwd: dir, stdio: 'pipe' });
+    sh('init', '-q', '-b', 'main', 'work');
+    sh('init', '-q', '--bare', '-b', 'main', 'bare.git');
+    return fn(join(dir, 'work'), join(dir, 'bare.git')).finally(() => {
+      setGitAuthHook(null);
+      rmSync(dir, { recursive: true, force: true });
+    });
+  }
+
+  it('reçoit les arguments ; préfixe et variables seulement pour la commande retenue', () =>
+    withRepo(async (dir, bare) => {
+      const f = fakeHook();
+      setGitAuthHook(f.hook);
+      await git(dir, ['status', '--porcelain']);
+      await git(dir, ['ls-remote', '--', bare]);
+      expect(f.calls).toEqual([['status', '--porcelain'], ['ls-remote', '--', bare]]);
+      expect(f.done()).toBe(1);
+      // Sans préfixe pour une commande locale : la configuration n'est pas vue.
+      expect(await git(dir, ['config', '--get', 'arbor.crochet'], { okCodes: [1] })).toBe('');
+    }));
+
+  it('applique le préfixe et l’environnement', () =>
+    withRepo(async (dir) => {
+      setGitAuthHook(() => ({ prefixArgs: ['-c', 'arbor.crochet=argument'], env: { GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'arbor.env', GIT_CONFIG_VALUE_0: 'oui' }, done: () => {} }));
+      expect((await git(dir, ['config', '--get', 'arbor.crochet'])).trim()).toBe('argument');
+      expect((await git(dir, ['config', '--get', 'arbor.env'])).trim()).toBe('oui');
+      // `opts.env` passe en dernier.
+      expect((await git(dir, ['config', '--get', 'arbor.env'], { env: { GIT_CONFIG_VALUE_0: 'appelant' } })).trim()).toBe('appelant');
+    }));
+
+  it('appelle done() en cas d’échec', () =>
+    withRepo(async (dir) => {
+      const f = fakeHook();
+      setGitAuthHook(f.hook);
+      await expect(git(dir, ['ls-remote', '--', join(dir, 'absent.git')])).rejects.toThrow();
+      expect(f.done()).toBe(1);
+    }));
+
+  it('appelle done() si execFile échoue immédiatement (NUL dans un argument)', () =>
+    withRepo(async (dir) => {
+      const f = fakeHook();
+      setGitAuthHook(f.hook);
+      await expect(git(dir, ['ls-remote', '--', 'a\0b'])).rejects.toThrow();
+      expect(f.done()).toBe(1);
+    }));
+
+  it('ne laisse pas le crochet écraser GIT_EDITOR, GIT_TERMINAL_PROMPT ni LC_ALL', () =>
+    withRepo(async (dir) => {
+      setGitAuthHook(() => ({ prefixArgs: [], env: { GIT_EDITOR: 'vi', GIT_TERMINAL_PROMPT: '1', LC_ALL: 'fr_FR.UTF-8' }, done: () => {} }));
+      expect((await git(dir, ['var', 'GIT_EDITOR'])).trim()).toBe('true');
+    }));
+
+  it('sans crochet : arguments inchangés', () =>
+    withRepo(async (dir) => {
+      setGitAuthHook(null);
+      expect(await git(dir, ['config', '--get', 'arbor.crochet'], { okCodes: [1] })).toBe('');
+    }));
 });

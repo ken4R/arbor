@@ -315,6 +315,16 @@ export interface ArborApi {
   lfsPull(repo: string, paths: string[] | null): Promise<void>;
 
   // état des onglets
+
+  // comptes
+  /** Comptes connectés (GitHub, GitLab), sans jamais de jeton. */
+  listAccounts(): Promise<AccountInfo[]>;
+  /** Déconnecte un compte (confirmé par le rendu) et oublie son jeton ; renvoie la liste à jour. */
+  removeAccount(id: string): Promise<AccountInfo[]>;
+  /** Disponibilité du chiffrement des jetons (trousseau du système). */
+  accountStorage(): Promise<AccountStorageStatus>;
+
+  // identifiants
 }
 
 /** Commits qu'un rebase interactif peut réécrire (`upstream..HEAD`, sans fusion), plus ancien d'abord. */
@@ -473,3 +483,98 @@ export interface LfsFiles {
 }
 
 // état des onglets
+
+// comptes
+export type ProviderKind = 'github' | 'gitlab';
+
+/** Compte connecté, tel que le rendu le voit : jamais de jeton. */
+export interface AccountInfo {
+  /** Aléatoire, stable. */
+  id: string;
+  provider: ProviderKind;
+  /** Origine web normalisée, avec le préfixe de chemin GitLab : https://github.com, https://git.exemple.org/gitlab. */
+  instanceUrl: string;
+  /** `hôte[:port]` HTTPS en minuscules (port omis s'il est par défaut) : clé d'association avec les remotes. */
+  host: string;
+  /** Hôtes SSH associés (github.com et ssh.github.com pour GitHub ; hôte de l'instance pour GitLab…). */
+  sshHosts: string[];
+  login: string;
+  name: string | null;
+  avatarUrl: string | null;
+  /** null = inconnus (jeton GitHub à permissions fines). */
+  scopes: string[] | null;
+  /** Scopes requis manquants (`missingScopes`). */
+  missingScopes: string[];
+  /** 'oauth' : extension « device flow ». */
+  authMethod: 'pat' | 'oauth';
+  /**
+   * 'rejected' : jeton refusé lors du dernier usage (Git ou API), ou illisible (voir `secretUnreadable`). Un compte
+   * « rejected » n'est jamais proposé automatiquement à Git.
+   */
+  status: 'ok' | 'rejected';
+  /**
+   * true : le jeton enregistré ne peut pas être déchiffré (trousseau indisponible, réinitialisé ou autre machine) ;
+   * distinct d'un jeton refusé par le serveur. Le statut vaut alors 'rejected'.
+   */
+  secretUnreadable: boolean;
+  /** false : gardé en mémoire seulement (chiffrement indisponible). */
+  persisted: boolean;
+  /** Secondes depuis l'epoch. */
+  addedAt: number;
+  /** Secondes depuis l'epoch. */
+  validatedAt: number;
+}
+
+/** Moyen d'authentification d'une connexion ; union ouverte pour le device flow. */
+export type AccountAuthInput = { method: 'pat'; token: string };
+// Extension prévue, sans changer `connectAccount` : | { method: 'device'; flowId: string }
+
+export interface ConnectAccountInput {
+  provider: ProviderKind;
+  /** GitLab auto-hébergé ; absent = github.com / gitlab.com. */
+  instanceUrl?: string;
+  auth: AccountAuthInput;
+}
+
+export interface AccountStorageStatus {
+  /** 'weak' : Linux sans trousseau (backend basic_text) ; traité comme indisponible. */
+  encryption: 'available' | 'weak' | 'unavailable';
+  backend: string | null;
+}
+
+export interface AccountsChangedEvent {
+  accounts: AccountInfo[];
+}
+
+// identifiants
+export type CredentialKind = 'https' | 'ssh-passphrase' | 'ssh-password' | 'ssh-hostkey' | 'other';
+
+/** Demande d'identifiants poussée au rendu (événement `credentialRequest`) ; aucun secret. */
+export interface CredentialRequest {
+  id: string;
+  kind: CredentialKind;
+  /** Libellé (« fetch », « clone »…) issu du contexte d'opération. */
+  operation: string;
+  repo: string | null;
+  protocol: string | null;
+  host: string | null;
+  /** Pré-rempli (URL https://u@h ou invite SSH). */
+  username: string | null;
+  /** Invite brute (affichée pour 'other'). */
+  prompt: string;
+  keyPath?: string;
+  keyType?: string;
+  fingerprint?: string;
+  /** Assistants d'identifiants de l'utilisateur pour cet hôte (« osxkeychain »…), pour l'informer qu'il mémorisera. */
+  userHelpers: string[];
+}
+
+/** Fin d'une demande (réponse, annulation, fin de la commande Git) : le dialogue se ferme. */
+export interface CredentialDoneEvent {
+  id: string;
+}
+
+export type CredentialAnswer =
+  | { kind: 'https'; username: string; password: string; rememberForSession: boolean }
+  | { kind: 'secret'; value: string }
+  | { kind: 'confirm'; accept: boolean };
