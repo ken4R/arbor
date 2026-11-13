@@ -34,6 +34,8 @@ import './commands/lfs';
 import './commands/branches';
 import { clearDropHover, endRefDrag } from './refDrop';
 // comptes
+import { AccountsDialog } from './components/AccountsDialog';
+import './commands/accounts';
 // identifiants
 
 // Préférences enregistrées lues dès le démarrage (et migration des anciennes clés localStorage).
@@ -68,6 +70,7 @@ createRoot(document.getElementById('root')!).render(
     {/* onglets */}
 
     {/* comptes */}
+    <AccountsDialog />
 
     {/* identifiants */}
   </>,

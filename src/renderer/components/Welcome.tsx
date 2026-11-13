@@ -3,6 +3,7 @@ import { api } from '../api';
 import { formatShortcut } from '../commands';
 import { Icon, Logo } from './Icons';
 import { openPreferences, PREFERENCES_SHORTCUT } from './PreferencesDialog';
+import { openAccounts } from './AccountsDialog';
 import type { BusyOptions } from '../tabs';
 
 export function Welcome({
@@ -87,10 +88,15 @@ export function Welcome({
             ))}
           </div>
         )}
-        <button className="link-btn welcome-prefs" onClick={openPreferences} title={`Préférences (${formatShortcut(PREFERENCES_SHORTCUT)})`}>
-          <Icon.gear />
-          Préférences
-        </button>
+        <div className="welcome-links">
+          <button className="link-btn welcome-prefs" onClick={openPreferences} title={`Préférences (${formatShortcut(PREFERENCES_SHORTCUT)})`}>
+            <Icon.gear />
+            Préférences
+          </button>
+          <button className="link-btn welcome-prefs" onClick={() => openAccounts()} title="Comptes GitHub et GitLab">
+            Comptes…
+          </button>
+        </div>
       </div>
     </div>
   );

@@ -14,6 +14,8 @@ import { lfsIncludeError, lfsPatternError } from '../shared/lfs';
 import { bumpLfsFiles } from './lfs';
 // glisser-déposer
 import { openRefActionDialog } from './components/RefActionDialog';
+// comptes
+import { remoteAccountMenuItem } from './commands/accounts';
 
 export function checkoutBranch(ui: Ui, repo: string, name: string) {
   return ui.run(`Checkout de ${name}…`, () => api.checkout(repo, name));
@@ -229,6 +231,7 @@ export function remoteMenu(ui: Ui, snap: RepoSnapshot, remote: Remote): MenuItem
     },
     'separator',
     { label: "Copier l'URL", disabled: !url, onClick: () => url && void navigator.clipboard.writeText(url) },
+    remoteAccountMenuItem(remote),
     'separator',
     { label: 'Ajouter un remote…', onClick: () => openAddRemoteDialog(ui, snap) },
   ];

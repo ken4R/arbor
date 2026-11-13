@@ -323,6 +323,15 @@ export interface ArborApi {
   removeAccount(id: string): Promise<AccountInfo[]>;
   /** Disponibilité du chiffrement des jetons (trousseau du système). */
   accountStorage(): Promise<AccountStorageStatus>;
+  /**
+   * Connecte un compte : valide le jeton auprès de l'API (identité, scopes) puis l'enregistre chiffré. Le même compte
+   * (même instance, même login) est mis à jour au lieu d'être dupliqué. Le jeton ne revient jamais au rendu.
+   */
+  connectAccount(input: ConnectAccountInput): Promise<AccountInfo>;
+  /** Revalide le jeton d'un compte (identité, scopes, statut) ; 401 : compte marqué « rejected ». */
+  refreshAccount(id: string): Promise<AccountInfo>;
+  /** Ouvre dans le navigateur une page de création de jeton (`PROVIDERS[p].tokenUrl`, https seulement). */
+  openExternal(url: string): Promise<void>;
 
   // identifiants
 }
