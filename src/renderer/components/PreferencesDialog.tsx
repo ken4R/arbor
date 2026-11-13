@@ -3,6 +3,7 @@ import { DIFF_FONT_SIZE_MAX, DIFF_FONT_SIZE_MIN, normalizePreferences, type Diff
 import { matchShortcut } from '../commands';
 import { getPreferences, updatePreferences, usePreferences, usePreferencesLoaded } from '../prefs';
 import { Icon } from './Icons';
+import { openAccounts } from './AccountsDialog';
 
 // Dialogue des préférences : monté une fois hors de l'application (main.tsx), ouvert par `openPreferences()`,
 // Ctrl/Cmd+, , le bouton engrenage de la barre d'outils, le lien de l'écran d'accueil ou la palette.
@@ -268,6 +269,19 @@ function PreferencesForm() {
               <span className="prefs-hint">Pris en compte au prochain lancement.</span>
             </span>
           </label>
+        </section>
+
+        <section className="prefs-section">
+          <h3>Comptes</h3>
+          <button
+            className="link-btn prefs-accounts-link"
+            onClick={() => {
+              closePreferences();
+              openAccounts();
+            }}
+          >
+            Comptes GitHub et GitLab…
+          </button>
         </section>
       </div>
     </div>

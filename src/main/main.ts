@@ -12,6 +12,14 @@ import { withOperation } from './opContext';
 import { randomBytes } from 'node:crypto';
 import { createAccountStore, type AccountStore } from './accountStore';
 import { electronCrypto } from './secrets';
+import { net, shell } from 'electron';
+import { PROVIDERS } from '../shared/accounts';
+import { normalizeInstanceUrl } from '../shared/remoteUrl';
+import type { AccountInfo, ProviderKind } from '../shared/types';
+import { providers, type ProviderAdapter } from './providers';
+import './providers/github';
+import './providers/gitlab';
+import { createApiClient, isTokenPageUrl, PROVIDER_HEADERS, ProviderError, tokenError } from './providers/http';
 // identifiants
 
 // Données utilisateur isolées (tests d'interface) : à fixer avant `ready`.
@@ -87,6 +95,29 @@ function initAccountStore() {
     warn: (m) => console.warn(m),
   });
   accountStoreInstance.onChange((accounts) => sendEvent('accountsChanged', { accounts }));
+}
+
+/** Client d'API d'un fournisseur ; `net.fetch` d'Electron (proxy et autorités du système). */
+function apiClient(adapter: ProviderAdapter, instanceUrl: string, token: string) {
+  return createApiClient({ base: adapter.apiBase(instanceUrl), token, headers: PROVIDER_HEADERS[adapter.kind], fetchImpl: (u, i) => net.fetch(u, i) });
+}
+
+/** Entrée de `connectAccount` vérifiée : fournisseur connu, instance normalisée, jeton acceptable. */
+function checkConnectInput(input: unknown): { adapter: ProviderAdapter; instanceUrl: string; host: string; token: string } {
+  const i = (input && typeof input === 'object' ? input : {}) as { provider?: unknown; instanceUrl?: unknown; auth?: { method?: unknown; token?: unknown } };
+  const kind = i.provider;
+  if (kind !== 'github' && kind !== 'gitlab') throw new Error('Fournisseur inconnu.');
+  const adapter = providers[kind as ProviderKind];
+  if (!adapter) throw new Error('Fournisseur indisponible.');
+  if (!i.auth || i.auth.method !== 'pat') throw new Error("Méthode d'authentification non prise en charge.");
+  const tokenProblem = tokenError(i.auth.token);
+  if (tokenProblem) throw new Error(tokenProblem);
+  const defaultInstance = PROVIDERS[kind].defaultInstance;
+  if (i.instanceUrl !== undefined && typeof i.instanceUrl !== 'string') throw new Error("URL d'instance invalide.");
+  const inst = normalizeInstanceUrl(i.instanceUrl?.trim() ? i.instanceUrl : defaultInstance);
+  if ('error' in inst) throw new Error(inst.error);
+  if (kind === 'github' && inst.url !== defaultInstance) throw new Error("GitHub Enterprise Server n'est pas encore pris en charge : seul github.com l'est.");
+  return { adapter, instanceUrl: inst.url, host: inst.host, token: i.auth.token as string };
 }
 
 // Couleur de fond de la fenêtre avant le premier rendu (doit suivre `--bg` du thème).
@@ -275,6 +306,9 @@ const NO_REPO = new Set([
   'listAccounts',
   'removeAccount',
   'accountStorage',
+  'connectAccount',
+  'refreshAccount',
+  'openExternal',
 
   // identifiants
 ]);
@@ -328,6 +362,9 @@ const READ_ONLY = new Set([
   'listAccounts',
   'removeAccount',
   'accountStorage',
+  'connectAccount',
+  'refreshAccount',
+  'openExternal',
 
   // identifiants
 ]);
@@ -462,6 +499,43 @@ const handlers: Record<string, (...args: any[]) => Promise<unknown>> = {
     return accountStore().remove(id);
   },
   accountStorage: async () => accountStore().storage(),
+  async connectAccount(input: unknown): Promise<AccountInfo> {
+    const { adapter, instanceUrl, host, token } = checkConnectInput(input);
+    const id = await adapter.validate(apiClient(adapter, instanceUrl, token));
+    // Même instance et même login : mise à jour (nouveau jeton) au lieu d'un doublon.
+    const { account } = accountStore().upsert(
+      { provider: adapter.kind, instanceUrl, sshHosts: adapter.defaultSshHosts(host), login: id.login, name: id.name, avatarUrl: id.avatarUrl, scopes: id.scopes },
+      { kind: 'pat', token },
+    );
+    return account;
+  },
+  async refreshAccount(id: unknown): Promise<AccountInfo> {
+    if (typeof id !== 'string') throw new Error('Compte invalide.');
+    const store = accountStore();
+    const account = store.list().find((a) => a.id === id);
+    if (!account) throw new Error('Compte introuvable (il a peut-être été déconnecté entre-temps).');
+    const adapter = providers[account.provider];
+    if (!adapter) throw new Error('Fournisseur indisponible.');
+    const secret = store.secret(id);
+    if (!secret) throw new Error("Jeton illisible (trousseau du système indisponible ou réinitialisé) : reconnectez le compte avec un jeton.");
+    const token = secret.kind === 'pat' ? secret.token : secret.accessToken;
+    let identity;
+    try {
+      identity = await adapter.validate(apiClient(adapter, account.instanceUrl, token));
+    } catch (e) {
+      if (e instanceof ProviderError && e.kind === 'unauthorized') store.markRejected(id);
+      throw e;
+    }
+    if (identity.login.toLowerCase() !== account.login.toLowerCase()) {
+      throw new Error(`Ce jeton appartient désormais à « ${identity.login} », pas à « ${account.login} » : reconnectez le compte.`);
+    }
+    return store.update(id, { name: identity.name, avatarUrl: identity.avatarUrl, scopes: identity.scopes, status: 'ok', validatedAt: Math.floor(Date.now() / 1000) });
+  },
+  async openExternal(url: unknown) {
+    // Seulement les pages de création de jeton (https) : jamais une URL arbitraire venue du rendu.
+    if (!isTokenPageUrl(url)) throw new Error('Adresse refusée.');
+    await shell.openExternal(url as string);
+  },
 
   // identifiants
 };
