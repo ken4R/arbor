@@ -176,8 +176,10 @@ function splitPromptUrl(url: string): { protocol: string; host: string; username
  * Are you sure you want to continue connecting (yes/no/[fingerprint])? ». null si ce n'en est pas une.
  */
 export function parseHostKeyPrompt(prompt: string): { host: string; keyType: string; fingerprint: string } | null {
-  if (!/Are you sure you want to continue connecting/.test(prompt)) return null;
-  const h = /The authenticity of host '([^']+)' can't be established/.exec(prompt);
+  // Ancré au début de l'invite (sans espaces de tête) et à la fin : une invite keyboard-interactive, dont le texte est
+  // fourni par le serveur, arrive préfixée « (user@hôte) » et ne peut donc pas se faire passer pour cette question.
+  if (!/Are you sure you want to continue connecting \(yes\/no(?:\/\[fingerprint\])?\)\? ?$/.test(prompt)) return null;
+  const h = /^The authenticity of host '([^'\n]+)' can't be established/.exec(prompt);
   const k = /^\s*([A-Z0-9-]+) key fingerprint is (\S+?)\.?\s*$/m.exec(prompt);
   if (!h || !k) return null;
   // « h (1.2.3.4) », « [h]:2222 ([1.2.3.4]:2222) » : on garde le nom tel qu'OpenSSH l'affiche, sans l'adresse.

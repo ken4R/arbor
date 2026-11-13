@@ -9,6 +9,9 @@ import { Dialog } from './Dialog';
 // `credentialDone` (réponse, annulation, fin de la commande Git). Aucun secret ne transite du main vers ici ; ce
 // que l'utilisateur saisit n'est envoyé qu'à `answerCredential`, et les champs sont vidés aussitôt.
 
+/** Longueur maximale d'une valeur saisie (revérifiée par le main). */
+const MAX_VALUE = 4096;
+
 /** Commande « Comptes… » (fonctionnalité Comptes), si elle est disponible. */
 const accountsCommand = () => getCommands().find((c) => c.id === 'accounts.open') ?? null;
 
@@ -71,6 +74,38 @@ function CredentialForm({ req, reply }: { req: CredentialRequest; reply: (a: Cre
     );
   }
 
+  if (req.kind === 'ssh-notify') {
+    // Notification d'OpenSSH (clé de sécurité à toucher…) : fermée automatiquement quand ssh a fini.
+    return (
+      <Dialog title={`${req.operation} : action requise`} className="credential-dialog" onClose={cancel} cancelLabel="Masquer">
+        <pre className="credential-prompt">{req.prompt.trim()}</pre>
+      </Dialog>
+    );
+  }
+
+  if (req.kind === 'ssh-confirm') {
+    const accept = (ok: boolean) => reply({ kind: 'confirm', accept: ok });
+    return (
+      <Dialog
+        title={`${req.operation} : confirmation SSH`}
+        className="credential-dialog"
+        onClose={cancel}
+        actions={
+          <>
+            <button type="button" className="btn" autoFocus onClick={() => accept(false)}>
+              Refuser
+            </button>
+            <button type="button" className="btn btn-primary" onClick={() => accept(true)}>
+              Autoriser
+            </button>
+          </>
+        }
+      >
+        <pre className="credential-prompt">{req.prompt.trim()}</pre>
+      </Dialog>
+    );
+  }
+
   if (req.kind === 'https') {
     const origin = req.protocol && req.host ? `${req.protocol}://${req.host}` : req.host ?? 'le serveur';
     const accounts = accountsCommand();
@@ -95,11 +130,11 @@ function CredentialForm({ req, reply }: { req: CredentialRequest; reply: (a: Cre
       >
         <label className="field">
           <span>Identifiant</span>
-          <input autoFocus={!username} value={username} onChange={(e) => setUsername(e.target.value)} spellCheck={false} autoComplete="off" />
+          <input autoFocus={!username} value={username} onChange={(e) => setUsername(e.target.value)} spellCheck={false} autoComplete="off" maxLength={MAX_VALUE} />
         </label>
         <label className="field">
           <span>Mot de passe ou jeton</span>
-          <input className="secret-field" type="password" autoFocus={!!username} value={secret} onChange={(e) => setSecret(e.target.value)} spellCheck={false} autoComplete="off" />
+          <input className="secret-field" type="password" autoFocus={!!username} value={secret} onChange={(e) => setSecret(e.target.value)} spellCheck={false} autoComplete="off" maxLength={MAX_VALUE} />
         </label>
         <label className="check">
           <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} />
@@ -148,7 +183,7 @@ function CredentialForm({ req, reply }: { req: CredentialRequest; reply: (a: Cre
       )}
       <label className="field">
         <span>{req.kind === 'ssh-passphrase' ? 'Phrase de passe' : req.kind === 'ssh-password' ? 'Mot de passe' : 'Réponse'}</span>
-        <input className="secret-field" type="password" autoFocus value={secret} onChange={(e) => setSecret(e.target.value)} spellCheck={false} autoComplete="off" />
+        <input className="secret-field" type="password" autoFocus value={secret} onChange={(e) => setSecret(e.target.value)} spellCheck={false} autoComplete="off" maxLength={MAX_VALUE} />
       </label>
       {req.kind === 'ssh-passphrase' && (
         <p className="credential-note">Pour ne plus la saisir, chargez la clé dans votre agent SSH (ssh-add) : Arbor l'utilise automatiquement.</p>

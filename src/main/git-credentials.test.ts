@@ -38,6 +38,15 @@ describe('translateGitError : identifiants', () => {
     expect(translateGitError("fatal: Authentication failed for 'https://bob:hunter2@h.org/r.git/'")).not.toContain('hunter2');
   });
 
+  it('401 sans « Authentication failed », et git-lfs', () => {
+    expect(translateGitError("fatal: unable to access 'https://h.org/r.git/': The requested URL returned error: 401")).toMatch(/^Identifiants absents ou refusés \(401\)/);
+    // git-lfs 3.x (pre-push, lfs fetch/pull)
+    expect(
+      translateGitError('batch response: Authentication required: Authorization error: https://h.org/r.git/info/lfs/objects/batch\nCheck that you have proper access to the repository\nerror: failed to push some refs to \'https://h.org/r.git\''),
+    ).toMatch(/^Identifiants absents ou refusés \(401\)/);
+    expect(translateGitError('Error downloading object: a.bin (1234abc): Smudge error: Error downloading a.bin: batch response: Authentication required: Authorization error')).toMatch(/401/);
+  });
+
   it('mots de passe refusés par l’hébergeur (GitHub, GitLab)', () => {
     const github =
       "remote: Support for password authentication was removed on August 13, 2021.\nremote: Please see https://docs.github.com/get-started/getting-started-with-git/about-remote-repositories#cloning-with-https-urls for information on currently recommended modes of authentication.\nfatal: Authentication failed for 'https://github.com/o/r.git/'";

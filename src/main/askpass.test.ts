@@ -2,7 +2,7 @@
 // construit par esbuild et lancé par le Node de Vitest. Configuration Git isolée (HOME temporaire,
 // GIT_CONFIG_NOSYSTEM, GIT_CONFIG_GLOBAL) : l'assistant d'identifiants du poste ne fausse rien.
 import { spawn, execFileSync, type ChildProcess } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { connect } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -28,6 +28,7 @@ let askpass: Askpass;
 let store: AccountStore;
 let requests: CredentialRequest[];
 let done: string[];
+let answerErrors: unknown[];
 let respond: (req: CredentialRequest) => CredentialAnswer | null;
 const savedEnv: Record<string, string | undefined> = {};
 
@@ -96,7 +97,13 @@ beforeAll(async () => {
       if (event !== 'credentialRequest') return;
       const req = payload as CredentialRequest;
       requests.push(req);
-      setImmediate(() => askpass.answer(req.id, respond(req)));
+      setImmediate(() => {
+        try {
+          askpass.answer(req.id, respond(req));
+        } catch (e) {
+          answerErrors.push(e);
+        }
+      });
     },
     userHelpers: credentialHelpersFor,
     helperSource,
@@ -120,6 +127,7 @@ beforeEach(() => {
   store = memoryStore();
   requests = [];
   done = [];
+  answerErrors = [];
   respond = () => null;
   writeFileSync(globalConfig, '');
   rmSync(join(home, '.git-credentials'), { force: true });
@@ -191,6 +199,17 @@ describe('assistant d’identifiants (HTTPS)', () => {
     // Ni dans la configuration du clone.
     expect(readFileSync(join(work, '.git/config'), 'utf8')).not.toContain(TOKEN);
   }, 30000);
+
+  it('~/.git-credentials pré-rempli avec un mauvais mot de passe pour l’hôte du compte : jeton utilisé, fichier inchangé', async () => {
+    writeFileSync(globalConfig, '[credential]\n\thelper = store\n');
+    const creds = join(home, '.git-credentials');
+    const stale = `http://arbor-test:mauvais@${new URL(base).host}\n`;
+    writeFileSync(creds, stale);
+    addAccount();
+    expect(await lsRemote()).toMatch(/refs\/heads\/main/);
+    expect(requests).toEqual([]);
+    expect(readFileSync(creds, 'utf8')).toBe(stale);
+  }, 20000);
 
   it('jeton refusé par le serveur : compte « rejected », jamais supprimé', async () => {
     const account = addAccount('glpat-revoque');
@@ -270,19 +289,110 @@ describe('canal local', () => {
     expect(done).toEqual([requests[0].id]);
   });
 
-  it('réponse d’un type inattendu : refusée', async () => {
-    let thrown: unknown = null;
-    respond = (req) => {
-      try {
-        askpass.answer(req.id, { kind: 'secret', value: 'x' });
-      } catch (e) {
-        thrown = e;
-      }
-      return null;
-    };
+  it('réponse d’un type inattendu : demande annulée aussitôt (Git ne reste pas bloqué), erreur levée', async () => {
+    respond = () => ({ kind: 'secret', value: 'x' });
     await expect(lsRemote()).rejects.toThrow('Authentification annulée.');
-    expect(String(thrown)).toMatch(/Réponse invalide/);
+    expect(String(answerErrors[0])).toMatch(/Réponse invalide/);
+    expect(done).toEqual([requests[0].id]);
   }, 20000);
+
+  it('valeur trop longue : demande annulée aussitôt', async () => {
+    respond = () => ({ ...alice, password: 'x'.repeat(5000) });
+    await expect(lsRemote()).rejects.toThrow('Authentification annulée.');
+    expect(answerErrors).toHaveLength(1);
+  }, 20000);
+
+  /** Requête d'assistant envoyée à la main sur la session d'un crochet. */
+  const send = (auth: NonNullable<ReturnType<Askpass['hook']>>, extra: object) =>
+    rawRequest(auth.env.ARBOR_ASKPASS_SOCKET, { token: auth.env.ARBOR_ASKPASS_TOKEN, session: auth.env.ARBOR_ASKPASS_SESSION, ...extra }) as Promise<{ ok: boolean; out?: string; error?: string }>;
+  const getInput = () => `protocol=http\nhost=${new URL(base).host}\npath=groupe/sous/demo.git\n\n`;
+
+  it('compte connecté pendant la commande : pas de jeton pour celle-ci (son assistant n’a pas été écarté)', async () => {
+    const auth = askpass.hook(['submodule', 'update', '--init'])!;
+    try {
+      addAccount();
+      const r = await send(auth, { mode: 'credential', action: 'get', input: getInput() });
+      expect(r).toEqual({ ok: true, out: 'quit=1\n' });
+      expect(JSON.stringify(r)).not.toContain(TOKEN);
+      expect(requests).toHaveLength(1); // demande interactive (annulée ici), jamais le jeton
+    } finally {
+      auth.done();
+    }
+    // La commande suivante écarte l'assistant de l'utilisateur et reçoit le jeton.
+    const next = askpass.hook(['fetch'])!;
+    try {
+      const r = await send(next, { mode: 'credential', action: 'get', input: getInput() });
+      expect(r.out).toContain(`password=${TOKEN}`);
+    } finally {
+      next.done();
+    }
+  });
+
+  it('assistant disparu avant la réponse : demande annulée et dialogue fermé', async () => {
+    const auth = askpass.hook(['fetch'])!;
+    respond = () => ({ kind: 'secret', value: 'ignoré' });
+    const sock = connect(auth.env.ARBOR_ASKPASS_SOCKET);
+    sock.on('error', () => {});
+    // Fermeture dès que la demande est partie, avant la réponse du rendu (appelée au tour suivant).
+    const sent = new Promise<void>((r) => {
+      const t = setInterval(() => requests.length && (clearInterval(t), r()), 1);
+    });
+    sock.on('connect', () => sock.write(JSON.stringify({ token: auth.env.ARBOR_ASKPASS_TOKEN, session: auth.env.ARBOR_ASKPASS_SESSION, mode: 'askpass', prompt: 'Verification code: ' }) + '\n'));
+    await sent;
+    sock.destroy();
+    await new Promise((r) => setTimeout(r, 50));
+    try {
+      expect(done).toEqual([requests[0].id]);
+    } finally {
+      auth.done();
+    }
+  });
+
+  it('SSH_ASKPASS_PROMPT : notification non bloquante et confirmation oui/non', async () => {
+    const auth = askpass.hook(['fetch'])!;
+    try {
+      respond = () => ({ kind: 'confirm', accept: true });
+      expect(await send(auth, { mode: 'askpass', prompt: 'Allow use of key /k?', promptMode: 'confirm' })).toEqual({ ok: true, out: 'yes' });
+      expect(requests[0].kind).toBe('ssh-confirm');
+      respond = () => null; // « Masquer »
+      expect(await send(auth, { mode: 'askpass', prompt: 'Confirm user presence for key ED25519-SK SHA256:x', promptMode: 'none' })).toEqual({ ok: true, out: '' });
+      expect(requests[1].kind).toBe('ssh-notify');
+      // Une notification masquée n'annule pas la suite de la commande.
+      respond = () => ({ kind: 'confirm', accept: false });
+      expect(await send(auth, { mode: 'askpass', prompt: 'Allow use of key /k?', promptMode: 'confirm' })).toEqual({ ok: false, error: 'cancelled' });
+      expect(requests).toHaveLength(3);
+    } finally {
+      auth.done();
+    }
+  });
+});
+
+describe('démarrage', () => {
+  const helperSource = () => join(tmp, 'askpass-helper.js');
+  const noop = { store: { list: () => [], findForCredential: () => null, secret: () => null, markRejected: () => {} }, send: () => {}, userHelpers: async () => [] };
+
+  it('dossier d’exécution dans la base demandée (XDG_RUNTIME_DIR), connexion muette fermée par le délai', async () => {
+    const xdg = mkdtempSync(join(tmp, 'xdg-'));
+    const a = await startAskpass({ ...noop, helperSource: helperSource(), nodePath: process.execPath, runtimeBases: [xdg], idleTimeoutMs: 100 });
+    const auth = a.hook(['fetch'])!;
+    try {
+      expect(auth.env.ARBOR_ASKPASS_SOCKET.startsWith(xdg + '/arbor-askpass-')).toBe(true);
+      const sock = connect(auth.env.ARBOR_ASKPASS_SOCKET);
+      sock.on('error', () => {});
+      sock.write('{"token":');
+      await new Promise<void>((r) => sock.on('close', () => r()));
+    } finally {
+      auth.done();
+      a.stop();
+    }
+    expect(readdirSync(xdg)).toEqual([]);
+  });
+
+  it('assistant qui ne s’exécute pas (noexec, binaire absent) : échec du démarrage, rien ne reste', async () => {
+    const base = mkdtempSync(join(tmp, 'base-'));
+    await expect(startAskpass({ ...noop, helperSource: helperSource(), nodePath: join(tmp, 'absent'), runtimeBases: [base] })).rejects.toThrow();
+    expect(readdirSync(base)).toEqual([]);
+  });
 });
 
 describe('SSH (fake-ssh.sh)', () => {

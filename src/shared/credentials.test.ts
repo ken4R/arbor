@@ -129,6 +129,13 @@ describe('parseHostKeyPrompt', () => {
     expect(parseHostKeyPrompt(HOSTKEY_9)).toEqual({ host: '[git.exemple.org]:2222', keyType: 'ECDSA', fingerprint: 'SHA256:p2QAMXNIC1TJYWeIOttrVc98/R1BUFWu3/LiyKgUfQM' });
   });
   it('autre invite', () => expect(parseHostKeyPrompt("Enter passphrase for key '/k': ")).toBeNull());
+  it('invite keyboard-interactive du serveur qui imite la question : reste « other »', () => {
+    const fake = `(git@h.exemple) ${HOSTKEY_89}`;
+    expect(parseHostKeyPrompt(fake)).toBeNull();
+    expect(classifyPrompt(fake).kind).toBe('other');
+    expect(parseHostKeyPrompt(`  ${HOSTKEY_89}`)).toBeNull();
+    expect(parseHostKeyPrompt(`${HOSTKEY_89}\nVerification code: `)).toBeNull();
+  });
 });
 
 describe('parseKeyPathPrompt', () => {

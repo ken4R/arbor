@@ -1,6 +1,7 @@
 // Assistant d'identifiants et askpass d'Arbor, exécuté par Git ou OpenSSH (jamais par Arbor lui-même) :
 //   askpass.sh credential get|store|erase   (credential.helper : champs `clé=valeur` sur stdin)
-//   askpass.sh "<invite>"                    (GIT_ASKPASS, SSH_ASKPASS : réponse sur stdout)
+//   askpass.sh "<invite>"                    (GIT_ASKPASS, SSH_ASKPASS : réponse sur stdout ; SSH_ASKPASS_PROMPT
+//                                            transmis : `confirm` oui/non, `none` notification)
 // Node pur (`net`, `process`), sans Electron : lancé par `process.execPath` avec ELECTRON_RUN_AS_NODE=1.
 // Il relaie la demande au processus principal par la socket locale `ARBOR_ASKPASS_SOCKET` (jeton
 // `ARBOR_ASKPASS_TOKEN`, session `ARBOR_ASKPASS_SESSION`) et recopie la réponse sur stdout.
@@ -58,7 +59,7 @@ async function main() {
   if (credential && action !== 'get' && action !== 'store' && action !== 'erase') return; // action inconnue : ignorée (protocole Git)
   if (!process.env.ARBOR_ASKPASS_SOCKET || !process.env.ARBOR_ASKPASS_TOKEN || !process.env.ARBOR_ASKPASS_SESSION) fail(UNREACHABLE);
   const base = { token: process.env.ARBOR_ASKPASS_TOKEN, session: process.env.ARBOR_ASKPASS_SESSION };
-  const payload = credential ? { ...base, mode: 'credential', action, input: await readStdin() } : { ...base, mode: 'askpass', prompt: argv.join(' ') };
+  const payload = credential ? { ...base, mode: 'credential', action, input: await readStdin() } : { ...base, mode: 'askpass', prompt: argv.join(' '), promptMode: process.env.SSH_ASKPASS_PROMPT ?? null };
   let reply: { ok: boolean; out?: string; error?: string };
   try {
     reply = await request(payload);

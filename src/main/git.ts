@@ -66,6 +66,8 @@ const GIT_ERRORS: [RegExp, (m: RegExpMatchArray) => string][] = [
   [/Support for password authentication was removed|HTTP Basic: Access denied|Invalid username or (?:password|token)/, () => "Le serveur refuse les mots de passe : utilisez un jeton d'accès personnel (Comptes…)."],
   [/could not read (?:Username|Password) for '(.+?)'/, (m) => `Identifiants requis pour ${redactUrlCredentials(m[1])} : connectez un compte (Comptes…) ou configurez un gestionnaire d'identifiants Git.`],
   [/Authentication failed for '(.+?)'/, (m) => `Identifiants refusés par ${redactUrlCredentials(m[1])} : vérifiez l'identifiant et le mot de passe (ou le jeton).`],
+  // git-lfs (« batch response: Authentication required… ») et 401 sans « Authentication failed ».
+  [/returned error: 401|Authentication required: Authorization error|batch response: Authentication required/, () => "Identifiants absents ou refusés (401) : vérifiez l'identifiant et le mot de passe, ou connectez un compte (Comptes…)."],
   [/The requested URL returned error: 403/, () => "Accès refusé (403) : le compte n'a pas les droits sur ce dépôt (ou le jeton manque de scopes)."],
   [/(?:Repository|Project) not found|returned error: 404|fatal: repository '.+?' not found/,() => 'Dépôt introuvable, ou accès refusé avec ces identifiants.'],
   [/SSL certificate problem|server certificate verification failed/, () => 'Certificat du serveur non reconnu.'],
