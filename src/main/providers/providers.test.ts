@@ -2,7 +2,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { createServer, type Server } from 'node:http';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { apiErrorMessage, createApiClient, isTokenPageUrl, networkErrorMessage, parseLinkHeader, PROVIDER_HEADERS, ProviderError, tokenError, type FetchImpl } from './http';
+import { apiErrorMessage, createApiClient, isTokenPageUrl, MAX_BODY_BYTES, networkErrorMessage, parseLinkHeader, PROVIDER_HEADERS, ProviderError, tokenError, type FetchImpl } from './http';
 import { github, parseGithubScopes } from './github';
 import { gitlab, sshHostOf } from './gitlab';
 import { providers } from './index';
@@ -112,6 +112,8 @@ describe('isTokenPageUrl', () => {
   });
   it('refuse tout le reste', () => {
     expect(isTokenPageUrl('https://evil.example/')).toBe(false);
+    // Page GitHub sur un autre hôte : refusée (github.com seulement).
+    expect(isTokenPageUrl('https://evil.example/settings/tokens/new?scopes=repo,read:org,workflow&description=Arbor')).toBe(false);
     expect(isTokenPageUrl('http://github.com/settings/tokens/new?scopes=repo,read:org,workflow&description=Arbor')).toBe(false);
     expect(isTokenPageUrl('http://127.0.0.1:5000/-/user_settings/personal_access_tokens?name=Arbor&scopes=api')).toBe(false);
     expect(isTokenPageUrl('https://u:p@gitlab.com/-/user_settings/personal_access_tokens?name=Arbor&scopes=api')).toBe(false);
@@ -180,6 +182,52 @@ describe('createApiClient (fetch factice)', () => {
 
     const old = fakeFetch((url) => (url.endsWith('/user') ? jsonRes(200, { username: 'alice' }) : jsonRes(404, { message: '404 Not Found' })));
     expect((await gitlab.validate(createApiClient({ base: 'https://g/api/v4', token: TOKEN, fetchImpl: old.impl }))).scopes).toBeNull();
+  });
+
+  it('gitlab.validate : scopes null si /self est refusé (403), erreur si limite d’appels, 5xx ou délai', async () => {
+    const user = (url: string) => url.endsWith('/user');
+    const forbidden = fakeFetch((url) => (user(url) ? jsonRes(200, { username: 'alice' }) : jsonRes(403, { message: '403 Forbidden' })));
+    expect((await gitlab.validate(createApiClient({ base: 'https://g/api/v4', token: TOKEN, fetchImpl: forbidden.impl }))).scopes).toBeNull();
+
+    // Une revalidation ne doit pas remplacer des scopes connus par null : l'erreur remonte (refreshAccount n'écrit rien).
+    const limited = fakeFetch((url) => (user(url) ? jsonRes(200, { username: 'alice' }) : jsonRes(429, { message: 'Retry later' }, { 'Retry-After': '60' })));
+    expect((await errorOf(gitlab.validate(createApiClient({ base: 'https://g/api/v4', token: TOKEN, fetchImpl: limited.impl })))).kind).toBe('rate-limit');
+    const broken = fakeFetch((url) => (user(url) ? jsonRes(200, { username: 'alice' }) : jsonRes(503, null)));
+    expect((await errorOf(gitlab.validate(createApiClient({ base: 'https://g/api/v4', token: TOKEN, fetchImpl: broken.impl })))).kind).toBe('http');
+    const slow = fakeFetch((url) => {
+      if (user(url)) return jsonRes(200, { username: 'alice' });
+      throw new DOMException('The operation was aborted due to timeout', 'TimeoutError');
+    });
+    expect((await errorOf(gitlab.validate(createApiClient({ base: 'https://g/api/v4', token: TOKEN, fetchImpl: slow.impl })))).kind).toBe('timeout');
+  });
+
+  it('http:// refusé hors boucle locale, accepté vers 127.0.0.1', async () => {
+    const f = fakeFetch(() => jsonRes(200, {}));
+    expect(() => createApiClient({ base: 'http://git.exemple.org/api/v4', token: TOKEN, fetchImpl: f.impl })).toThrow(ProviderError);
+    expect(() => createApiClient({ base: 'ftp://git.exemple.org/api/v4', token: TOKEN, fetchImpl: f.impl })).toThrow(ProviderError);
+    await createApiClient({ base: 'http://127.0.0.1:5000/api/v4', token: TOKEN, fetchImpl: f.impl }).request('GET', '/user');
+    expect(f.calls).toHaveLength(1);
+  });
+
+  it('corps de plus de 1 Mio refusé (annoncé ou réel)', async () => {
+    const big = 'x'.repeat(MAX_BODY_BYTES + 1);
+    const declared = fakeFetch(() => new Response('{}', { status: 200, headers: { 'Content-Length': String(MAX_BODY_BYTES + 1) } }));
+    expect((await errorOf(createApiClient({ base: 'https://g', token: TOKEN, fetchImpl: declared.impl }).request('GET', '/x'))).message).toContain('trop volumineuse');
+    const streamed = fakeFetch(
+      () =>
+        new Response(
+          new ReadableStream({
+            start(c) {
+              c.enqueue(new TextEncoder().encode(big));
+              c.close();
+            },
+          }),
+          { status: 200 },
+        ),
+    );
+    expect((await errorOf(createApiClient({ base: 'https://g', token: TOKEN, fetchImpl: streamed.impl }).request('GET', '/x'))).kind).toBe('invalid');
+    const ok = fakeFetch(() => jsonRes(200, { a: 'é'.repeat(1000) }));
+    expect((await createApiClient({ base: 'https://g', token: TOKEN, fetchImpl: ok.impl }).request<{ a: string }>('GET', '/x')).data.a).toHaveLength(1000);
   });
 
   it('gitlab.validate : page HTML (pas une instance GitLab)', async () => {

@@ -36,8 +36,10 @@ export const gitlab: ProviderAdapter = {
       const self = await client.request<Record<string, unknown> | null>('GET', '/personal_access_tokens/self');
       const raw = self.data?.scopes;
       if (Array.isArray(raw)) scopes = raw.filter((s): s is string => typeof s === 'string');
-    } catch {
-      // Instance ancienne (route absente) : scopes inconnus.
+    } catch (e) {
+      // Instance ancienne (route absente ou refusée) : scopes inconnus. Toute autre erreur (limite d'appels, 5xx,
+      // délai, réseau) remonte : une revalidation ne doit pas remplacer des scopes connus par « inconnus ».
+      if (!(e instanceof ProviderError && (e.kind === 'not-found' || e.kind === 'forbidden'))) throw e;
       scopes = null;
     }
     return { login, name: str(data?.name), avatarUrl: str(data?.avatar_url), scopes };

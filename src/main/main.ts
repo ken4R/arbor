@@ -110,14 +110,16 @@ function checkConnectInput(input: unknown): { adapter: ProviderAdapter; instance
   const adapter = providers[kind as ProviderKind];
   if (!adapter) throw new Error('Fournisseur indisponible.');
   if (!i.auth || i.auth.method !== 'pat') throw new Error("Méthode d'authentification non prise en charge.");
-  const tokenProblem = tokenError(i.auth.token);
+  // Espaces autour du jeton (copier-coller) retirés ; les espaces internes restent refusés par `tokenError`.
+  const token = typeof i.auth.token === 'string' ? i.auth.token.trim() : i.auth.token;
+  const tokenProblem = tokenError(token);
   if (tokenProblem) throw new Error(tokenProblem);
   const defaultInstance = PROVIDERS[kind].defaultInstance;
   if (i.instanceUrl !== undefined && typeof i.instanceUrl !== 'string') throw new Error("URL d'instance invalide.");
   const inst = normalizeInstanceUrl(i.instanceUrl?.trim() ? i.instanceUrl : defaultInstance);
   if ('error' in inst) throw new Error(inst.error);
   if (kind === 'github' && inst.url !== defaultInstance) throw new Error("GitHub Enterprise Server n'est pas encore pris en charge : seul github.com l'est.");
-  return { adapter, instanceUrl: inst.url, host: inst.host, token: i.auth.token as string };
+  return { adapter, instanceUrl: inst.url, host: inst.host, token: token as string };
 }
 
 // Couleur de fond de la fenêtre avant le premier rendu (doit suivre `--bg` du thème).

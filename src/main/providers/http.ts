@@ -9,7 +9,7 @@
 //   Chromium : proxy système, PAC et autorités de certification du système).
 import type { ProviderKind } from '../../shared/types';
 import { PROVIDERS } from '../../shared/accounts';
-import { normalizeInstanceUrl } from '../../shared/remoteUrl';
+import { isLoopbackHost, normalizeInstanceUrl } from '../../shared/remoteUrl';
 import type { ApiClient } from './index';
 
 export type FetchImpl = (url: string, init: RequestInit) => Promise<Response>;
@@ -132,8 +132,40 @@ function electronFetch(): FetchImpl {
   return (url, init) => net.fetch(url, init);
 }
 
+/** Taille maximale d'un corps de réponse lu (1 Mio) : au-delà, erreur fixe, le reste n'est pas téléchargé. */
+export const MAX_BODY_BYTES = 1024 * 1024;
+
+const TOO_LARGE = "Réponse de l'API trop volumineuse : vérifiez l'URL de l'instance.";
+
+/** Lit le corps (au plus `MAX_BODY_BYTES`) puis l'analyse en JSON ; texte brut sinon. */
 async function readBody(res: Response): Promise<unknown> {
-  const text = await res.text();
+  const declared = Number(res.headers.get('content-length') ?? NaN);
+  if (Number.isFinite(declared) && declared > MAX_BODY_BYTES) {
+    void res.body?.cancel().catch(() => {});
+    throw new ProviderError(TOO_LARGE, 'invalid', res.status);
+  }
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  if (res.body) {
+    const reader = res.body.getReader();
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > MAX_BODY_BYTES) {
+        void reader.cancel().catch(() => {});
+        throw new ProviderError(TOO_LARGE, 'invalid', res.status);
+      }
+      chunks.push(value);
+    }
+  }
+  const all = new Uint8Array(size);
+  let at = 0;
+  for (const c of chunks) {
+    all.set(c, at);
+    at += c.byteLength;
+  }
+  const text = new TextDecoder().decode(all);
   if (!text) return null;
   try {
     return JSON.parse(text);
@@ -146,10 +178,16 @@ async function readBody(res: Response): Promise<unknown> {
 export function createApiClient(opts: ApiClientOptions): ApiClient {
   const base = opts.base.replace(/\/+$/, '');
   let origin: string;
+  let parsedBase: URL;
   try {
-    origin = new URL(base).origin;
+    parsedBase = new URL(base);
+    origin = parsedBase.origin;
   } catch {
     throw new ProviderError("Adresse de l'API invalide.", 'invalid');
+  }
+  // Le jeton ne part jamais en clair sur le réseau : https, ou http vers la boucle locale (tests, instance locale).
+  if (parsedBase.protocol !== 'https:' && !(parsedBase.protocol === 'http:' && isLoopbackHost(parsedBase.hostname))) {
+    throw new ProviderError("L'API doit être en https:// (http:// n'est accepté que vers la machine locale).", 'invalid');
   }
   const token = opts.token;
   const timeoutMs = opts.timeoutMs ?? 15000;
@@ -189,6 +227,7 @@ export function createApiClient(opts: ApiClientOptions): ApiClient {
       try {
         data = await readBody(res);
       } catch (err) {
+        if (err instanceof ProviderError) throw err;
         const m = networkErrorMessage(err);
         throw new ProviderError(m.message, m.kind);
       }
@@ -220,11 +259,13 @@ export function createApiClient(opts: ApiClientOptions): ApiClient {
  */
 export function isTokenPageUrl(url: unknown): boolean {
   if (typeof url !== 'string' || url.length > 2048 || !/^https:\/\//.test(url)) return false;
-  for (const p of Object.values(PROVIDERS)) {
+  for (const [kind, p] of Object.entries(PROVIDERS) as [ProviderKind, (typeof PROVIDERS)[ProviderKind]][]) {
     const suffix = p.tokenUrl('');
     if (!url.endsWith(suffix)) continue;
     const inst = normalizeInstanceUrl(url.slice(0, url.length - suffix.length));
     if ('error' in inst || !inst.url.startsWith('https://')) continue;
+    // GitHub : github.com seulement (GitHub Enterprise Server n'est pas proposé) ; GitLab : toute instance https.
+    if (kind === 'github' && inst.url !== p.defaultInstance) continue;
     if (p.tokenUrl(inst.url) === url) return true;
   }
   return false;

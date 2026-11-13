@@ -89,13 +89,13 @@ export function Welcome({
           </div>
         )}
         <div className="welcome-links">
-        <button className="link-btn welcome-prefs" onClick={openPreferences} title={`Préférences (${formatShortcut(PREFERENCES_SHORTCUT)})`}>
-          <Icon.gear />
-          Préférences
-        </button>
-        <button className="link-btn welcome-prefs" onClick={() => openAccounts()} title="Comptes GitHub et GitLab">
-          Comptes…
-        </button>
+          <button className="link-btn welcome-prefs" onClick={openPreferences} title={`Préférences (${formatShortcut(PREFERENCES_SHORTCUT)})`}>
+            <Icon.gear />
+            Préférences
+          </button>
+          <button className="link-btn welcome-prefs" onClick={() => openAccounts()} title="Comptes GitHub et GitLab">
+            Comptes…
+          </button>
         </div>
       </div>
     </div>

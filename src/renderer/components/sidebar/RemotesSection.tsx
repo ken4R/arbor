@@ -65,7 +65,13 @@ function RemoteIcon({ account }: { account: AccountInfo | null }) {
   return (
     <span className="remote-icon">
       <Icon.cloud />
-      {account && <span className={`account-dot ${account.status}`} aria-label={`Compte ${account.login}`} />}
+      {account && (
+        <span
+          className={`account-dot ${account.status}`}
+          role="img"
+          aria-label={`Compte ${account.login}${account.status === 'rejected' ? ' (jeton refusé)' : ''}`}
+        />
+      )}
     </span>
   );
 }

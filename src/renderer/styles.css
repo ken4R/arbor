@@ -2972,12 +2972,19 @@ tr.cf-marker {
 }
 .welcome-links {
   display: flex;
+  align-self: flex-start;
   gap: 16px;
 }
 /* Pastille de compte sur l'icône d'un remote (barre latérale) */
 .remote-icon {
   position: relative;
   display: inline-flex;
+}
+/* Le nuage est le premier svg de son span : la rotation du chevron (`.side-head.open svg:first-child`) ne s'applique pas. */
+.side-head.open .remote-icon > svg:first-child,
+.side-head .remote-icon > svg:first-child {
+  transform: none;
+  transition: none;
 }
 .account-dot {
   position: absolute;

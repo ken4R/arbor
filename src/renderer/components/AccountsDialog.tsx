@@ -118,12 +118,12 @@ function AccountsForm({ prefill }: { prefill: AccountsPrefill | null }) {
   const instanceUrl = !self ? PROVIDERS[providerOf(choice)].defaultInstance : inst && !('error' in inst) ? inst.url : null;
   // Lien « Créer un jeton » : https seulement (le main refuse toute autre adresse).
   const tokenUrl = instanceUrl && instanceUrl.startsWith('https://') ? PROVIDERS[providerOf(choice)].tokenUrl(instanceUrl) : null;
-  const canSubmit = !busy && !!token && !!instanceUrl;
+  const canSubmit = !busy && !!token.trim() && !!instanceUrl;
 
   const connect = async () => {
     if (!canSubmit || !instanceUrl) return;
     // Le jeton quitte l'état dès l'envoi, réussite ou échec.
-    const input: ConnectAccountInput = { provider: providerOf(choice), ...(self ? { instanceUrl } : {}), auth: { method: 'pat', token } };
+    const input: ConnectAccountInput = { provider: providerOf(choice), ...(self ? { instanceUrl } : {}), auth: { method: 'pat', token: token.trim() } };
     setToken('');
     setError(null);
     setNotice(null);
