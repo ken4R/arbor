@@ -35,6 +35,8 @@ import './commands/branches';
 import { clearDropHover, endRefDrag } from './refDrop';
 // comptes
 // identifiants
+import './commands/credentials';
+import { CredentialDialog } from './components/CredentialDialog';
 
 // Préférences enregistrées lues dès le démarrage (et migration des anciennes clés localStorage).
 void loadPreferences();
@@ -69,6 +71,7 @@ createRoot(document.getElementById('root')!).render(
 
     {/* comptes */}
 
-    {/* identifiants */}
+    {/* identifiants : dernier monté, au-dessus de toutes les surcouches */}
+    <CredentialDialog />
   </>,
 );

@@ -2813,3 +2813,35 @@ tr.cf-marker {
 /* comptes */
 
 /* identifiants */
+.credential-dialog {
+  width: 460px;
+}
+.credential-host {
+  font-family: var(--mono);
+  color: var(--text);
+  word-break: break-all;
+}
+.credential-fingerprint,
+.credential-prompt {
+  margin: 0;
+  padding: 10px 12px;
+  background: var(--credential-fingerprint-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.credential-note {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.credential-dialog .secret-field {
+  letter-spacing: var(--secret-field-letter-spacing);
+}
+.credential-dialog .link-btn {
+  align-self: flex-start;
+}

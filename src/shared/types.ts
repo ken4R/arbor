@@ -325,6 +325,10 @@ export interface ArborApi {
   accountStorage(): Promise<AccountStorageStatus>;
 
   // identifiants
+  /** Réponse à une demande `credentialRequest` (null : annulée). Revérifiée par le main selon le type de la demande. */
+  answerCredential(id: string, answer: CredentialAnswer | null): Promise<void>;
+  /** Oublie les identifiants mémorisés « pendant cette session » (le prochain accès les redemande). */
+  forgetSessionCredentials(): Promise<void>;
 }
 
 /** Commits qu'un rebase interactif peut réécrire (`upstream..HEAD`, sans fusion), plus ancien d'abord. */
@@ -547,7 +551,11 @@ export interface AccountsChangedEvent {
 }
 
 // identifiants
-export type CredentialKind = 'https' | 'ssh-passphrase' | 'ssh-password' | 'ssh-hostkey' | 'other';
+/**
+ * `ssh-confirm` : question oui/non d'OpenSSH (SSH_ASKPASS_PROMPT=confirm) ; `ssh-notify` : simple notification
+ * (SSH_ASKPASS_PROMPT=none, « touchez votre clé de sécurité »), fermée par `credentialDone` quand ssh a fini.
+ */
+export type CredentialKind = 'https' | 'ssh-passphrase' | 'ssh-password' | 'ssh-hostkey' | 'ssh-confirm' | 'ssh-notify' | 'other';
 
 /** Demande d'identifiants poussée au rendu (événement `credentialRequest`) ; aucun secret. */
 export interface CredentialRequest {
