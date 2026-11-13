@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, unlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
@@ -312,6 +312,10 @@ describe.skipIf(!lfsInstalled)('LFS (git-lfs installé)', { timeout: 20_000 }, (
     run(dir, 'add', 'brut.dat');
     run(dir, 'commit', '-qm', 'brut');
     writeFileSync(join(dir, '.gitattributes'), `${readFileSync(join(dir, '.gitattributes'), 'utf8')}*.dat filter=lfs diff=lfs merge=lfs -text\n`);
+    // Index « racy » : sans changement de date, Git peut juger brut.dat inchangé d'après le cache stat et ne pas le
+    // repasser par le nouveau filtre. Une date future force la relecture (résultat déterministe).
+    const future = new Date(Date.now() + 60_000);
+    utimesSync(join(dir, 'brut.dat'), future, future);
     try {
       const target = { kind: 'working' as const, path: 'brut.dat', staged: false };
       const raw = await diff(dir, target);
