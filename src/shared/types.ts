@@ -325,6 +325,10 @@ export interface ArborApi {
   accountStorage(): Promise<AccountStorageStatus>;
 
   // identifiants
+  /** Réponse à une demande `credentialRequest` (null : annulée). Revérifiée par le main selon le type de la demande. */
+  answerCredential(id: string, answer: CredentialAnswer | null): Promise<void>;
+  /** Oublie les identifiants mémorisés « pendant cette session » (le prochain accès les redemande). */
+  forgetSessionCredentials(): Promise<void>;
 }
 
 /** Commits qu'un rebase interactif peut réécrire (`upstream..HEAD`, sans fusion), plus ancien d'abord. */

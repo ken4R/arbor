@@ -13,11 +13,15 @@ import { randomBytes } from 'node:crypto';
 import { createAccountStore, type AccountStore } from './accountStore';
 import { electronCrypto } from './secrets';
 // identifiants
+import { startAskpass, type Askpass } from './askpass';
+import type { CredentialAnswer } from '../shared/types';
 
 // Données utilisateur isolées (tests d'interface) : à fixer avant `ready`.
 if (process.env.ARBOR_USER_DATA) app.setPath('userData', resolve(process.env.ARBOR_USER_DATA));
 
 let win: BrowserWindow | null = null;
+// identifiants : assistant d'identifiants (null tant qu'il n'a pas démarré)
+let askpass: Askpass | null = null;
 
 const recentFile = () => join(app.getPath('userData'), 'recent.json');
 
@@ -277,6 +281,8 @@ const NO_REPO = new Set([
   'accountStorage',
 
   // identifiants
+  'answerCredential',
+  'forgetSessionCredentials',
 ]);
 
 // Handlers en lecture seule, hors sourdine du rafraîchissement automatique. Liste blanche : toute nouvelle
@@ -329,7 +335,9 @@ const READ_ONLY = new Set([
   'removeAccount',
   'accountStorage',
 
-  // identifiants
+  // identifiants : `answerCredential` arrive pendant une commande déjà en sourdine ; rien n'est écrit
+  'answerCredential',
+  'forgetSessionCredentials',
 ]);
 
 const handlers: Record<string, (...args: any[]) => Promise<unknown>> = {
@@ -464,6 +472,12 @@ const handlers: Record<string, (...args: any[]) => Promise<unknown>> = {
   accountStorage: async () => accountStore().storage(),
 
   // identifiants
+  async answerCredential(id: unknown, answer: unknown) {
+    if (typeof id !== 'string') throw new Error('Demande invalide.');
+    if (answer !== null && typeof answer !== 'object') throw new Error('Réponse invalide.');
+    askpass?.answer(id, answer as CredentialAnswer | null);
+  },
+  forgetSessionCredentials: async () => askpass?.forgetSession(),
 };
 
 for (const [name, fn] of Object.entries(handlers)) {
@@ -514,7 +528,18 @@ const watcher = new RepoWatcher(
 app.whenReady().then(() => {
   // comptes
   initAccountStore();
-  // identifiants : démarrage du serveur askpass
+  // identifiants : démarrage du serveur askpass (en cas d'échec, Arbor fonctionne sans : comportement d'avant)
+  startAskpass({
+    store: accountStore(),
+    send: sendEvent,
+    userHelpers: g.credentialHelpersFor,
+  }).then(
+    (a) => {
+      askpass = a;
+      g.setGitAuthHook(a.hook);
+    },
+    () => console.warn("Assistant d'identifiants d'Arbor indisponible : les dépôts qui demandent un mot de passe échoueront."),
+  );
 
   createWindow();
 });
@@ -522,4 +547,7 @@ app.on('window-all-closed', () => app.quit());
 app.on('will-quit', () => {
   watcher.stop();
   // identifiants : arrêt du serveur askpass
+  g.setGitAuthHook(null);
+  askpass?.stop();
+  askpass = null;
 });

@@ -28,6 +28,10 @@ import { REBASE_MIN_GIT, buildTodo, gitVersionAtLeast, parseGitVersion, progress
 import { blocksFromMergeOutput, markerSize, normalizeConflictText, parseMergeOutput, splitLines } from '../shared/merge3';
 import type { RemoteConfig } from '../shared/types';
 import type { ReflogEntry, ReflogKind, UndoInfo, UndoPlan } from '../shared/types';
+// identifiants
+import { homedir } from 'node:os';
+import { effectiveHelpers, helperLabel, parseConfigEntries } from '../shared/credentials';
+import { redactUrlCredentials } from '../shared/remoteUrl';
 
 export class GitError extends Error {
   constructor(message: string, public readonly stderr: string) {
@@ -52,6 +56,20 @@ const GIT_ERRORS: [RegExp, (m: RegExpMatchArray) => string][] = [
   [/is not a valid (?:branch|tag) name|not a valid ref name/, () => 'Nom invalide pour Git (espaces, « .. », « ~ », « ^ », « : » et « \\ » sont interdits).'],
   [/\[rejected\].*\((?:fetch first|non-fast-forward)\)/, () => 'Push refusé : la branche distante contient des commits que vous n\'avez pas. Faites un pull d\'abord.'],
   // identifiants (vague 5) : avant les entrées génériques ci-dessous
+  [/told us to quit|arbor: authentification annulée/, () => 'Authentification annulée.'],
+  [/arbor: Arbor injoignable/, () => "L'assistant d'identifiants d'Arbor n'a pas répondu : réessayez."],
+  // Aucun contournement proposé : seulement la commande à lancer soi-même si le changement est attendu.
+  [/REMOTE HOST IDENTIFICATION HAS CHANGED(?:[^]*?Host key for (\S+) has changed)?/, (m) =>
+    `La clé d'hôte SSH du serveur a changé depuis votre dernière connexion. Cela peut être une attaque : Arbor ne se connecte pas. Si le changement est attendu, retirez l'ancienne clé avec « ssh-keygen -R ${m[1] ?? '<hôte>'} ».`],
+  [/Host key verification failed/, () => "Clé d'hôte SSH non vérifiée (serveur inconnu ou empreinte refusée)."],
+  [/Permission denied \(publickey/, () => "Clé SSH refusée par le serveur : chargez votre clé dans l'agent SSH (ssh-add) ou ajoutez-la à votre compte."],
+  [/Support for password authentication was removed|HTTP Basic: Access denied|Invalid username or (?:password|token)/, () => "Le serveur refuse les mots de passe : utilisez un jeton d'accès personnel (Comptes…)."],
+  [/could not read (?:Username|Password) for '(.+?)'/, (m) => `Identifiants requis pour ${redactUrlCredentials(m[1])} : connectez un compte (Comptes…) ou configurez un gestionnaire d'identifiants Git.`],
+  [/Authentication failed for '(.+?)'/, (m) => `Identifiants refusés par ${redactUrlCredentials(m[1])} : vérifiez l'identifiant et le mot de passe (ou le jeton).`],
+  [/The requested URL returned error: 403/, () => "Accès refusé (403) : le compte n'a pas les droits sur ce dépôt (ou le jeton manque de scopes)."],
+  [/(?:Repository|Project) not found|returned error: 404|fatal: repository '.+?' not found/,() => 'Dépôt introuvable, ou accès refusé avec ces identifiants.'],
+  [/SSL certificate problem|server certificate verification failed/, () => 'Certificat du serveur non reconnu.'],
+  [/ssh: Could not resolve hostname|ssh: connect to host .* (?:Connection refused|timed out)/, () => 'Serveur SSH injoignable.'],
 
   [/Authentication failed|could not read Username|Permission denied \(publickey/, () => 'Authentification refusée par le serveur distant. Vérifiez vos identifiants ou votre clé SSH.'],
   [/Could not resolve host|Connection timed out|unable to access/, () => 'Serveur distant injoignable. Vérifiez la connexion et l\'URL du remote.'],
@@ -91,7 +109,8 @@ export function translateGitError(raw: string): string {
     const m = raw.match(re);
     if (m) return fmt(m);
   }
-  const tail = raw.split('\n').filter(Boolean).slice(-4).join('\n');
+  // Une URL `https://u:jeton@h` du remote ne doit pas s'afficher en clair.
+  const tail = redactUrlCredentials(raw.split('\n').filter(Boolean).slice(-4).join('\n'));
   return `Git a renvoyé une erreur :\n${tail}`;
 }
 
@@ -2333,4 +2352,16 @@ export async function lfsPull(repo: string, paths: unknown) {
   const unknown = (paths as string[]).find((p) => !known.has(p));
   if (unknown !== undefined) throw new GitError(`« ${unknown} » n'est pas un fichier LFS de ce dépôt.`, '');
   for (const args of lfsPullArgs(paths as string[])) await lfs(repo, ['pull', ...args]);
+}
+
+// identifiants
+
+/**
+ * Assistants d'identifiants de l'utilisateur pour une URL (noms lisibles : « store », « osxkeychain »…), lus dans la
+ * configuration (système, globale, et celle du dépôt s'il y en a un), pour prévenir l'utilisateur qu'ils
+ * mémoriseront ce qu'il saisit. Commande locale : le crochet d'authentification ne s'applique pas.
+ */
+export async function credentialHelpersFor(repo: string | null, url: string): Promise<string[]> {
+  const out = await git(repo ?? homedir(), ['config', '-z', '--get-regexp', '^credential\\..*helper$'], { okCodes: [1] });
+  return [...new Set(effectiveHelpers(parseConfigEntries(out), url).map(helperLabel))];
 }
